@@ -1,12 +1,29 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from pydantic import BaseModel, Field
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import BusinessDomain, BusinessDomainSelection, ColumnMeta, DataSource, TableMeta, TableSummary
+from models import (
+    BusinessDomain,
+    BusinessDomainSelection,
+    ColumnMeta,
+    DataSource,
+    KnowledgeBase,
+    KnowledgeEntry,
+    TableKnowledgeBase,
+    TableKnowledgeEntry,
+    TableMeta,
+    TableSummary,
+)
 
 router = APIRouter(prefix="/api", tags=["tables"])
 SUMMARY_SECTIONS = ["业务描述", "数据定位", "核心口径", "使用建议", "风险边界"]
+
+
+class TableKnowledgeLinksBody(BaseModel):
+    knowledge_base_ids: list[int] = Field(default_factory=list)
+    knowledge_entry_ids: list[int] = Field(default_factory=list)
 
 
 def _fallback_quality_metrics(null_ratio: float | None, distinct_count: int | None, top_values: list | None, row_count: int | None) -> dict:
@@ -116,6 +133,21 @@ def get_table_detail(table_id: int, db: Session = Depends(get_db)) -> dict:
             domains = db.execute(select(BusinessDomain).where(BusinessDomain.id.in_(domain_ids))).scalars().all()
             domain_names = [d.name for d in domains]
 
+    kb_ids = list(
+        db.execute(select(TableKnowledgeBase.knowledge_base_id).where(TableKnowledgeBase.table_id == table_id)).scalars().all()
+    )
+    linked_kbs = (
+        db.execute(select(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids)).order_by(KnowledgeBase.name.asc())).scalars().all()
+        if kb_ids
+        else []
+    )
+    entry_link_ids = list(
+        db.execute(select(TableKnowledgeEntry.knowledge_entry_id).where(TableKnowledgeEntry.table_id == table_id)).scalars().all()
+    )
+    linked_entries: list[KnowledgeEntry] = []
+    if entry_link_ids:
+        linked_entries = list(db.execute(select(KnowledgeEntry).where(KnowledgeEntry.id.in_(entry_link_ids))).scalars().all())
+
     return {
         "table": {
             "id": table.id,
@@ -126,6 +158,15 @@ def get_table_detail(table_id: int, db: Session = Depends(get_db)) -> dict:
             "status": table.status,
             "domain_names": domain_names,
         },
+        "knowledge_bases": [{"id": kb.id, "name": kb.name} for kb in linked_kbs],
+        "knowledge_entries": [
+            {
+                "id": e.id,
+                "knowledge_base_id": e.knowledge_base_id,
+                "title": e.title,
+            }
+            for e in linked_entries
+        ],
         "columns": [
             {
                 "column_name": c.column_name,
@@ -149,3 +190,40 @@ def get_table_detail(table_id: int, db: Session = Depends(get_db)) -> dict:
             "warnings": summary.warnings if summary else "",
         },
     }
+
+
+@router.put("/table/{table_id}/knowledge-links")
+def set_table_knowledge_links(table_id: int, body: TableKnowledgeLinksBody, db: Session = Depends(get_db)) -> dict:
+    table = db.get(TableMeta, table_id)
+    if not table:
+        raise HTTPException(status_code=404, detail="table not found")
+    kb_seen: set[int] = set()
+    kb_ordered: list[int] = []
+    for kb_id in body.knowledge_base_ids:
+        if kb_id in kb_seen:
+            continue
+        kb_seen.add(kb_id)
+        kb_ordered.append(kb_id)
+    for kb_id in kb_ordered:
+        if not db.get(KnowledgeBase, kb_id):
+            raise HTTPException(status_code=400, detail=f"knowledge base not found: {kb_id}")
+    ent_seen: set[int] = set()
+    ent_ordered: list[int] = []
+    for eid in body.knowledge_entry_ids:
+        if eid in ent_seen:
+            continue
+        ent_seen.add(eid)
+        ent_ordered.append(eid)
+    for eid in ent_ordered:
+        ent = db.get(KnowledgeEntry, eid)
+        if not ent:
+            raise HTTPException(status_code=400, detail=f"knowledge entry not found: {eid}")
+
+    db.execute(delete(TableKnowledgeBase).where(TableKnowledgeBase.table_id == table_id))
+    for kb_id in kb_ordered:
+        db.add(TableKnowledgeBase(table_id=table_id, knowledge_base_id=kb_id))
+    db.execute(delete(TableKnowledgeEntry).where(TableKnowledgeEntry.table_id == table_id))
+    for eid in ent_ordered:
+        db.add(TableKnowledgeEntry(table_id=table_id, knowledge_entry_id=eid))
+    db.commit()
+    return {"ok": True, "knowledge_base_ids": kb_ordered, "knowledge_entry_ids": ent_ordered}

@@ -25,6 +25,8 @@ export type ChatSession = {
   pinned?: boolean;
   project_id?: string;
   archived_at?: string;
+  /** 关联业务域，用于拉取该域下配置的知识库上下文 */
+  business_domain_id?: number;
   messages: ChatMessage[];
 };
 
@@ -86,6 +88,7 @@ function normalizeMessage(raw: Partial<ChatMessage>): ChatMessage {
 }
 
 function normalizeSession(raw: Partial<ChatSession>): ChatSession {
+  const domainId = raw.business_domain_id;
   return {
     id: raw.id || makeId("session"),
     title: raw.title || "新对话",
@@ -94,6 +97,7 @@ function normalizeSession(raw: Partial<ChatSession>): ChatSession {
     pinned: !!raw.pinned,
     project_id: raw.project_id || "",
     archived_at: raw.archived_at || "",
+    business_domain_id: typeof domainId === "number" && Number.isFinite(domainId) ? domainId : undefined,
     messages: (raw.messages || []).map((msg) => normalizeMessage(msg))
   };
 }
@@ -175,6 +179,18 @@ export function setActiveSession(id: string): StoredState {
   const activeSessionId = state.sessions.some((s) => s.id === id) ? id : state.sessions[0]?.id || "";
   const nextState = { sessions: state.sessions, activeSessionId };
   writeSessionState(nextState);
+  emitSessionUpdate();
+  return readSessionState();
+}
+
+export function setSessionBusinessDomain(sessionId: string, businessDomainId: number | undefined): StoredState {
+  const state = readSessionState();
+  const sessions = state.sessions.map((s) =>
+    s.id === sessionId
+      ? { ...s, business_domain_id: businessDomainId, updated_at: nowIso() }
+      : s
+  );
+  writeSessionState({ sessions, activeSessionId: state.activeSessionId });
   emitSessionUpdate();
   return readSessionState();
 }

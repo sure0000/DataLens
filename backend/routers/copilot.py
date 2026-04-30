@@ -15,11 +15,12 @@ router = APIRouter(prefix="/api", tags=["copilot"])
 class AskBody(BaseModel):
     question: str
     table_id: int | None = None
+    business_domain_id: int | None = None
 
 
 @router.post("/ask")
 async def ask(body: AskBody, db: Session = Depends(get_db)) -> dict:
-    return await answer(db, body.question, body.table_id)
+    return await answer(db, body.question, body.table_id, body.business_domain_id)
 
 
 @router.post("/ask/stream")
@@ -30,7 +31,9 @@ async def ask_stream(body: AskBody, db: Session = Depends(get_db)) -> StreamingR
         async def emit_status(stage: str):
             await status_queue.put(stage)
 
-        answer_task = asyncio.create_task(answer(db, body.question, body.table_id, stage_callback=emit_status))
+        answer_task = asyncio.create_task(
+            answer(db, body.question, body.table_id, body.business_domain_id, stage_callback=emit_status)
+        )
 
         while not answer_task.done() or not status_queue.empty():
             try:

@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
-from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, Text
+from sqlalchemy import JSON, BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
@@ -118,4 +118,63 @@ class BusinessDomainSelection(Base):
     datasource_id: Mapped[int] = mapped_column(ForeignKey("data_sources.id"))
     database_name: Mapped[str] = mapped_column(Text, nullable=False)
     table_name: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class KnowledgeBase(Base):
+    __tablename__ = "knowledge_bases"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class KnowledgeEntry(Base):
+    """单条可检索知识：标题 + Markdown 正文，供人工维护与向量检索（RAG）。"""
+
+    __tablename__ = "knowledge_entries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class BusinessDomainKnowledgeBase(Base):
+    """业务域 ↔ 知识库（多对多），供 Copilot 按会话业务域拉取知识上下文。"""
+
+    __tablename__ = "business_domain_knowledge_bases"
+    __table_args__ = (UniqueConstraint("domain_id", "knowledge_base_id", name="uq_business_domain_kb"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    domain_id: Mapped[int] = mapped_column(ForeignKey("business_domains.id", ondelete="CASCADE"), nullable=False)
+    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class TableKnowledgeBase(Base):
+    """数据表 ↔ 知识库（多对多）。"""
+
+    __tablename__ = "table_knowledge_bases"
+    __table_args__ = (UniqueConstraint("table_id", "knowledge_base_id", name="uq_table_kb"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    table_id: Mapped[int] = mapped_column(ForeignKey("tables.id", ondelete="CASCADE"), nullable=False)
+    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class TableKnowledgeEntry(Base):
+    """数据表 ↔ 知识库条目（多对多），固定将全文注入上下文。"""
+
+    __tablename__ = "table_knowledge_entries"
+    __table_args__ = (UniqueConstraint("table_id", "knowledge_entry_id", name="uq_table_knowledge_entry"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    table_id: Mapped[int] = mapped_column(ForeignKey("tables.id", ondelete="CASCADE"), nullable=False)
+    knowledge_entry_id: Mapped[int] = mapped_column(ForeignKey("knowledge_entries.id", ondelete="CASCADE"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

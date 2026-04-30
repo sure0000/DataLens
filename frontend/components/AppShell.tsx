@@ -20,7 +20,17 @@ import {
 
 const SIDEBAR_COLLAPSE_KEY = "datalens_sidebar_collapsed_v1";
 
-type NavIcon = "domain" | "database" | "spark" | "plus" | "search" | "chevronLeft" | "chevronRight" | "brand" | "more";
+type NavIcon =
+  | "domain"
+  | "database"
+  | "book"
+  | "spark"
+  | "plus"
+  | "search"
+  | "chevronLeft"
+  | "chevronRight"
+  | "brand"
+  | "more";
 
 function isActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
@@ -87,6 +97,13 @@ function Icon({ name, className = "h-4 w-4" }: { name: NavIcon; className?: stri
       <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <ellipse cx="12" cy="6" rx="7" ry="3" {...common} />
         <path d="M5 6v6c0 1.66 3.13 3 7 3s7-1.34 7-3V6M5 12v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6" {...common} />
+      </svg>
+    );
+  }
+  if (name === "book") {
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M6 4h5a2 2 0 012 2v14a2 2 0 00-2-2H6V4zM13 4h5v14h-5a2 2 0 00-2 2V6a2 2 0 012-2z" {...common} />
       </svg>
     );
   }
@@ -362,6 +379,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <Icon name="domain" />
             </Link>
             <Link
+              href="/knowledge-bases"
+              className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isActive(pathname, "/knowledge-bases") ? "border-[#c7d2fe] bg-[#eef2ff] text-[#111827]" : ""}`}
+              title="知识库"
+              aria-label="知识库"
+            >
+              <Icon name="book" />
+            </Link>
+            <Link
               href="/copilot"
               className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isCopilot ? "border-[#c7d2fe] bg-[#eef2ff] text-[#111827]" : ""}`}
               title="助手"
@@ -398,6 +423,15 @@ export default function AppShell({ children }: { children: ReactNode }) {
                   <Icon name="domain" />
                 </span>
                 <span>业务域</span>
+              </Link>
+              <Link
+                href="/knowledge-bases"
+                className={`app-nav-item rounded-lg ${isActive(pathname, "/knowledge-bases") ? "is-active" : ""}`}
+              >
+                <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
+                  <Icon name="book" />
+                </span>
+                <span>知识库</span>
               </Link>
             </div>
           )}

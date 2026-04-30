@@ -6,7 +6,16 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import BusinessDomain, BusinessDomainDescription, BusinessDomainSelection, DataSource, TableMeta, TableSummary
+from models import (
+    BusinessDomain,
+    BusinessDomainDescription,
+    BusinessDomainKnowledgeBase,
+    BusinessDomainSelection,
+    DataSource,
+    KnowledgeBase,
+    TableMeta,
+    TableSummary,
+)
 from services.schema_extractor import get_databases, get_tables_meta_for_database
 
 router = APIRouter(prefix="/api/business-domains", tags=["business-domains"])
@@ -27,6 +36,10 @@ class DomainCreateBody(BaseModel):
 
 class DescriptionCreateBody(BaseModel):
     content: str
+
+
+class DomainKnowledgeBasesBody(BaseModel):
+    knowledge_base_ids: list[int] = []
 
 
 def _latest_description_map(db: Session) -> dict[int, BusinessDomainDescription]:
@@ -240,6 +253,16 @@ def get_domain_detail(domain_id: int, db: Session = Depends(get_db)) -> dict:
         unique_rows[key] = row
     sorted_rows = sorted(unique_rows.values(), key=lambda r: (r["database_name"], r["table_name"]))
 
+    kb_link_rows = (
+        db.execute(select(BusinessDomainKnowledgeBase).where(BusinessDomainKnowledgeBase.domain_id == domain_id)).scalars().all()
+    )
+    kb_ids = [r.knowledge_base_id for r in kb_link_rows]
+    kb_rows = (
+        db.execute(select(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids)).order_by(KnowledgeBase.name.asc())).scalars().all()
+        if kb_ids
+        else []
+    )
+
     return {
         "domain": {
             "id": domain.id,
@@ -256,7 +279,30 @@ def get_domain_detail(domain_id: int, db: Session = Depends(get_db)) -> dict:
             else None
         ),
         "tables": sorted_rows,
+        "knowledge_bases": [{"id": kb.id, "name": kb.name, "description": kb.description or ""} for kb in kb_rows],
     }
+
+
+@router.put("/{domain_id}/knowledge-bases")
+def set_domain_knowledge_bases(domain_id: int, body: DomainKnowledgeBasesBody, db: Session = Depends(get_db)) -> dict:
+    domain = db.get(BusinessDomain, domain_id)
+    if not domain:
+        raise HTTPException(status_code=404, detail="domain not found")
+    seen: set[int] = set()
+    ordered_ids: list[int] = []
+    for kb_id in body.knowledge_base_ids:
+        if kb_id in seen:
+            continue
+        seen.add(kb_id)
+        ordered_ids.append(kb_id)
+    for kb_id in ordered_ids:
+        if not db.get(KnowledgeBase, kb_id):
+            raise HTTPException(status_code=400, detail=f"knowledge base not found: {kb_id}")
+    db.execute(delete(BusinessDomainKnowledgeBase).where(BusinessDomainKnowledgeBase.domain_id == domain_id))
+    for kb_id in ordered_ids:
+        db.add(BusinessDomainKnowledgeBase(domain_id=domain_id, knowledge_base_id=kb_id))
+    db.commit()
+    return {"ok": True, "knowledge_base_ids": ordered_ids}
 
 
 @router.post("")
@@ -398,6 +444,7 @@ def delete_domain(domain_id: int, db: Session = Depends(get_db)) -> dict:
         raise HTTPException(status_code=404, detail="domain not found")
     db.execute(delete(BusinessDomainDescription).where(BusinessDomainDescription.domain_id == domain_id))
     db.execute(delete(BusinessDomainSelection).where(BusinessDomainSelection.domain_id == domain_id))
+    db.execute(delete(BusinessDomainKnowledgeBase).where(BusinessDomainKnowledgeBase.domain_id == domain_id))
     db.delete(domain)
     db.commit()
     return {"success": True}

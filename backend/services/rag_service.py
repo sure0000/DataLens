@@ -6,8 +6,19 @@ import asyncio
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from models import ColumnMeta, DataSource, QueryExample, TableMeta, TableSummary
-from services.embedding_service import embed_and_store_async, search_similar_async
+from models import (
+    BusinessDomainKnowledgeBase,
+    ColumnMeta,
+    DataSource,
+    KnowledgeBase,
+    KnowledgeEntry,
+    QueryExample,
+    TableKnowledgeBase,
+    TableKnowledgeEntry,
+    TableMeta,
+    TableSummary,
+)
+from services.embedding_service import embed_and_store_async, search_knowledge_semantic, search_similar_async
 from services.llm_service import (
     answer_general_question,
     classify_question_intent,
@@ -121,10 +132,92 @@ def _build_priority_context(db: Session, table_id: int | None) -> tuple[str, str
     return context_text + "\n" + analysis_text, schema_text, summary_text, resolved_table_id
 
 
+def _collect_knowledge_context_text(
+    db: Session, question: str, business_domain_id: int | None, table_id: int | None
+) -> str:
+    """聚合：会话业务域关联的知识库 + 当前表关联的知识库与固定条目 + 各库语义检索片段。"""
+    kb_ids: list[int] = []
+    seen_kb: set[int] = set()
+
+    def add_kb(kid: int) -> None:
+        if kid in seen_kb:
+            return
+        seen_kb.add(kid)
+        kb_ids.append(kid)
+
+    if business_domain_id:
+        for kid in db.execute(
+            select(BusinessDomainKnowledgeBase.knowledge_base_id).where(
+                BusinessDomainKnowledgeBase.domain_id == business_domain_id
+            )
+        ).scalars().all():
+            add_kb(int(kid))
+
+    pinned_ids: list[int] = []
+    seen_ent: set[int] = set()
+    if table_id:
+        for kid in db.execute(
+            select(TableKnowledgeBase.knowledge_base_id).where(TableKnowledgeBase.table_id == table_id)
+        ).scalars().all():
+            add_kb(int(kid))
+        for eid in db.execute(
+            select(TableKnowledgeEntry.knowledge_entry_id).where(TableKnowledgeEntry.table_id == table_id)
+        ).scalars().all():
+            eid = int(eid)
+            if eid in seen_ent:
+                continue
+            seen_ent.add(eid)
+            pinned_ids.append(eid)
+
+    sections: list[str] = []
+    max_total = 16000
+    pinned_set = set(pinned_ids)
+
+    if pinned_ids:
+        entries = list(db.execute(select(KnowledgeEntry).where(KnowledgeEntry.id.in_(pinned_ids))).scalars().all())
+        entry_by_id = {e.id: e for e in entries}
+        pin_lines = ["[表关联知识条目 — 固定全文]"]
+        for eid in pinned_ids:
+            e = entry_by_id.get(eid)
+            if not e:
+                continue
+            kb = db.get(KnowledgeBase, e.knowledge_base_id)
+            kb_name = kb.name if kb else "?"
+            body = (e.body or "").strip()
+            if len(body) > 6000:
+                body = body[:6000] + "\n…（正文已截断）"
+            pin_lines.append(f"## {e.title}（知识库：{kb_name}，entry_id={e.id}）\n{body}")
+        sections.append("\n".join(pin_lines))
+
+    if kb_ids and question.strip():
+        sem_lines = ["[知识库语义检索 — 与问题相关的片段]"]
+        merged_hits: dict[int, dict[str, Any]] = {}
+        for kb_id in kb_ids:
+            for hit in search_knowledge_semantic(db, kb_id, question.strip(), top_k=6):
+                eid = int(hit["entry_id"])
+                if eid in pinned_set:
+                    continue
+                merged_hits.setdefault(eid, hit)
+        for hit in list(merged_hits.values())[:20]:
+            title = str(hit.get("title") or "")
+            snippet = str(hit.get("snippet") or "").strip().replace("\r\n", "\n")
+            if len(snippet) > 800:
+                snippet = snippet[:800] + "…"
+            sem_lines.append(f"- {title} (entry_id={hit['entry_id']})\n  {snippet}")
+        if len(sem_lines) > 1:
+            sections.append("\n".join(sem_lines))
+
+    text = "\n\n".join(sections).strip()
+    if len(text) > max_total:
+        return f"{text[:max_total]}\n…（知识上下文已截断）"
+    return text
+
+
 async def answer(
     db: Session,
     question: str,
     table_id: int | None = None,
+    business_domain_id: int | None = None,
     stage_callback: Callable[[str], Awaitable[None]] | None = None,
 ) -> dict[str, Any]:
     async def emit(stage: str) -> None:
@@ -132,8 +225,9 @@ async def answer(
             await stage_callback(stage)
 
     await emit("intent_recognizing")
-    refs = await search_similar_async(db, question, top_k=5, table_id=table_id)
+    refs = await search_similar_async(db, question, top_k=5, table_id=table_id, ref_type="query")
     priority_context, schema, summary_text, preferred_table_id = _build_priority_context(db, table_id)
+    knowledge_text = _collect_knowledge_context_text(db, question, business_domain_id, table_id)
     intent_info = await classify_question_intent(question)
     intent = intent_info.get("intent", "general_qa")
 
@@ -144,7 +238,8 @@ async def answer(
             natural_answer = guardrail["answer"]
             explanation = guardrail["reason"]
         else:
-            natural_answer = await answer_general_question(question, context_hint=priority_context)
+            hint_parts = [p for p in (knowledge_text.strip(), priority_context.strip()) if p]
+            natural_answer = await answer_general_question(question, context_hint="\n\n".join(hint_parts))
             explanation = intent_info.get("reason", "该问题更适合自然语言回答，无需执行 SQL")
         await embed_and_store_async(db, "query", table_id or 0, f"{question} -> {natural_answer}")
         return {
@@ -156,7 +251,10 @@ async def answer(
         }
 
     await emit("answer_generating")
-    llm_context = "\n\n".join(
+    llm_blocks = []
+    if knowledge_text.strip():
+        llm_blocks.append(knowledge_text.strip())
+    llm_blocks.extend(
         [
             priority_context,
             "[结构化字段]",
@@ -165,6 +263,7 @@ async def answer(
             json.dumps(refs, ensure_ascii=False),
         ]
     )
+    llm_context = "\n\n".join(llm_blocks)
     result = await generate_sql(question, llm_context, summary_text)
 
     # query_examples.table_id has FK constraint, so we must persist a real table id.

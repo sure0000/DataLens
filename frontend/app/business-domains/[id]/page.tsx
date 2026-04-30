@@ -24,10 +24,12 @@ type DomainTable = {
   table_description: string;
   table_id?: number;
 };
+type DomainKb = { id: number; name: string; description: string };
 type DomainDetail = {
   domain: { id: number; name: string; created_at: string };
   description?: DomainDescription | null;
   tables: DomainTable[];
+  knowledge_bases?: DomainKb[];
 };
 
 export default function DomainDetailPage({ params }: { params: { id: string } }) {
@@ -58,12 +60,18 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
     action: () => Promise<void> | void;
   } | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [allKnowledgeBases, setAllKnowledgeBases] = useState<{ id: number; name: string }[]>([]);
+  const [selectedKbIds, setSelectedKbIds] = useState<number[]>([]);
+  const [savingKb, setSavingKb] = useState(false);
+  const [kbModalOpen, setKbModalOpen] = useState(false);
+  const [kbPickerPick, setKbPickerPick] = useState<Record<number, boolean>>({});
 
   async function loadDetail() {
     setLoading(true);
     try {
       const res = await api<DomainDetail>(`/api/business-domains/${params.id}`);
       setDetail(res);
+      setSelectedKbIds((res.knowledge_bases || []).map((k) => k.id));
     } finally {
       setLoading(false);
     }
@@ -78,6 +86,12 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
     loadDetail();
     loadOptions();
   }, [params.id]);
+
+  useEffect(() => {
+    api<{ knowledge_bases: { id: number; name: string }[] }>("/api/knowledge-bases")
+      .then((r) => setAllKnowledgeBases(r.knowledge_bases || []))
+      .catch(() => setAllKnowledgeBases([]));
+  }, []);
 
   useEffect(() => {
     const hasOpenModal = isDescModalOpen || isBatchModalOpen;
@@ -326,6 +340,35 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
     setSelectedTables(nextTables);
   }
 
+  function openKbPickerModal() {
+    const next: Record<number, boolean> = {};
+    allKnowledgeBases.forEach((kb) => {
+      next[kb.id] = selectedKbIds.includes(kb.id);
+    });
+    setKbPickerPick(next);
+    setKbModalOpen(true);
+  }
+
+  function confirmKbPicker() {
+    const picked = allKnowledgeBases.filter((kb) => kbPickerPick[kb.id]).map((kb) => kb.id);
+    setSelectedKbIds(picked);
+    setKbModalOpen(false);
+  }
+
+  async function saveDomainKnowledgeBases() {
+    setSavingKb(true);
+    try {
+      await api(`/api/business-domains/${params.id}/knowledge-bases`, {
+        method: "PUT",
+        body: JSON.stringify({ knowledge_base_ids: selectedKbIds })
+      });
+      setMessage("已保存关联知识库");
+      loadDetail();
+    } finally {
+      setSavingKb(false);
+    }
+  }
+
   async function removeDomain() {
     setConfirmState({
       title: "确认删除业务域？",
@@ -385,6 +428,77 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
           </div>
         </div>
       </section>
+
+      <section className="app-card mt-4 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="app-section-title">关联知识库</h2>
+          <button type="button" className={`app-button ${savingKb ? "is-loading" : ""}`} onClick={saveDomainKnowledgeBases} disabled={savingKb}>
+            {savingKb ? "保存中…" : "保存"}
+          </button>
+        </div>
+        <p className="app-text-muted mt-1 text-xs">
+          Copilot 会话可选择本业务域后，将自动在这些知识库中做语义检索，并结合表侧关联的知识库与固定条目。
+        </p>
+        <div className="mt-3 rounded-lg border border-[#e5e7eb] bg-[#fafafa] p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className="app-button-secondary text-xs" onClick={openKbPickerModal}>
+              添加知识库
+            </button>
+          </div>
+          {!selectedKbIds.length ? (
+            <p className="mt-2 text-xs text-[#9ca3af]">未选择知识库</p>
+          ) : (
+            <p className="mt-2 text-xs text-[#4b5563]">
+              已选择 {selectedKbIds.length} 个：
+              {selectedKbIds.map((id) => allKnowledgeBases.find((kb) => kb.id === id)?.name || `#${id}`).join("、")}
+            </p>
+          )}
+        </div>
+      </section>
+
+      {kbModalOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/35 p-4 backdrop-blur-[2px]"
+          role="presentation"
+          onClick={() => setKbModalOpen(false)}
+        >
+          <div className="app-card max-h-[85vh] w-full max-w-lg overflow-auto p-5" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="app-section-title">选择知识库</h2>
+              <button type="button" className="app-control-button" onClick={() => setKbModalOpen(false)}>
+                关闭
+              </button>
+            </div>
+            {!allKnowledgeBases.length ? (
+              <p className="text-sm text-[#9ca3af]">暂无知识库，请先在「知识库」中创建。</p>
+            ) : (
+              <ul className="max-h-[56vh] space-y-2 overflow-y-auto">
+                {allKnowledgeBases.map((kb) => (
+                  <li key={kb.id}>
+                    <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-[#e5e7eb] px-3 py-2 text-sm hover:bg-[#f9fafb]">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={!!kbPickerPick[kb.id]}
+                        onChange={() => setKbPickerPick((p) => ({ ...p, [kb.id]: !p[kb.id] }))}
+                      />
+                      <span>{kb.name}</span>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-4 flex gap-2">
+              <button type="button" className="app-button flex-1" onClick={confirmKbPicker}>
+                确定
+              </button>
+              <button type="button" className="app-button-secondary flex-1" onClick={() => setKbModalOpen(false)}>
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <section className="app-card mt-4 p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">

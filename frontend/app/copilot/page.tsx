@@ -19,6 +19,7 @@ import {
   readProjects,
   readSessionState,
   setActiveSession,
+  setSessionBusinessDomain,
   type ChatProject,
   type ChatMessage,
   type ChatSession,
@@ -34,6 +35,8 @@ type AskResponse = {
 };
 
 type StreamStage = "intent_recognizing" | "answer_generating" | "sql_executing";
+
+type AskPayload = { question: string; table_id: number | null; business_domain_id: number | null };
 const PENDING_PROJECT_QUESTION_KEY = "chatbi_pending_project_question_v1";
 const QUICK_QUESTIONS = [
   "近30天订单量和GMV按天趋势如何？",
@@ -63,8 +66,10 @@ function CopilotPageContent() {
     action: () => Promise<void> | void;
   } | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [businessDomains, setBusinessDomains] = useState<{ id: number; name: string }[]>([]);
   const projectIdFromUrl = searchParams.get("project") || "";
   const sessionIdFromUrl = searchParams.get("session") || "";
+  const tableIdFromUrl = searchParams.get("table");
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
   const questionInputRef = useRef<HTMLTextAreaElement | null>(null);
 
@@ -108,16 +113,27 @@ function CopilotPageContent() {
   }, [updateEvent]);
 
   useEffect(() => {
+    api<{ domains: { id: number; name: string }[] }>("/api/business-domains")
+      .then((r) => setBusinessDomains(r.domains || []))
+      .catch(() => setBusinessDomains([]));
+  }, []);
+
+  useEffect(() => {
     if (!sessionIdFromUrl) return;
     const state = setActiveSession(sessionIdFromUrl);
     syncState(state);
   }, [sessionIdFromUrl]);
 
-  async function streamAsk(content: string, onStageChange?: (stage: StreamStage) => void) {
+  async function streamAsk(content: string, onStageChange?: (stage: StreamStage) => void, askOpts?: Partial<AskPayload>) {
+    const body: AskPayload = {
+      question: content,
+      table_id: askOpts?.table_id ?? null,
+      business_domain_id: askOpts?.business_domain_id ?? null
+    };
     const resp = await fetch(`${API}/api/ask/stream`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: content, table_id: null })
+      body: JSON.stringify(body)
     });
     if (!resp.ok || !resp.body) {
       throw new Error("stream not available");
@@ -174,13 +190,19 @@ function CopilotPageContent() {
     setLoading(true);
 
     try {
+      const tableParamNum = tableIdFromUrl ? Number(tableIdFromUrl) : NaN;
+      const askPayload: AskPayload = {
+        question: content,
+        table_id: Number.isFinite(tableParamNum) ? tableParamNum : null,
+        business_domain_id: typeof sessionAfterUser.business_domain_id === "number" ? sessionAfterUser.business_domain_id : null
+      };
       let res: AskResponse;
       try {
-        res = await streamAsk(content, (stage) => setStreamStage(stage));
+        res = await streamAsk(content, (stage) => setStreamStage(stage), askPayload);
       } catch {
         res = await api<AskResponse>("/api/ask", {
           method: "POST",
-          body: JSON.stringify({ question: content, table_id: null })
+          body: JSON.stringify(askPayload)
         });
       }
       const assistantMessage: ChatMessage = {
@@ -619,6 +641,34 @@ function CopilotPageContent() {
               <div className="mx-auto w-full max-w-3xl">
                 <div className="pointer-events-auto">
                 <div className="rounded-[1.7rem] border border-[#e5e7eb] bg-white p-2">
+                  {activeSession && (
+                    <div className="flex flex-wrap items-center gap-2 border-b border-[#f1f5f9] px-2 pb-2 pt-1">
+                      <label className="flex flex-wrap items-center gap-2 text-xs text-[#6b7280]">
+                        <span className="shrink-0">会话业务域</span>
+                        <select
+                          className="max-w-[min(100%,280px)] rounded-lg border border-[#e5e7eb] bg-[#fafafa] px-2 py-1.5 text-xs text-[#111827] outline-none"
+                          value={activeSession.business_domain_id ?? ""}
+                          onChange={(e) => {
+                            const raw = e.target.value;
+                            const next = raw === "" ? undefined : Number(raw);
+                            setSessionBusinessDomain(activeSession.id, Number.isFinite(next) ? next : undefined);
+                            loadSessionsFromStorage();
+                          }}
+                        >
+                          <option value="">不关联（仅表侧知识库生效）</option>
+                          {businessDomains.map((d) => (
+                            <option key={d.id} value={d.id}>
+                              {d.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <span className="text-[11px] text-[#9ca3af]">关联后可拉取该域下配置的知识库语义检索</span>
+                      {tableIdFromUrl && Number.isFinite(Number(tableIdFromUrl)) && (
+                        <span className="text-[11px] text-[#4f46e5]">URL 已指定数据表 ID {tableIdFromUrl}，请求将带上表级知识库与固定条目</span>
+                      )}
+                    </div>
+                  )}
                   <textarea
                     ref={questionInputRef}
                     className="min-h-[86px] w-full resize-none bg-transparent px-2 py-2 text-sm leading-6 text-[#111827] outline-none placeholder:text-[#9ca3af]"
