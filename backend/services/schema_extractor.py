@@ -1,3 +1,4 @@
+import re
 from collections.abc import Iterable
 from contextlib import contextmanager
 from typing import Any
@@ -79,12 +80,21 @@ def get_tables(conn_info: dict[str, Any]) -> list[str]:
     return get_tables_for_database(conn_info, conn_info["database"])
 
 
+_SAFE_IDENTIFIER_RE = re.compile(r"^[A-Za-z0-9_\-\.]+$")
+
+
+def _validate_identifier(name: str) -> None:
+    if not _SAFE_IDENTIFIER_RE.match(name):
+        raise ValueError(f"Invalid identifier: {name!r}")
+
+
 def get_ddl(conn_info: dict[str, Any], table_name: str) -> str:
     if conn_info["source_type"] == "mysql":
         with mysql_conn(conn_info) as conn, conn.cursor() as cursor:
             cursor.execute(f"SHOW CREATE TABLE `{table_name}`")
             row = cursor.fetchone()
             return row["Create Table"]
+    _validate_identifier(table_name)
     client = _clickhouse_client(conn_info)
     row = client.execute(f"SHOW CREATE TABLE {table_name}")
     return row[0][0] if row else ""
@@ -126,6 +136,7 @@ def get_sample(conn_info: dict[str, Any], table_name: str, limit: int = 1000) ->
         with mysql_conn(conn_info) as conn, conn.cursor() as cursor:
             cursor.execute(f"SELECT * FROM `{table_name}` LIMIT %s", (limit,))
             return list(cursor.fetchall())
+    _validate_identifier(table_name)
     client = _clickhouse_client(conn_info)
     query = f"SELECT * FROM {table_name} LIMIT {limit}"
     data, columns = client.execute(query, with_column_types=True)
@@ -138,6 +149,7 @@ def get_row_count(conn_info: dict[str, Any], table_name: str) -> int:
         with mysql_conn(conn_info) as conn, conn.cursor() as cursor:
             cursor.execute(f"SELECT COUNT(*) AS c FROM `{table_name}`")
             return int(cursor.fetchone()["c"])
+    _validate_identifier(table_name)
     client = _clickhouse_client(conn_info)
     row = client.execute(f"SELECT COUNT(*) FROM {table_name}")
     return int(row[0][0]) if row else 0
@@ -150,16 +162,25 @@ def execute_readonly_sql(conn_info: dict[str, Any], sql: str, limit: int = 200) 
     if not lowered.startswith(allowed_prefixes):
         return {"ok": False, "error": "仅允许只读查询语句（SELECT/SHOW/WITH/DESC/EXPLAIN）", "columns": [], "rows": []}
 
+    # Only SELECT/WITH can be safely wrapped in a subquery; SHOW/DESC/EXPLAIN cannot
+    can_wrap = lowered.startswith(("select", "with"))
+
     if conn_info["source_type"] == "mysql":
         with mysql_conn(conn_info) as conn, conn.cursor() as cursor:
-            cursor.execute(f"SELECT * FROM ({sql_clean}) __chatbi_sub LIMIT %s", (limit,))
-            rows = list(cursor.fetchall())
-            columns = list(rows[0].keys()) if rows else []
+            if can_wrap:
+                cursor.execute(f"SELECT * FROM ({sql_clean}) __chatbi_sub LIMIT %s", (limit,))
+            else:
+                cursor.execute(sql_clean)
+            rows = list(cursor.fetchall())[:limit]
+            columns = list(rows[0].keys()) if rows else [d[0] for d in (cursor.description or [])]
             return {"ok": True, "columns": columns, "rows": rows}
 
     client = _clickhouse_client(conn_info)
-    wrapped = f"SELECT * FROM ({sql_clean}) LIMIT {limit}"
-    data, cols = client.execute(wrapped, with_column_types=True)
+    if can_wrap:
+        data, cols = client.execute(f"SELECT * FROM ({sql_clean}) LIMIT {limit}", with_column_types=True)
+    else:
+        data, cols = client.execute(sql_clean, with_column_types=True)
+        data = data[:limit]
     col_names = [c[0] for c in cols]
     rows = [dict(zip(col_names, row)) for row in data]
     return {"ok": True, "columns": col_names, "rows": rows}

@@ -16,25 +16,43 @@ def _has_llm_key() -> bool:
     return bool(settings.deepseek_api_key or settings.openai_api_key)
 
 
+_llm_client: AsyncOpenAI | None = None
+
+
 def _client() -> AsyncOpenAI:
+    global _llm_client
+    if _llm_client is not None:
+        return _llm_client
     api_key = settings.deepseek_api_key or settings.openai_api_key
     if not api_key:
         raise RuntimeError("DEEPSEEK_API_KEY or OPENAI_API_KEY is required")
     if settings.deepseek_api_key:
-        return AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com")
-    return AsyncOpenAI(api_key=api_key)
+        _llm_client = AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+    else:
+        _llm_client = AsyncOpenAI(api_key=api_key)
+    return _llm_client
 
 
 async def _retry_json(call: Callable[[], Awaitable[str]], max_attempts: int = 3, delay: int = 1) -> dict[str, Any]:
+    import logging
+    _logger = logging.getLogger(__name__)
     last_error: Exception | None = None
-    for _ in range(max_attempts):
+    last_raw: str = ""
+    for attempt in range(max_attempts):
         try:
-            raw = await call()
-            return json.loads(raw)
+            last_raw = await call()
+            return json.loads(last_raw)
         except Exception as e:  # noqa: BLE001
             last_error = e
+            _logger.warning(
+                "LLM JSON parse failed (attempt %d/%d): %s | raw response: %.500s",
+                attempt + 1,
+                max_attempts,
+                e,
+                last_raw,
+            )
             await asyncio.sleep(delay)
-    raise RuntimeError(f"LLM JSON parse failed: {last_error}")
+    raise RuntimeError(f"LLM JSON parse failed after {max_attempts} attempts: {last_error}")
 
 
 async def _chat_json(prompt: str) -> dict[str, Any]:
@@ -92,7 +110,7 @@ async def classify_question_intent(question: str) -> dict[str, str]:
             "reason": "未配置LLM Key，使用规则进行意图识别",
         }
     prompt = f"""你是 ChatBI 助手的意图分类器。
-请判断用户问题是否需要“生成并执行SQL”。
+请判断用户问题是否需要"生成并执行SQL"。
 
 分类规则：
 1) 若用户明确要查数、统计、趋势、明细、排行、对比、筛选，返回 sql_query
@@ -275,7 +293,7 @@ async def analyze_table(
             f"- {table_name} 用于承载该业务域相关的核心数据。\n"
             f"- 关联数据域：{('、'.join(domain_names) if domain_names else '未归属明确数据域')}。\n\n"
             "数据定位\n"
-            f"- 数据源描述：{datasource_desc}。\n"
+            f"- 关联业务域：{('、'.join(domain_names) if domain_names else '未归属明确业务域')}。\n"
             f"- 数据库描述：{database_desc}。\n"
             f"- 表级描述：{table_desc}。\n\n"
             "核心口径\n"
@@ -342,7 +360,7 @@ async def analyze_table(
 - <1-3条>
 
 数据定位
-- <2-4条，覆盖数据域/数据源/数据库/表自身描述>
+- <2-4条，覆盖业务域/数据库/表自身描述>
 
 核心口径
 - <2-4条，给出关键口径、关键维度、关键指标>
@@ -378,10 +396,12 @@ async def generate_sql(question: str, table_schema: str, table_summary: str) -> 
         }
     prompt = f"""你是数据分析专家，请根据信息生成MySQL SQL。
 必须遵循：
-1) 优先使用“优先上下文-数据源采集信息”和“优先上下文-AI分析信息”中的信息确定数据来源、业务口径和可用表。
-2) 仅在上下文不足时，才参考“历史相似问答”。
+1) 优先使用"优先上下文-数据源采集信息"和"优先上下文-AI分析信息"中的信息确定数据来源、业务口径和可用表。
+2) 仅在上下文不足时，才参考"历史相似问答"。
 3) SQL 必须可执行、只读、无写操作。
-4) explanation 需说明你如何利用数据源采集信息与AI分析信息。
+4) SQL 必须格式化输出：关键字大写，每个子句（SELECT/FROM/WHERE/JOIN/GROUP BY/ORDER BY/HAVING/LIMIT）单独一行，嵌套子查询缩进2个空格。
+5) explanation 需说明你如何利用数据源采集信息与AI分析信息。
+6) 禁止输出 markdown 代码块。
 
 context: {table_schema}
 summary: {table_summary}
@@ -390,12 +410,32 @@ question: {question}
     return await _chat_json(prompt)
 
 
+def _format_sql(sql: str) -> str:
+    """Basic SQL formatter: uppercase keywords, one clause per line."""
+    keywords = [
+        "SELECT", "FROM", "WHERE", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN",
+        "JOIN", "ON", "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET",
+        "UNION ALL", "UNION", "WITH",
+    ]
+    result = sql.strip()
+    for kw in keywords:
+        result = re.sub(rf"(?i)\b{re.escape(kw)}\b", kw, result)
+    clause_re = re.compile(
+        r"\b(SELECT|FROM|WHERE|(?:LEFT|RIGHT|INNER|OUTER)?\s*JOIN|ON|GROUP BY|ORDER BY|HAVING|LIMIT|OFFSET|UNION(?: ALL)?|WITH)\b",
+        re.IGNORECASE,
+    )
+    result = clause_re.sub(lambda m: "\n" + m.group(0).upper(), result)
+    lines = [line.strip() for line in result.splitlines() if line.strip()]
+    return "\n".join(lines)
+
+
 def sanitize_sql_text(sql: str) -> str:
     cleaned = (sql or "").strip()
     if cleaned.startswith("```"):
         cleaned = re.sub(r"^```[a-zA-Z]*\s*", "", cleaned)
         cleaned = re.sub(r"\s*```$", "", cleaned)
     cleaned = cleaned.strip().rstrip(";").strip()
+    cleaned = _format_sql(cleaned)
     return cleaned
 
 
@@ -419,7 +459,8 @@ async def repair_failed_sql(
 1) 只允许输出 JSON，键为 sql,reason。
 2) sql 必须是可执行只读语句（SELECT/SHOW/WITH/DESC/EXPLAIN）。
 3) 必须优先依据 error_message 修复，不要凭空新增不存在的字段。
-4) 禁止输出 markdown 代码块。
+4) SQL 必须格式化输出：关键字大写，每个子句单独一行，嵌套子查询缩进2个空格。
+5) 禁止输出 markdown 代码块。
 
 question: {question}
 failed_sql: {sanitized_failed_sql}

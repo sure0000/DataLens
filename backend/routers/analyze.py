@@ -1,4 +1,5 @@
 import asyncio
+import logging
 import threading
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -22,6 +23,8 @@ from services.profiler import profile_column
 from services.schema_extractor import get_columns, get_ddl, get_row_count, get_sample, get_tables_meta_for_database
 
 router = APIRouter(prefix="/api", tags=["analyze"])
+
+_logger = logging.getLogger(__name__)
 
 
 class AnalyzeBody(BaseModel):
@@ -203,6 +206,7 @@ async def _run_analyze(table_id: int, table_name: str, conn_info: dict) -> None:
         t.status = "done"
         db.commit()
     except Exception:  # noqa: BLE001
+        _logger.exception("Analysis failed for table_id=%s table=%s", table_id, table_name)
         t = db.get(TableMeta, table_id)
         if t:
             t.status = "error"

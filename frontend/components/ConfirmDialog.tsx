@@ -1,5 +1,7 @@
 "use client";
 
+import { useEffect, useRef } from "react";
+
 type ConfirmDialogProps = {
   open: boolean;
   title: string;
@@ -23,6 +25,26 @@ export default function ConfirmDialog({
   onConfirm,
   onCancel
 }: ConfirmDialogProps) {
+  const cancelRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.activeElement as HTMLElement | null;
+    setTimeout(() => cancelRef.current?.focus(), 0);
+    return () => {
+      prev?.focus();
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [open, onCancel]);
+
   if (!open) return null;
 
   return (
@@ -38,12 +60,12 @@ export default function ConfirmDialog({
         aria-labelledby="confirm-dialog-title"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 id="confirm-dialog-title" className="text-[16px] font-semibold text-[#111827]">
+        <h3 id="confirm-dialog-title" className="text-[16px] font-semibold text-[var(--app-text-primary)]">
           {title}
         </h3>
-        {description ? <p className="mt-2 text-[14px] leading-6 text-[#4b5563]">{description}</p> : null}
+        {description ? <p className="mt-2 text-[14px] leading-6 text-[var(--app-text-secondary)]">{description}</p> : null}
         <div className="mt-5 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-          <button className="app-dialog-btn app-dialog-btn-secondary w-full sm:w-auto" onClick={onCancel} disabled={loading}>
+          <button ref={cancelRef} className="app-dialog-btn app-dialog-btn-secondary w-full sm:w-auto" onClick={onCancel} disabled={loading}>
             {cancelText}
           </button>
           <button className={`app-dialog-btn ${danger ? "app-dialog-btn-danger" : "app-dialog-btn-primary"} w-full sm:w-auto`} onClick={onConfirm} disabled={loading}>

@@ -75,7 +75,7 @@ def _build_priority_context(db: Session, table_id: int | None) -> tuple[str, str
         )
     for d in datasources:
         context_lines.append(
-            f"- 数据源[{d.id}] {d.name} ({d.source_type}) {d.username}@{d.host}:{d.port}/{d.database} | 备注: {d.description or '无'}"
+            f"- 数据源[{d.id}] {d.name} ({d.source_type}) 数据库={d.database} | 备注: {d.description or '无'}"
         )
 
     analysis_lines = ["[优先上下文-AI分析信息]"]

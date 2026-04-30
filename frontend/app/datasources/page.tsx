@@ -65,6 +65,7 @@ export default function DataSourcesPage() {
     action: () => Promise<void> | void;
   } | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
   async function load() {
     setLoading(true);
@@ -93,7 +94,19 @@ export default function DataSourcesPage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [isModalOpen]);
 
+  function validateForm(): boolean {
+    const errors: Record<string, string> = {};
+    if (!form.name.trim()) errors.name = "名称不能为空";
+    if (!form.host.trim()) errors.host = "Host 不能为空";
+    if (!form.database.trim()) errors.database = "Database 不能为空";
+    if (!form.username.trim()) errors.username = "Username 不能为空";
+    if (!form.port || form.port <= 0) errors.port = "Port 必须为正整数";
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  }
+
   async function create() {
+    if (!validateForm()) return;
     setSubmitting(true);
     try {
       await api("/api/datasources", { method: "POST", body: JSON.stringify(form) });
@@ -211,6 +224,7 @@ export default function DataSourcesPage() {
     setTestResult("");
     setModalStep("type");
     setIsModalOpen(false);
+    setFormErrors({});
   }
 
   const normalizedKeyword = keyword.trim().toLowerCase();
@@ -329,23 +343,36 @@ export default function DataSourcesPage() {
                 <label className="app-form-label">
                   <span>名称（必填，页面显示名）</span>
                   <input
-                    className="app-input"
+                    className={`app-input ${formErrors.name ? "is-error" : ""}`}
                     placeholder="例如：生产MySQL、本地ClickHouse"
                     value={form.name}
+                    aria-describedby={formErrors.name ? "err-name" : undefined}
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
                   />
+                  {formErrors.name && <span id="err-name" className="app-field-error">{formErrors.name}</span>}
                 </label>
-                <label className="app-form-label">
-                  <span>类型</span>
-                  <select
-                    className="app-input"
-                    value={form.source_type}
-                    onChange={(e) => setForm({ ...form, source_type: e.target.value })}
-                  >
-                    <option value="mysql">mysql</option>
-                    <option value="clickhouse">clickhouse</option>
-                  </select>
-                </label>
+                {!editingId && (
+                  <div className="app-form-label">
+                    <span>类型</span>
+                    <div className="flex items-center gap-2 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2 text-sm text-[#374151]">
+                      {form.source_type === "mysql" ? "MySQL" : "ClickHouse"}
+                      <span className="app-text-muted text-xs">（已在上一步选择）</span>
+                    </div>
+                  </div>
+                )}
+                {!!editingId && (
+                  <label className="app-form-label">
+                    <span>类型</span>
+                    <select
+                      className="app-input"
+                      value={form.source_type}
+                      onChange={(e) => setForm({ ...form, source_type: e.target.value })}
+                    >
+                      <option value="mysql">mysql</option>
+                      <option value="clickhouse">clickhouse</option>
+                    </select>
+                  </label>
+                )}
                 <label className="app-form-label sm:col-span-2">
                   <span>备注（选填，用途说明）</span>
                   <input
@@ -358,34 +385,47 @@ export default function DataSourcesPage() {
                 <p className="app-text-muted text-xs sm:col-span-2">名称用于列表展示；备注用于记录数据源用途与环境信息。</p>
                 <label className="app-form-label">
                   <span>Host</span>
-                  <input className="app-input" placeholder="127.0.0.1" value={form.host} onChange={(e) => setForm({ ...form, host: e.target.value })} />
+                  <input
+                    className={`app-input ${formErrors.host ? "is-error" : ""}`}
+                    placeholder="127.0.0.1"
+                    value={form.host}
+                    aria-describedby={formErrors.host ? "err-host" : undefined}
+                    onChange={(e) => setForm({ ...form, host: e.target.value })}
+                  />
+                  {formErrors.host && <span id="err-host" className="app-field-error">{formErrors.host}</span>}
                 </label>
                 <label className="app-form-label">
                   <span>Port</span>
                   <input
-                    className="app-input"
+                    className={`app-input ${formErrors.port ? "is-error" : ""}`}
                     placeholder="3306"
                     value={form.port}
+                    aria-describedby={formErrors.port ? "err-port" : undefined}
                     onChange={(e) => setForm({ ...form, port: Number(e.target.value) })}
                   />
+                  {formErrors.port && <span id="err-port" className="app-field-error">{formErrors.port}</span>}
                 </label>
                 <label className="app-form-label">
                   <span>Database</span>
                   <input
-                    className="app-input"
+                    className={`app-input ${formErrors.database ? "is-error" : ""}`}
                     placeholder="ecommerce"
                     value={form.database}
+                    aria-describedby={formErrors.database ? "err-database" : undefined}
                     onChange={(e) => setForm({ ...form, database: e.target.value })}
                   />
+                  {formErrors.database && <span id="err-database" className="app-field-error">{formErrors.database}</span>}
                 </label>
                 <label className="app-form-label">
                   <span>Username</span>
                   <input
-                    className="app-input"
+                    className={`app-input ${formErrors.username ? "is-error" : ""}`}
                     placeholder="root"
                     value={form.username}
+                    aria-describedby={formErrors.username ? "err-username" : undefined}
                     onChange={(e) => setForm({ ...form, username: e.target.value })}
                   />
+                  {formErrors.username && <span id="err-username" className="app-field-error">{formErrors.username}</span>}
                 </label>
                 <label className="app-form-label sm:col-span-2">
                   <span>Password</span>

@@ -101,6 +101,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [projects, setProjects] = useState<ChatProject[]>([]);
   const [activeSessionId, setActiveSessionId] = useState("");
@@ -290,11 +291,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div className="app-shell">
+      {/* Mobile overlay */}
+      <div
+        className={`app-sidebar-overlay ${mobileOpen ? "is-open" : ""}`}
+        onClick={() => setMobileOpen(false)}
+        aria-hidden="true"
+      />
       <aside
         aria-label="应用主导航"
         className={`app-sidebar flex shrink-0 overflow-hidden transition-[width] duration-300 ease-in-out ${
           sidebarCollapsed ? "w-[68px] md:w-[76px]" : "w-[272px] lg:w-[288px]"
-        }`}
+        } ${mobileOpen ? "is-mobile-open" : ""}`}
       >
         <div className="mb-2 flex items-center justify-between gap-1">
           {!sidebarCollapsed && (
@@ -510,7 +517,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                                   重命名
                                 </button>
                                 <button
-                                  className="app-control-button w-full justify-start text-rose-600 hover:text-rose-700"
+                                  className="app-control-button w-full justify-start text-[var(--app-danger)] hover:text-[var(--app-danger-hover)]"
                                   onClick={() => {
                                     setPendingDeleteProjectId(project.id);
                                     setMenuProjectId("");
@@ -538,6 +545,15 @@ export default function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <main id="main-content" className="flex min-h-screen min-w-0 flex-1 flex-col bg-[var(--app-main-bg)]" tabIndex={-1}>
+        <button
+          className="app-control-button fixed left-3 top-3 z-20 md:hidden"
+          onClick={() => setMobileOpen(true)}
+          aria-label="打开导航菜单"
+        >
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M3 6h18M3 12h18M3 18h18" />
+          </svg>
+        </button>
         {children}
       </main>
 

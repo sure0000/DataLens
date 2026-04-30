@@ -8,6 +8,8 @@ import AssistantStructuredAnswer from "../../components/AssistantStructuredAnswe
 import Breadcrumbs from "../../components/Breadcrumbs";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import EmptyState from "../../components/EmptyState";
+import SqlBlock from "../../components/SqlBlock";
+import CsvExportButton from "../../components/CsvExportButton";
 import {
   appendAssistantMessage,
   appendUserMessage,
@@ -335,7 +337,7 @@ function CopilotPageContent() {
                   </h1>
                 </div>
 
-                <div className="mb-6 flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-3 py-2 shadow-[0_1px_2px_rgba(0,0,0,0.04)]">
+                <div className="mb-6 flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-3 py-2">
                   <button
                     className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#4b5563] hover:bg-[#f3f4f6]"
                     onClick={startFromProjectLanding}
@@ -463,7 +465,7 @@ function CopilotPageContent() {
                 );
               }
               return (
-                <div key={m.id} className="rounded-2xl border border-[#e5e7eb] bg-white p-4 shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+                <div key={m.id} className="rounded-2xl border border-[#e5e7eb] bg-white p-4">
                   <div className="min-w-0">
                       {((m.explanation || "").includes("护栏") || (m.answer || "").includes("不能提供")) && (
                         <div className="mb-2 rounded-lg border border-[#fcd34d] bg-[#fffbeb] px-3 py-2 text-xs text-[#92400e]">
@@ -491,12 +493,13 @@ function CopilotPageContent() {
                     <div className="mt-3 space-y-2 border-t border-[#eef2f7] pt-3">
                       <details className="rounded-lg bg-[#f8fafc] px-3 py-2" open>
                         <summary className="cursor-pointer text-xs text-[#6b7280]">SQL</summary>
-                        <pre className="mt-2 overflow-x-auto rounded-lg bg-[#f3f4f6] p-3 text-xs text-[#111827]">{m.sql || "-- 无 SQL --"}</pre>
+                        <SqlBlock sql={m.sql || ""} />
                       </details>
-                      <details className="rounded-lg bg-[#f8fafc] px-3 py-2">
+                      <details className="rounded-lg bg-[#f8fafc] px-3 py-2" open>
                         <summary className="cursor-pointer text-xs text-[#6b7280]">执行结果</summary>
                         {!queryResult.ok && <p className="mt-2 text-sm text-rose-500">{queryResult.error || "查询执行失败"}</p>}
                         {!!queryResult.ok && (
+                          <>
                           <div className="mt-2 overflow-auto rounded-lg border border-[#e5e7eb]">
                             <table className="min-w-[560px] border-collapse text-xs text-[#374151] md:min-w-[620px]">
                               <thead>
@@ -528,6 +531,10 @@ function CopilotPageContent() {
                               </tbody>
                             </table>
                           </div>
+                          <div className="mt-2 flex justify-end">
+                            <CsvExportButton result={queryResult} />
+                          </div>
+                          </>
                         )}
                       </details>
                     </div>
@@ -570,7 +577,7 @@ function CopilotPageContent() {
 
             {loading && (
               <div className="flex items-start">
-                <div className="rounded-2xl border border-[#e5e7eb] bg-white px-4 py-3 text-sm text-[#4b5563] shadow-[0_1px_2px_rgba(0,0,0,0.03)]">
+                <div className="rounded-2xl border border-[#e5e7eb] bg-white px-4 py-3 text-sm text-[#4b5563]">
                   <p className="text-sm font-medium text-[#374151]">{stageLabelMap[streamStage]}...</p>
                   <div className="mt-2 flex gap-2">
                     {stageOrder.map((stage) => {
@@ -608,16 +615,16 @@ function CopilotPageContent() {
           </div>
             </section>
 
-            <section className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-5 pt-10">
-              <div className="mx-auto w-full max-w-3xl space-y-0">
-                <div className="h-14 rounded-t-[1.8rem] bg-gradient-to-t from-[#f7f7f8] via-[#f7f7f8]/80 to-transparent" />
-                <div className="pointer-events-auto -mt-2">
-                <div className="rounded-[1.7rem] border border-[#e5e7eb] bg-white p-2 shadow-[0_10px_28px_rgba(15,23,42,0.12)]">
+            <section className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-5">
+              <div className="mx-auto w-full max-w-3xl">
+                <div className="pointer-events-auto">
+                <div className="rounded-[1.7rem] border border-[#e5e7eb] bg-white p-2">
                   <textarea
                     ref={questionInputRef}
                     className="min-h-[86px] w-full resize-none bg-transparent px-2 py-2 text-sm leading-6 text-[#111827] outline-none placeholder:text-[#9ca3af]"
                     placeholder="例如：近30天各渠道订单转化率趋势，并标注异常波动日期"
                     value={question}
+                    maxLength={2000}
                     onChange={(e) => setQuestion(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
@@ -628,6 +635,9 @@ function CopilotPageContent() {
                   />
                   <div className="flex items-center justify-end gap-2 px-1 pb-1">
                     <p className="mr-auto self-center text-xs text-[#9ca3af]">Enter 发送，Shift+Enter 换行</p>
+                    {question.length > 1800 && (
+                      <p className="self-center text-xs text-amber-500">{question.length}/2000</p>
+                    )}
                     <button className={`inline-flex min-h-[2.1rem] items-center justify-center rounded-full border border-[#111827] bg-[#111827] px-4 text-sm font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60 ${loading ? "is-loading" : ""}`} onClick={() => submit()} disabled={loading || !question.trim()}>
                       {loading ? "生成中..." : "发送"}
                     </button>

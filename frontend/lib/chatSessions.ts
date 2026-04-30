@@ -131,9 +131,22 @@ export function readSessionState(): StoredState {
 
 function writeSessionState(next: StoredState) {
   const sessions = sortSessions(next.sessions);
-  localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
-  if (next.activeSessionId) localStorage.setItem(ACTIVE_SESSION_KEY, next.activeSessionId);
-  else localStorage.removeItem(ACTIVE_SESSION_KEY);
+  try {
+    localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
+    if (next.activeSessionId) localStorage.setItem(ACTIVE_SESSION_KEY, next.activeSessionId);
+    else localStorage.removeItem(ACTIVE_SESSION_KEY);
+  } catch (e) {
+    if (e instanceof DOMException && e.name === "QuotaExceededError") {
+      // 存储已满：删除最旧的非置顶会话后重试
+      const trimmed = sessions.filter((s) => !s.pinned).slice(0, sessions.length - 5);
+      const kept = [...sessions.filter((s) => s.pinned), ...trimmed];
+      try {
+        localStorage.setItem(SESSIONS_KEY, JSON.stringify(kept));
+      } catch {
+        // 仍然失败则静默忽略，不阻断用户操作
+      }
+    }
+  }
 }
 
 export function emitSessionUpdate() {

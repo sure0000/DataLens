@@ -19,45 +19,115 @@ type Column = {
   };
 };
 
-export default function ColumnCard({ col }: { col: Column }) {
+const SEMANTIC_TYPE_STYLE: Record<string, string> = {
+  metric: "bg-[#dbeafe] text-[#1d4ed8]",
+  dimension: "bg-[#dcfce7] text-[#15803d]",
+  time: "bg-[#fef9c3] text-[#854d0e]",
+  id: "bg-[#f3f4f6] text-[#374151]",
+};
+
+const RISK_STYLE = {
+  high: { dot: "bg-rose-500", text: "text-rose-600" },
+  medium: { dot: "bg-amber-400", text: "text-amber-600" },
+  low: { dot: "bg-emerald-400", text: "text-emerald-600" },
+};
+
+export default function ColumnCard({ col, isLast = false }: { col: Column; isLast?: boolean }) {
   const quality = col.quality_metrics || {};
   const riskLevel = quality.risk_level || "low";
-  const riskClass =
-    riskLevel === "high"
-      ? "border border-rose-300/60 bg-rose-50 text-rose-700"
-      : riskLevel === "medium"
-        ? "border border-amber-300/60 bg-amber-50 text-amber-700"
-        : "border border-emerald-300/60 bg-emerald-50 text-emerald-700";
-  const ratio = (value?: number) => `${((value || 0) * 100).toFixed(2)}%`;
+  const risk = RISK_STYLE[riskLevel];
+  const typeStyle = SEMANTIC_TYPE_STYLE[col.semantic_type] ?? "bg-[#f3f4f6] text-[#374151]";
+  const ratio = (value?: number) => `${((value || 0) * 100).toFixed(1)}%`;
+
+  const metrics: { label: string; value: string }[] = [
+    { label: "完整性", value: ratio(quality.completeness_score) },
+    { label: "重复率", value: ratio(quality.duplicate_ratio) },
+    { label: "集中度", value: ratio(quality.top1_ratio) },
+  ];
+  if (typeof quality.uniqueness_score === "number") {
+    metrics.push({ label: "唯一性", value: ratio(quality.uniqueness_score) });
+  }
 
   return (
-    <div className="app-card p-4">
-      <div className="flex flex-wrap gap-2">
-        <h4 className="break-all font-semibold text-[#111827]">{col.column_name}</h4>
-        <span className="rounded bg-[#f3f4f6] px-2 text-xs text-[#4b5563]">{col.data_type}</span>
-        <span className="rounded bg-[#eef2ff] px-2 text-xs text-[#4338ca]">{col.semantic_type}</span>
-        <span className={`rounded px-2 text-xs ${riskClass}`}>质量风险: {riskLevel}</span>
-      </div>
-      <p className="mt-2 break-words text-sm text-[#374151]">{col.semantic_desc}</p>
-      <p className="mt-2 text-xs text-[#6b7280]">
-        null率: {col.null_ratio ?? 0} | distinct: {col.distinct_count ?? 0} | 可用:
-        {col.is_usable ? "是" : "否"}
-      </p>
-      <div className="mt-2 grid gap-1 text-xs text-[#6b7280] md:grid-cols-2">
-        <span>完整性评分: {ratio(quality.completeness_score)}</span>
-        <span>唯一性评分: {ratio(quality.uniqueness_score)}</span>
-        <span>重复率: {ratio(quality.duplicate_ratio)}</span>
-        <span>头部集中度: {ratio(quality.top1_ratio)}</span>
-        {typeof quality.type_valid_ratio === "number" && <span>类型合法率: {ratio(quality.type_valid_ratio)}</span>}
-        {typeof quality.format_issue_ratio === "number" && <span>格式异常率: {ratio(quality.format_issue_ratio)}</span>}
-        {typeof quality.future_time_ratio === "number" && <span>未来时间占比: {ratio(quality.future_time_ratio)}</span>}
-      </div>
-      <div className="mt-2 flex flex-wrap gap-2 text-xs">
-        {(col.top_values ?? []).slice(0, 5).map((t, i) => (
-          <span key={i} className="rounded border border-[#e5e7eb] bg-[#f9fafb] px-2 py-1 text-[#374151]">
-            {String(t.value)} ({t.count})
-          </span>
-        ))}
+    <div className={`px-4 py-3.5 ${isLast ? "" : "border-b border-[#f3f4f6]"}`}>
+      {/* Row: name + badges | description */}
+      <div className="flex flex-wrap items-start gap-x-4 gap-y-1 sm:flex-nowrap">
+        {/* Left: name + type badges */}
+        <div className="flex min-w-[160px] max-w-[220px] shrink-0 flex-col gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="break-all font-mono text-sm font-semibold text-[#111827]">
+              {col.column_name}
+            </span>
+            {!col.is_usable && (
+              <span className="rounded bg-[#fee2e2] px-1.5 py-0.5 text-[10px] font-medium text-[#991b1b]">
+                不可用
+              </span>
+            )}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            <span className="rounded bg-[#f3f4f6] px-1.5 py-0.5 font-mono text-[11px] text-[#6b7280]">
+              {col.data_type}
+            </span>
+            {col.semantic_type && (
+              <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${typeStyle}`}>
+                {col.semantic_type}
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* Right: description + metrics */}
+        <div className="min-w-0 flex-1">
+          {col.semantic_desc ? (
+            <p className="break-words text-sm leading-6 text-[#374151]">{col.semantic_desc}</p>
+          ) : (
+            <p className="text-sm text-[#9ca3af]">暂无语义描述</p>
+          )}
+
+          {/* Metrics row */}
+          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1">
+            {/* Risk indicator */}
+            <span className={`flex items-center gap-1 text-xs ${risk.text}`}>
+              <span className={`inline-block h-1.5 w-1.5 rounded-full ${risk.dot}`} />
+              质量{riskLevel === "high" ? "高风险" : riskLevel === "medium" ? "中风险" : "良好"}
+            </span>
+
+            {/* Numeric metrics */}
+            {metrics.map((m) => (
+              <span key={m.label} className="text-xs text-[#9ca3af]">
+                {m.label}
+                <span className="ml-1 text-[#6b7280]">{m.value}</span>
+              </span>
+            ))}
+
+            {/* null / distinct */}
+            <span className="text-xs text-[#9ca3af]">
+              null率
+              <span className="ml-1 text-[#6b7280]">
+                {((col.null_ratio ?? 0) * 100).toFixed(1)}%
+              </span>
+            </span>
+            <span className="text-xs text-[#9ca3af]">
+              distinct
+              <span className="ml-1 text-[#6b7280]">{col.distinct_count ?? 0}</span>
+            </span>
+          </div>
+
+          {/* Top values */}
+          {(col.top_values ?? []).length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {(col.top_values ?? []).slice(0, 6).map((t, i) => (
+                <span
+                  key={i}
+                  className="rounded border border-[#e5e7eb] bg-[#f9fafb] px-2 py-0.5 font-mono text-[11px] text-[#6b7280]"
+                >
+                  {String(t.value)}
+                  <span className="ml-1 text-[#9ca3af]">×{t.count}</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

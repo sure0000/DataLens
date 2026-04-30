@@ -53,25 +53,23 @@ def _extract_business_description(summary_text: str) -> str:
     return text.split("\n")[0].strip()
 
 
+def _datasource_to_dict(r: DataSource) -> dict:
+    return {
+        "id": r.id,
+        "name": r.name,
+        "source_type": r.source_type,
+        "description": r.description,
+        "host": r.host,
+        "port": r.port,
+        "database": r.database,
+        "username": r.username,
+    }
+
+
 @router.get("/datasources")
 def list_datasources(db: Session = Depends(get_db)) -> dict:
     rows = db.execute(select(DataSource).order_by(DataSource.created_at.desc())).scalars().all()
-    return {
-        "datasources": [
-            {
-                "id": r.id,
-                "name": r.name,
-                "source_type": r.source_type,
-                "description": r.description,
-                "host": r.host,
-                "port": r.port,
-                "database": r.database,
-                "username": r.username,
-                "password": r.password,
-            }
-            for r in rows
-        ]
-    }
+    return {"datasources": [_datasource_to_dict(r) for r in rows]}
 
 
 @router.get("/datasources/{datasource_id}")
@@ -79,19 +77,7 @@ def get_datasource(datasource_id: int, db: Session = Depends(get_db)) -> dict:
     row = db.get(DataSource, datasource_id)
     if not row:
         raise HTTPException(status_code=404, detail="datasource not found")
-    return {
-        "datasource": {
-            "id": row.id,
-            "name": row.name,
-            "source_type": row.source_type,
-            "description": row.description,
-            "host": row.host,
-            "port": row.port,
-            "database": row.database,
-            "username": row.username,
-            "password": row.password,
-        }
-    }
+    return {"datasource": _datasource_to_dict(row)}
 
 
 @router.post("/datasources")

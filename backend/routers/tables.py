@@ -3,7 +3,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import ColumnMeta, TableMeta, TableSummary
+from models import BusinessDomain, BusinessDomainSelection, ColumnMeta, DataSource, TableMeta, TableSummary
 
 router = APIRouter(prefix="/api", tags=["tables"])
 SUMMARY_SECTIONS = ["业务描述", "数据定位", "核心口径", "使用建议", "风险边界"]
@@ -86,13 +86,45 @@ def get_table_detail(table_id: int, db: Session = Depends(get_db)) -> dict:
     cols = db.execute(select(ColumnMeta).where(ColumnMeta.table_id == table_id)).scalars().all()
     summary = db.execute(select(TableSummary).where(TableSummary.table_id == table_id)).scalar_one_or_none()
     summary_text = summary.summary if summary else ""
+
+    # Resolve datasource name
+    datasource_name = ""
+    if table.datasource_id:
+        ds = db.get(DataSource, table.datasource_id)
+        if ds:
+            datasource_name = ds.name
+
+    # Resolve associated business domains
+    domain_names: list[str] = []
+    if table.datasource_id:
+        sel_rows = (
+            db.execute(
+                select(BusinessDomainSelection).where(
+                    BusinessDomainSelection.datasource_id == table.datasource_id,
+                    BusinessDomainSelection.database_name == table.database_name,
+                    (
+                        (BusinessDomainSelection.table_name == table.table_name)
+                        | (BusinessDomainSelection.table_name.is_(None))
+                    ),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if sel_rows:
+            domain_ids = list(dict.fromkeys([r.domain_id for r in sel_rows]))
+            domains = db.execute(select(BusinessDomain).where(BusinessDomain.id.in_(domain_ids))).scalars().all()
+            domain_names = [d.name for d in domains]
+
     return {
         "table": {
             "id": table.id,
             "table_name": table.table_name,
             "database_name": table.database_name,
+            "datasource_name": datasource_name,
             "row_count": table.row_count,
             "status": table.status,
+            "domain_names": domain_names,
         },
         "columns": [
             {
