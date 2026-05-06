@@ -33,16 +33,105 @@ const emptyForm = {
   password: ""
 };
 
-function getDefaultFormByType(sourceType: string) {
-  if (sourceType === "clickhouse") {
-    return {
-      ...emptyForm,
-      name: "本地ClickHouse",
-      source_type: "clickhouse",
-      port: 9000
-    };
+const TYPE_LABEL: Record<string, string> = {
+  mysql: "MySQL",
+  mariadb: "MariaDB",
+  postgres: "PostgreSQL",
+  postgresql: "PostgreSQL",
+  greenplum: "Greenplum",
+  sqlserver: "SQL Server",
+  sqlite: "SQLite",
+  clickhouse: "ClickHouse",
+  doris: "Apache Doris",
+  starrocks: "StarRocks",
+  trino: "Trino",
+  hive: "Apache Hive"
+};
+
+function typeLabel(sourceType: string) {
+  return TYPE_LABEL[sourceType] ?? sourceType;
+}
+
+const TYPE_PICKER_GROUPS: { title: string; items: { id: string; hint: string }[] }[] = [
+  {
+    title: "关系型",
+    items: [
+      { id: "mysql", hint: "OLTP、业务库" },
+      { id: "mariadb", hint: "与 MySQL 协议兼容" },
+      { id: "postgres", hint: "PostgreSQL / 云 RDS" },
+      { id: "greenplum", hint: "MPP，PostgreSQL 协议" },
+      { id: "sqlserver", hint: "Microsoft SQL Server" },
+      { id: "sqlite", hint: "本地单文件库" }
+    ]
+  },
+  {
+    title: "分析 / 大数据",
+    items: [
+      { id: "clickhouse", hint: "列存 OLAP" },
+      { id: "doris", hint: "MySQL 协议，默认 FE 9030" },
+      { id: "starrocks", hint: "MySQL 协议，默认 9030" },
+      { id: "trino", hint: "联邦查询，库名填 catalog.schema" },
+      { id: "hive", hint: "HiveServer2，默认端口 10000" }
+    ]
   }
-  return { ...emptyForm, source_type: "mysql", port: 3306 };
+];
+
+function getDefaultFormByType(sourceType: string) {
+  const base = { ...emptyForm, source_type: sourceType };
+  switch (sourceType) {
+    case "clickhouse":
+      return { ...base, name: "本地 ClickHouse", port: 9000, database: "default" };
+    case "postgres":
+    case "postgresql":
+      return {
+        ...base,
+        name: "PostgreSQL",
+        source_type: "postgres",
+        port: 5432,
+        database: "postgres",
+        username: "postgres"
+      };
+    case "greenplum":
+      return { ...base, name: "Greenplum", port: 5432, database: "postgres", username: "gpadmin" };
+    case "sqlserver":
+      return { ...base, name: "SQL Server", port: 1433, database: "master", username: "sa" };
+    case "sqlite":
+      return {
+        ...base,
+        name: "SQLite 文件",
+        host: ".",
+        port: 0,
+        database: "/path/to/database.sqlite",
+        username: "-",
+        password: ""
+      };
+    case "mariadb":
+      return { ...base, name: "MariaDB", port: 3306 };
+    case "doris":
+      return { ...base, name: "Doris", port: 9030, database: "information_schema", username: "root" };
+    case "starrocks":
+      return { ...base, name: "StarRocks", port: 9030, database: "information_schema", username: "root" };
+    case "trino":
+      return {
+        ...base,
+        name: "Trino",
+        port: 8080,
+        database: "tpch.tiny",
+        username: "trino",
+        password: ""
+      };
+    case "hive":
+      return {
+        ...base,
+        name: "Hive",
+        port: 10000,
+        database: "default",
+        username: "hive",
+        password: ""
+      };
+    default:
+      return { ...base, source_type: "mysql", port: 3306 };
+  }
 }
 
 export default function DataSourcesPage() {
@@ -97,10 +186,14 @@ export default function DataSourcesPage() {
   function validateForm(): boolean {
     const errors: Record<string, string> = {};
     if (!form.name.trim()) errors.name = "名称不能为空";
-    if (!form.host.trim()) errors.host = "Host 不能为空";
     if (!form.database.trim()) errors.database = "Database 不能为空";
-    if (!form.username.trim()) errors.username = "Username 不能为空";
-    if (!form.port || form.port <= 0) errors.port = "Port 必须为正整数";
+    if (form.source_type === "sqlite") {
+      /* Host/Port/用户名对 SQLite 无意义，占位即可 */
+    } else {
+      if (!form.host.trim()) errors.host = "Host 不能为空";
+      if (!form.username.trim()) errors.username = "Username 不能为空";
+      if (!form.port || form.port <= 0) errors.port = "Port 必须为正整数";
+    }
     setFormErrors(errors);
     return Object.keys(errors).length === 0;
   }
@@ -213,7 +306,7 @@ export default function DataSourcesPage() {
     setIsModalOpen(true);
   }
 
-  function chooseType(sourceType: "mysql" | "clickhouse") {
+  function chooseType(sourceType: string) {
     setForm(getDefaultFormByType(sourceType));
     setModalStep("form");
   }
@@ -246,7 +339,7 @@ export default function DataSourcesPage() {
       <PageHeader
         breadcrumbs={[{ label: "首页", href: "/" }, { label: "数据源" }]}
         title="数据源管理"
-        subtitle="统一维护连接配置，支持 MySQL 与 ClickHouse。"
+        subtitle="统一维护连接配置：关系型（MySQL / MariaDB / PostgreSQL / Greenplum / SQL Server / SQLite）与分析型（ClickHouse / Doris / StarRocks / Trino / Hive）。"
         actions={
           <div className="app-toolbar">
             <input
@@ -293,7 +386,7 @@ export default function DataSourcesPage() {
         {!filteredDatasources.length && (
           <EmptyState
             title="没有匹配的数据源"
-            description="你可以调整搜索关键词，或新增一个 MySQL / ClickHouse 数据源开始分析。"
+            description="你可以调整搜索关键词，或新增一个支持列表中的数据源开始分析。"
             actionLabel="新增数据源"
             onAction={openCreateModal}
           />
@@ -328,15 +421,25 @@ export default function DataSourcesPage() {
             </div>
 
             {!editingId && modalStep === "type" ? (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <button className="app-select-card p-4 text-left" onClick={() => chooseType("mysql")}>
-                  <p className="font-semibold">MySQL</p>
-                  <p className="app-text-muted mt-1 text-sm">适合 OLTP 业务库（交易、订单、用户）</p>
-                </button>
-                <button className="app-select-card p-4 text-left" onClick={() => chooseType("clickhouse")}>
-                  <p className="font-semibold">ClickHouse</p>
-                  <p className="app-text-muted mt-1 text-sm">适合分析型场景（报表、宽表、明细聚合）</p>
-                </button>
+              <div className="space-y-6">
+                {TYPE_PICKER_GROUPS.map((group) => (
+                  <div key={group.title}>
+                    <p className="app-text-secondary-strong mb-2 text-sm font-semibold">{group.title}</p>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {group.items.map((item) => (
+                        <button
+                          key={item.id}
+                          type="button"
+                          className="app-select-card p-3 text-left"
+                          onClick={() => chooseType(item.id)}
+                        >
+                          <p className="font-semibold">{typeLabel(item.id)}</p>
+                          <p className="app-text-muted mt-0.5 text-xs">{item.hint}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -355,7 +458,7 @@ export default function DataSourcesPage() {
                   <div className="app-form-label">
                     <span>类型</span>
                     <div className="flex items-center gap-2 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2 text-sm text-[#374151]">
-                      {form.source_type === "mysql" ? "MySQL" : "ClickHouse"}
+                      {typeLabel(form.source_type)}
                       <span className="app-text-muted text-xs">（已在上一步选择）</span>
                     </div>
                   </div>
@@ -368,8 +471,21 @@ export default function DataSourcesPage() {
                       value={form.source_type}
                       onChange={(e) => setForm({ ...form, source_type: e.target.value })}
                     >
-                      <option value="mysql">mysql</option>
-                      <option value="clickhouse">clickhouse</option>
+                      <optgroup label="关系型">
+                        <option value="mysql">MySQL</option>
+                        <option value="mariadb">MariaDB</option>
+                        <option value="postgres">PostgreSQL</option>
+                        <option value="greenplum">Greenplum</option>
+                        <option value="sqlserver">SQL Server</option>
+                        <option value="sqlite">SQLite</option>
+                      </optgroup>
+                      <optgroup label="分析 / 大数据">
+                        <option value="clickhouse">ClickHouse</option>
+                        <option value="doris">Apache Doris</option>
+                        <option value="starrocks">StarRocks</option>
+                        <option value="trino">Trino</option>
+                        <option value="hive">Apache Hive</option>
+                      </optgroup>
                     </select>
                   </label>
                 )}
@@ -415,6 +531,18 @@ export default function DataSourcesPage() {
                     onChange={(e) => setForm({ ...form, database: e.target.value })}
                   />
                   {formErrors.database && <span id="err-database" className="app-field-error">{formErrors.database}</span>}
+                  {form.source_type === "sqlite" && (
+                    <span className="app-text-muted text-xs">SQLite：填写 .db 文件路径；Host/Port 可忽略。</span>
+                  )}
+                  {form.source_type === "trino" && (
+                    <span className="app-text-muted text-xs">Trino：填写 catalog.schema（如 tpch.tiny）；仅填 catalog 时将在目录中列出其下 schema。</span>
+                  )}
+                  {(form.source_type === "postgres" || form.source_type === "postgresql" || form.source_type === "greenplum") && (
+                    <span className="app-text-muted text-xs">PostgreSQL / Greenplum：此处为库名（dbname）；数据源目录中的「数据库」对应 schema。</span>
+                  )}
+                  {form.source_type === "hive" && (
+                    <span className="app-text-muted text-xs">Hive：Database 为 Hive 库名（与 SHOW DATABASES 一致）；目录中「数据库」即各 Hive database。</span>
+                  )}
                 </label>
                 <label className="app-form-label">
                   <span>Username</span>

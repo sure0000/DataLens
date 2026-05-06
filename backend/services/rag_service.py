@@ -27,7 +27,7 @@ from services.llm_service import (
     repair_failed_sql,
     sanitize_sql_text,
 )
-from services.schema_extractor import execute_readonly_sql
+from services.schema_extractor import _is_postgres_family, execute_readonly_sql
 
 
 def _latest_table_summaries(db: Session) -> dict[int, TableSummary]:
@@ -304,14 +304,35 @@ async def answer(
             datasource = db.execute(select(DataSource).order_by(DataSource.created_at.desc())).scalars().first()
 
         if datasource:
-            conn_info = {
-                "source_type": datasource.source_type,
-                "host": datasource.host,
-                "port": datasource.port,
-                "database": database_name or datasource.database,
-                "username": datasource.username,
-                "password": datasource.password,
-            }
+            if _is_postgres_family(datasource.source_type):
+                conn_info = {
+                    "source_type": datasource.source_type,
+                    "host": datasource.host,
+                    "port": datasource.port,
+                    "database": datasource.database,
+                    "namespace": database_name or "public",
+                    "username": datasource.username,
+                    "password": datasource.password,
+                }
+            elif datasource.source_type == "trino":
+                conn_info = {
+                    "source_type": "trino",
+                    "host": datasource.host,
+                    "port": datasource.port,
+                    "database": datasource.database,
+                    "namespace": database_name or datasource.database,
+                    "username": datasource.username,
+                    "password": datasource.password,
+                }
+            else:
+                conn_info = {
+                    "source_type": datasource.source_type,
+                    "host": datasource.host,
+                    "port": datasource.port,
+                    "database": database_name or datasource.database,
+                    "username": datasource.username,
+                    "password": datasource.password,
+                }
             attempted_sql = sql_text
             repair_attempts: list[dict[str, str]] = []
 

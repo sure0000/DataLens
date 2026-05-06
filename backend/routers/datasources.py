@@ -1,12 +1,20 @@
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import ColumnMeta, DataSource, TableMeta, TableSummary
 from routers.analyze import schedule_table_analyze
-from services.schema_extractor import get_columns, get_databases, get_tables, get_tables_for_database, get_tables_meta_for_database
+from services.schema_extractor import (
+    ALLOWED_SOURCE_TYPES,
+    _is_postgres_family,
+    get_columns,
+    get_databases,
+    get_tables,
+    get_tables_for_database,
+    get_tables_meta_for_database,
+)
 
 router = APIRouter(prefix="/api", tags=["datasources"])
 
@@ -20,6 +28,13 @@ class DataSourceBody(BaseModel):
     database: str
     username: str
     password: str
+
+    @field_validator("source_type")
+    @classmethod
+    def _validate_source_type(cls, v: str) -> str:
+        if v not in ALLOWED_SOURCE_TYPES:
+            raise ValueError(f"不支持的数据源类型: {v}，可选: {', '.join(sorted(ALLOWED_SOURCE_TYPES))}")
+        return v
 
 
 SUMMARY_SECTION_TITLES = {"业务描述", "数据定位", "核心口径", "使用建议", "风险边界"}
@@ -152,7 +167,13 @@ def _conn_payload(row: DataSource) -> dict:
 
 def _conn_payload_with_database(row: DataSource, database_name: str) -> dict:
     payload = _conn_payload(row)
-    payload["database"] = database_name
+    st = row.source_type
+    if _is_postgres_family(st):
+        payload["namespace"] = database_name
+    elif st == "trino":
+        payload["namespace"] = database_name
+    else:
+        payload["database"] = database_name
     return payload
 
 
@@ -314,7 +335,6 @@ def get_table_columns(datasource_id: int, table_name: str, db: Session = Depends
     if not row:
         raise HTTPException(status_code=404, detail="datasource not found")
 
-    source_columns = get_columns(_conn_payload_with_database(row, row.database), table_name)
     latest_table = (
         db.execute(
             select(TableMeta)
@@ -324,6 +344,16 @@ def get_table_columns(datasource_id: int, table_name: str, db: Session = Depends
         .scalars()
         .first()
     )
+    target_ns_or_db = latest_table.database_name if latest_table else row.database
+    if _is_postgres_family(row.source_type):
+        conn_for_cols = _conn_payload(row)
+        conn_for_cols["namespace"] = latest_table.database_name if latest_table else "public"
+    elif row.source_type == "trino":
+        conn_for_cols = _conn_payload(row)
+        conn_for_cols["namespace"] = target_ns_or_db
+    else:
+        conn_for_cols = _conn_payload_with_database(row, target_ns_or_db)
+    source_columns = get_columns(conn_for_cols, table_name)
     semantic_map: dict[str, dict] = {}
     if latest_table:
         semantic_rows = db.execute(select(ColumnMeta).where(ColumnMeta.table_id == latest_table.id)).scalars().all()
