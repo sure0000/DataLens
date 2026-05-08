@@ -5,6 +5,13 @@ export type QueryResult = {
   error?: string;
 };
 
+/** 后端 pipeline_trace / SSE trace：从用户输入到 SQL 的步骤说明 */
+export type PipelineTraceStep = {
+  id: string;
+  label: string;
+  detail?: string;
+};
+
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant";
@@ -14,6 +21,7 @@ export type ChatMessage = {
   sql?: string;
   explanation?: string;
   query_result?: QueryResult;
+  pipeline_trace?: PipelineTraceStep[];
   created_at: string;
 };
 
@@ -73,6 +81,24 @@ export function formatSessionTitle(text: string) {
   return trimmed.length > 20 ? `${trimmed.slice(0, 20)}...` : trimmed;
 }
 
+function normalizePipelineTrace(raw: unknown): PipelineTraceStep[] | undefined {
+  if (!Array.isArray(raw) || !raw.length) return undefined;
+  const out: PipelineTraceStep[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const id = typeof o.id === "string" ? o.id : "";
+    const label = typeof o.label === "string" ? o.label : "";
+    if (!id || !label) continue;
+    out.push({
+      id,
+      label,
+      detail: typeof o.detail === "string" ? o.detail : undefined
+    });
+  }
+  return out.length ? out : undefined;
+}
+
 function normalizeMessage(raw: Partial<ChatMessage>): ChatMessage {
   return {
     id: raw.id || makeId("msg"),
@@ -83,6 +109,7 @@ function normalizeMessage(raw: Partial<ChatMessage>): ChatMessage {
     sql: raw.sql || "",
     explanation: raw.explanation || "",
     query_result: raw.query_result || { ok: false, columns: [], rows: [], error: "历史记录无执行结果" },
+    pipeline_trace: normalizePipelineTrace(raw.pipeline_trace),
     created_at: raw.created_at || nowIso()
   };
 }

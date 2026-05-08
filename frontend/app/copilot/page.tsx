@@ -12,6 +12,7 @@ import ConfirmDialog from "../../components/ConfirmDialog";
 import EmptyState from "../../components/EmptyState";
 import SqlBlock from "../../components/SqlBlock";
 import CsvExportButton from "../../components/CsvExportButton";
+import CopilotExecutionTrace from "../../components/CopilotExecutionTrace";
 import {
   appendAssistantMessage,
   appendUserMessage,
@@ -27,6 +28,7 @@ import {
   type ChatProject,
   type ChatMessage,
   type ChatSession,
+  type PipelineTraceStep,
   type QueryResult
 } from "../../lib/chatSessions";
 
@@ -36,6 +38,7 @@ type AskResponse = {
   sql: string;
   explanation: string;
   query_result: QueryResult;
+  pipeline_trace?: PipelineTraceStep[];
 };
 
 type StreamStage = "intent_recognizing" | "answer_generating" | "sql_executing";
@@ -94,6 +97,7 @@ function CopilotPageContent() {
   const [editingMessageId, setEditingMessageId] = useState<string>("");
   const [editingText, setEditingText] = useState("");
   const [streamStage, setStreamStage] = useState<StreamStage>("intent_recognizing");
+  const [livePipelineTrace, setLivePipelineTrace] = useState<PipelineTraceStep[]>([]);
   const [expandedExplanationMessageIds, setExpandedExplanationMessageIds] = useState<string[]>([]);
   const [confirmState, setConfirmState] = useState<{
     title: string;
@@ -116,6 +120,10 @@ function CopilotPageContent() {
   const chatModelMenuPortalRef = useRef<HTMLUListElement | null>(null);
   const [chatModelMenuOpen, setChatModelMenuOpen] = useState(false);
   const [chatModelMenuFixedStyle, setChatModelMenuFixedStyle] = useState<CSSProperties | null>(null);
+  const bizDomainDropdownRef = useRef<HTMLDivElement | null>(null);
+  const bizDomainMenuPortalRef = useRef<HTMLUListElement | null>(null);
+  const [bizDomainMenuOpen, setBizDomainMenuOpen] = useState(false);
+  const [bizDomainMenuFixedStyle, setBizDomainMenuFixedStyle] = useState<CSSProperties | null>(null);
 
   function loadSessionsFromStorage() {
     const state = readSessionState();
@@ -184,18 +192,16 @@ function CopilotPageContent() {
 
   const chatModelDisplayFull = useMemo(() => {
     if (!llmCatalog?.has_llm) return "未配置 LLM";
-    if (chatModelSelect === llmCatalog.auto_id) return llmCatalog.auto_label;
+    if (chatModelSelect === llmCatalog.auto_id) return "自动";
     const m = preferenceChatModels.find((x) => x.id === chatModelSelect);
-    return m ? formatPreferenceModelDisplay(m) : llmCatalog.auto_label;
+    return m ? formatPreferenceModelDisplay(m) : "自动";
   }, [llmCatalog, chatModelSelect, preferenceChatModels]);
 
   const chatModelButtonTitle = useMemo(() => {
     if (!llmCatalog?.has_llm) return undefined;
-    if (chatModelSelect === llmCatalog.auto_id) {
-      return llmCatalog.auto_resolved_label || llmCatalog.auto_resolved || llmCatalog.auto_label;
-    }
+    if (chatModelSelect === llmCatalog.auto_id) return undefined;
     const m = preferenceChatModels.find((x) => x.id === chatModelSelect);
-    return m ? formatPreferenceModelDisplay(m) : "对话模型";
+    return m ? formatPreferenceModelDisplay(m) : undefined;
   }, [llmCatalog, chatModelSelect, preferenceChatModels]);
 
   useEffect(() => {
@@ -225,25 +231,35 @@ function CopilotPageContent() {
   }, [llmCatalog, chatModelChoiceIds]);
 
   useEffect(() => {
-    if (!chatModelMenuOpen) return;
+    if (!chatModelMenuOpen && !bizDomainMenuOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setChatModelMenuOpen(false);
+      if (e.key === "Escape") {
+        setChatModelMenuOpen(false);
+        setBizDomainMenuOpen(false);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [chatModelMenuOpen]);
+  }, [chatModelMenuOpen, bizDomainMenuOpen]);
 
   useEffect(() => {
-    if (!chatModelMenuOpen) return;
+    if (!chatModelMenuOpen && !bizDomainMenuOpen) return;
     const onDoc = (e: MouseEvent) => {
       const t = e.target as Node;
-      if (chatModelDropdownRef.current?.contains(t)) return;
-      if (chatModelMenuPortalRef.current?.contains(t)) return;
-      setChatModelMenuOpen(false);
+      if (chatModelMenuOpen) {
+        if (!chatModelDropdownRef.current?.contains(t) && !chatModelMenuPortalRef.current?.contains(t)) {
+          setChatModelMenuOpen(false);
+        }
+      }
+      if (bizDomainMenuOpen) {
+        if (!bizDomainDropdownRef.current?.contains(t) && !bizDomainMenuPortalRef.current?.contains(t)) {
+          setBizDomainMenuOpen(false);
+        }
+      }
     };
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
-  }, [chatModelMenuOpen]);
+  }, [chatModelMenuOpen, bizDomainMenuOpen]);
 
   useLayoutEffect(() => {
     if (!chatModelMenuOpen || !llmCatalog?.has_llm) {
@@ -295,7 +311,10 @@ function CopilotPageContent() {
   }, [chatModelMenuOpen, llmCatalog?.has_llm]);
 
   useEffect(() => {
-    if (loading) setChatModelMenuOpen(false);
+    if (loading) {
+      setChatModelMenuOpen(false);
+      setBizDomainMenuOpen(false);
+    }
   }, [loading]);
 
   useEffect(() => {
@@ -304,7 +323,12 @@ function CopilotPageContent() {
     syncState(state);
   }, [sessionIdFromUrl]);
 
-  async function streamAsk(content: string, onStageChange?: (stage: StreamStage) => void, askOpts?: Partial<AskPayload>) {
+  async function streamAsk(
+    content: string,
+    onStageChange?: (stage: StreamStage) => void,
+    askOpts?: Partial<AskPayload>,
+    onTrace?: (row: PipelineTraceStep) => void
+  ) {
     const cm = askOpts?.chat_model;
     const body: AskPayload = {
       question: content,
@@ -345,6 +369,11 @@ function CopilotPageContent() {
         } else if (event === "status") {
           const parsed = JSON.parse(data) as { stage?: StreamStage };
           if (parsed.stage) onStageChange?.(parsed.stage);
+        } else if (event === "trace") {
+          const parsed = JSON.parse(data) as PipelineTraceStep;
+          if (parsed && typeof parsed.id === "string" && typeof parsed.label === "string") {
+            onTrace?.(parsed);
+          }
         }
       }
     }
@@ -369,6 +398,7 @@ function CopilotPageContent() {
     setEditingText("");
     setExpandedExplanationMessageIds([]);
     setStreamStage("intent_recognizing");
+    setLivePipelineTrace([]);
     setLoading(true);
 
     try {
@@ -379,15 +409,35 @@ function CopilotPageContent() {
         business_domain_id: typeof sessionAfterUser.business_domain_id === "number" ? sessionAfterUser.business_domain_id : null,
         chat_model: chatModelSelect === "auto" ? null : chatModelSelect
       };
+      const traceAcc: PipelineTraceStep[] = [];
       let res: AskResponse;
       try {
-        res = await streamAsk(content, (stage) => setStreamStage(stage), askPayload);
+        res = await streamAsk(
+          content,
+          (stage) => setStreamStage(stage),
+          askPayload,
+          (row) => {
+            traceAcc.push(row);
+            setLivePipelineTrace((prev) => [...prev, row]);
+          }
+        );
       } catch {
         res = await api<AskResponse>("/api/ask", {
           method: "POST",
           body: JSON.stringify(askPayload)
         });
       }
+      const mergedPipeline: PipelineTraceStep[] | undefined = (() => {
+        const fromApi = res.pipeline_trace;
+        if (Array.isArray(fromApi) && fromApi.length) {
+          const cleaned = fromApi.filter(
+            (x): x is PipelineTraceStep =>
+              !!x && typeof x === "object" && typeof x.id === "string" && typeof x.label === "string"
+          );
+          if (cleaned.length) return cleaned;
+        }
+        return traceAcc.length ? traceAcc : undefined;
+      })();
       const assistantMessage: ChatMessage = {
         id: `msg-assistant-${Date.now()}`,
         role: "assistant",
@@ -396,6 +446,7 @@ function CopilotPageContent() {
         sql: res.sql || "",
         explanation: res.explanation || "",
         query_result: res.query_result || { ok: false, columns: [], rows: [], error: "没有返回查询结果" },
+        pipeline_trace: mergedPipeline,
         created_at: new Date().toISOString()
       };
       const next = appendAssistantMessage(sessionAfterUser.id, assistantMessage);
@@ -415,6 +466,7 @@ function CopilotPageContent() {
     } finally {
       setLoading(false);
       setStreamStage("intent_recognizing");
+      setLivePipelineTrace([]);
     }
   }
 
@@ -426,6 +478,64 @@ function CopilotPageContent() {
     const d = businessDomains.find((x) => x.id === activeSession.business_domain_id);
     return (d?.name || "").trim() || "关联业务域后可拉取该域下配置的知识库语义检索。";
   }, [activeSession, businessDomains]);
+
+  const businessDomainDisplayFull = useMemo(() => {
+    if (!activeSession) return "不关联";
+    const id = activeSession.business_domain_id;
+    if (id == null || id === undefined) return "不关联";
+    const d = businessDomains.find((x) => x.id === id);
+    return (d?.name || "").trim() || "不关联";
+  }, [activeSession, businessDomains]);
+
+  useLayoutEffect(() => {
+    if (!bizDomainMenuOpen) {
+      setBizDomainMenuFixedStyle(null);
+      return;
+    }
+    function updatePosition() {
+      const el = bizDomainDropdownRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const margin = 8;
+      const maxHCap = Math.min(window.innerHeight * 0.5, 256);
+      const spaceAbove = rect.top - margin;
+      const spaceBelow = window.innerHeight - rect.bottom - margin;
+      const preferAbove = spaceAbove >= 64 && spaceAbove >= spaceBelow - 40;
+      const minW = rect.width;
+      const left = Math.max(margin, Math.min(rect.left, window.innerWidth - minW - margin));
+      if (preferAbove) {
+        const maxH = Math.min(maxHCap, Math.max(64, spaceAbove - 4));
+        setBizDomainMenuFixedStyle({
+          position: "fixed",
+          left,
+          top: rect.top - 4,
+          minWidth: minW,
+          maxHeight: maxH,
+          transform: "translateY(-100%)",
+          zIndex: 200
+        });
+      } else {
+        const maxH = Math.min(maxHCap, Math.max(64, spaceBelow - 4));
+        setBizDomainMenuFixedStyle({
+          position: "fixed",
+          left,
+          top: rect.bottom + 4,
+          minWidth: minW,
+          maxHeight: maxH,
+          transform: "none",
+          zIndex: 200
+        });
+      }
+    }
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [bizDomainMenuOpen]);
+
   const chatBreadcrumbItems = useMemo(() => {
     const title = activeSession?.title || "新对话";
     const pid = (activeSession?.project_id || "").trim();
@@ -747,6 +857,11 @@ function CopilotPageContent() {
                           {isGeneralQaMessage ? "通用问答" : "SQL 分析"}
                         </span>
                       </div>
+                    {m.pipeline_trace && m.pipeline_trace.length > 0 ? (
+                      <div className="mb-3">
+                        <CopilotExecutionTrace steps={m.pipeline_trace} />
+                      </div>
+                    ) : null}
                     <AssistantStructuredAnswer
                       answer={m.answer}
                       explanation={m.explanation}
@@ -841,7 +956,7 @@ function CopilotPageContent() {
 
             {loading && (
               <div className="flex items-start">
-                <div className="rounded-2xl border border-app-border bg-white px-4 py-3 text-sm text-app-secondary">
+                <div className="max-w-full flex-1 rounded-2xl border border-app-border bg-white px-4 py-3 text-sm text-app-secondary">
                   <p className="text-sm font-medium text-app-ink">{stageLabelMap[streamStage]}...</p>
                   <div className="mt-2 flex gap-2">
                     {stageOrder.map((stage) => {
@@ -851,6 +966,11 @@ function CopilotPageContent() {
                       return <span key={stage} className={`h-1.5 w-14 rounded-full ${done ? "bg-app-secondary" : "bg-app-border"}`} />;
                     })}
                   </div>
+                  {livePipelineTrace.length > 0 ? (
+                    <div className="mt-3 min-w-0">
+                      <CopilotExecutionTrace steps={livePipelineTrace} compact />
+                    </div>
+                  ) : null}
                 </div>
               </div>
             )}
@@ -915,7 +1035,10 @@ function CopilotPageContent() {
                           aria-expanded={chatModelMenuOpen}
                           aria-haspopup="listbox"
                           className="flex cursor-pointer items-center gap-1 rounded-md py-0.5 text-left text-xs font-medium text-app-primary outline-none focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
-                          onClick={() => setChatModelMenuOpen((o) => !o)}
+                          onClick={() => {
+                            setBizDomainMenuOpen(false);
+                            setChatModelMenuOpen((o) => !o);
+                          }}
                         >
                           <span className="whitespace-nowrap leading-snug">{chatModelDisplayFull}</span>
                           <svg
@@ -931,31 +1054,39 @@ function CopilotPageContent() {
                         </button>
                       </div>
                       {activeSession ? (
-                        <div className="flex min-h-[2rem] max-w-[min(9.5rem,34vw)] shrink-0 items-center gap-1.5 rounded-full border border-app-border bg-app-hover px-2.5 py-1.5 sm:max-w-[11rem]">
+                        <div
+                          ref={bizDomainDropdownRef}
+                          className="relative inline-flex min-h-[2rem] w-max shrink-0 items-center gap-1.5 rounded-full border border-app-border bg-app-hover px-2.5 py-1.5"
+                        >
                           <span className="shrink-0 text-app-secondary" aria-hidden title="业务域">
                             <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
                               <path d="M4 5h7v6H4zM13 5h7v4h-7zM13 11h7v8h-7zM4 13h7v6H4z" strokeLinejoin="round" />
                             </svg>
                           </span>
-                          <select
-                            className="min-w-0 w-full max-w-full flex-1 cursor-pointer overflow-hidden text-ellipsis whitespace-nowrap border-0 bg-transparent py-0 pl-0 pr-5 text-xs font-medium text-app-primary outline-none focus-visible:ring-0 disabled:opacity-50"
-                            value={activeSession.business_domain_id ?? ""}
+                          <button
+                            type="button"
                             disabled={loading}
-                            title={selectedBusinessDomainTitle}
-                            onChange={(e) => {
-                              const raw = e.target.value;
-                              const next = raw === "" ? undefined : Number(raw);
-                              setSessionBusinessDomain(activeSession.id, Number.isFinite(next) ? next : undefined);
-                              loadSessionsFromStorage();
+                            title={activeSession.business_domain_id ? selectedBusinessDomainTitle : undefined}
+                            aria-expanded={bizDomainMenuOpen}
+                            aria-haspopup="listbox"
+                            className="flex cursor-pointer items-center gap-1 rounded-md py-0.5 text-left text-xs font-medium text-app-primary outline-none focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+                            onClick={() => {
+                              setChatModelMenuOpen(false);
+                              setBizDomainMenuOpen((o) => !o);
                             }}
                           >
-                            <option value="">不关联</option>
-                            {businessDomains.map((d) => (
-                              <option key={d.id} value={d.id}>
-                                {d.name}
-                              </option>
-                            ))}
-                          </select>
+                            <span className="whitespace-nowrap leading-snug">{businessDomainDisplayFull}</span>
+                            <svg
+                              className={`h-3.5 w-3.5 shrink-0 text-app-secondary transition-transform ${bizDomainMenuOpen ? "rotate-180" : ""}`}
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              aria-hidden
+                            >
+                              <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          </button>
                         </div>
                       ) : null}
                     </div>
@@ -1009,7 +1140,7 @@ function CopilotPageContent() {
                   setChatModelMenuOpen(false);
                 }}
               >
-                {llmCatalog.auto_label}
+                自动
               </button>
             </li>
             {preferenceChatModels.map((m) => {
@@ -1036,6 +1167,61 @@ function CopilotPageContent() {
                 </li>
               );
             })}
+          </ul>,
+          document.body
+        )}
+
+      {typeof document !== "undefined" &&
+        bizDomainMenuOpen &&
+        activeSession &&
+        bizDomainMenuFixedStyle &&
+        createPortal(
+          <ul
+            ref={bizDomainMenuPortalRef}
+            role="listbox"
+            style={bizDomainMenuFixedStyle}
+            className="w-max overflow-auto rounded-xl border border-app-border bg-app-card py-1 shadow-[var(--app-shadow-card)]"
+          >
+            <li role="none">
+              <button
+                type="button"
+                role="option"
+                aria-selected={activeSession.business_domain_id == null}
+                className={`flex w-full px-3 py-2 text-left text-xs ${
+                  activeSession.business_domain_id == null
+                    ? "bg-app-activeBg font-medium text-app-chipText"
+                    : "text-app-primary hover:bg-app-hover"
+                }`}
+                onClick={() => {
+                  setSessionBusinessDomain(activeSession.id, undefined);
+                  loadSessionsFromStorage();
+                  setBizDomainMenuOpen(false);
+                }}
+              >
+                不关联
+              </button>
+            </li>
+            {businessDomains.map((d) => (
+              <li key={d.id} role="none">
+                <button
+                  type="button"
+                  role="option"
+                  aria-selected={activeSession.business_domain_id === d.id}
+                  className={`flex w-full px-3 py-2 text-left text-xs whitespace-nowrap ${
+                    activeSession.business_domain_id === d.id
+                      ? "bg-app-activeBg font-medium text-app-chipText"
+                      : "text-app-primary hover:bg-app-hover"
+                  }`}
+                  onClick={() => {
+                    setSessionBusinessDomain(activeSession.id, d.id);
+                    loadSessionsFromStorage();
+                    setBizDomainMenuOpen(false);
+                  }}
+                >
+                  {d.name}
+                </button>
+              </li>
+            ))}
           </ul>,
           document.body
         )}

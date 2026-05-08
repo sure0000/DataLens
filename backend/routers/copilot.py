@@ -1,5 +1,6 @@
 import asyncio
 import json
+from typing import Any
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -34,10 +35,13 @@ async def ask(body: AskBody, db: Session = Depends(get_db)) -> dict:
 @router.post("/ask/stream")
 async def ask_stream(body: AskBody, db: Session = Depends(get_db)) -> StreamingResponse:
     async def event_stream():
-        status_queue: asyncio.Queue[str] = asyncio.Queue()
+        event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
         async def emit_status(stage: str):
-            await status_queue.put(stage)
+            await event_queue.put({"kind": "stage", "stage": stage})
+
+        async def emit_trace(row: dict):
+            await event_queue.put({"kind": "trace", "trace": row})
 
         answer_task = asyncio.create_task(
             answer(
@@ -46,16 +50,20 @@ async def ask_stream(body: AskBody, db: Session = Depends(get_db)) -> StreamingR
                 body.table_id,
                 body.business_domain_id,
                 stage_callback=emit_status,
+                trace_callback=emit_trace,
                 chat_model=body.chat_model,
             )
         )
 
-        while not answer_task.done() or not status_queue.empty():
+        while not answer_task.done() or not event_queue.empty():
             try:
-                stage = await asyncio.wait_for(status_queue.get(), timeout=0.15)
-                yield f"event: status\ndata: {json.dumps({'stage': stage}, ensure_ascii=False)}\n\n"
+                item = await asyncio.wait_for(event_queue.get(), timeout=0.12)
             except asyncio.TimeoutError:
                 continue
+            if item.get("kind") == "stage":
+                yield f"event: status\ndata: {json.dumps({'stage': item['stage']}, ensure_ascii=False)}\n\n"
+            elif item.get("kind") == "trace":
+                yield f"event: trace\ndata: {json.dumps(item['trace'], ensure_ascii=False)}\n\n"
 
         result = await answer_task
         payload = json.dumps(result, ensure_ascii=False)
