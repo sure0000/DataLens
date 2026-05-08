@@ -62,15 +62,25 @@ async def ask_stream(body: AskBody, db: Session = Depends(get_db)) -> StreamingR
                 continue
             if item.get("kind") == "stage":
                 yield f"event: status\ndata: {json.dumps({'stage': item['stage']}, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0)
             elif item.get("kind") == "trace":
                 yield f"event: trace\ndata: {json.dumps(item['trace'], ensure_ascii=False)}\n\n"
+                # 让出事件循环，便于 ASGI/代理尽快把分块刷到客户端，推理步骤逐条可见
+                await asyncio.sleep(0)
 
         result = await answer_task
-        payload = json.dumps(result, ensure_ascii=False)
-        for i in range(0, len(payload), 80):
-            chunk = payload[i : i + 80]
-            yield f"event: chunk\ndata: {json.dumps({'chunk': chunk}, ensure_ascii=False)}\n\n"
-            await asyncio.sleep(0.01)
+        answer_text = str(result.get("answer") or "")
+        explanation_text = str(result.get("explanation") or "")
+        piece = 160
+        for i in range(0, len(answer_text), piece):
+            chunk = answer_text[i : i + piece]
+            yield f"event: delta\ndata: {json.dumps({'field': 'answer', 'delta': chunk}, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0)
+        for i in range(0, len(explanation_text), piece):
+            chunk = explanation_text[i : i + piece]
+            yield f"event: delta\ndata: {json.dumps({'field': 'explanation', 'delta': chunk}, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0)
+        yield f"event: result\ndata: {json.dumps(result, ensure_ascii=False)}\n\n"
         yield "event: done\ndata: [DONE]\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")

@@ -21,6 +21,7 @@ from models import (
 from services.embedding_service import embed_and_store_async, search_knowledge_semantic, search_similar_async
 from services.llm_service import (
     SqlCopilotContext,
+    _heuristic_intent,
     answer_general_question,
     classify_question_intent,
     generate_sql,
@@ -239,45 +240,65 @@ async def answer(
         if trace_callback:
             await trace_callback(row)
 
+    async def trace_live(step_id: str, label: str, detail: str = "") -> None:
+        """仅用于 SSE 流式进度，不写入 pipeline_traces，避免阻塞时前端长时间无反馈。"""
+        if trace_callback:
+            d = (detail or "").strip()
+            await trace_callback({"id": step_id, "label": label, "detail": d})
+
     await emit("intent_recognizing")
+    await asyncio.sleep(0)
     q_preview = (question or "").strip()
     if len(q_preview) > 900:
         q_preview = q_preview[:900] + "…"
-    await trace_row(
-        "user_input",
-        "接收用户输入",
-        f"问题：{q_preview or '（空）'}\ntable_id={table_id!s}；business_domain_id={business_domain_id!s}",
-    )
     refs = await search_similar_async(db, question, top_k=5, table_id=table_id, ref_type="query")
+    await trace_live("live_prep", "准备上下文", "已完成相似问法检索，正在加载表结构与业务知识…")
+    await asyncio.sleep(0)
     priority_context, schema, summary_text, preferred_table_id = _build_priority_context(db, table_id)
+    await asyncio.sleep(0)
     knowledge_text = _collect_knowledge_context_text(db, question, business_domain_id, table_id)
+    await asyncio.sleep(0)
     ref_n = len(refs) if isinstance(refs, list) else 0
-    await trace_row(
-        "retrieval_context",
-        "检索与上下文准备",
-        f"相似历史问法 {ref_n} 条；知识文本约 {len(knowledge_text)} 字符；表/列语义（Schema）约 {len(schema)} 字符；数据源与表摘要已写入优先上下文。",
-    )
-    intent_info = await classify_question_intent(question, db, chat_model)
+    await trace_live("live_intent", "意图识别", "正在调用大模型判断是否需要生成 SQL…")
+    await asyncio.sleep(0)
+    _intent_timeout_s = 72.0
+    try:
+        intent_info = await asyncio.wait_for(
+            classify_question_intent(question, db, chat_model),
+            timeout=_intent_timeout_s,
+        )
+    except asyncio.TimeoutError:
+        intent_info = {
+            "intent": _heuristic_intent(question),
+            "reason": f"意图识别请求超过 {_intent_timeout_s:.0f}s 未返回，已使用规则分流",
+        }
     intent = intent_info.get("intent", "general_qa")
     reason_txt = str(intent_info.get("reason") or "").strip()
     if len(reason_txt) > 1200:
         reason_txt = reason_txt[:1200] + "…"
-    await trace_row(
-        "intent",
-        "意图判定",
-        f"分类结果：{intent}\n说明：{reason_txt or '（无）'}",
-    )
 
     if intent != "sql_query":
-        await trace_row("route", "执行路径", "判定为「通用问答」：不生成 SQL，由模型直接回答。")
+        await trace_row(
+            "reasoning_1",
+            "1. 明确用户输入，给出理解",
+            f"用户问题摘要：{q_preview or '（空）'}\n判定为「通用问答」。说明：{reason_txt or '（无）'}",
+        )
+        await trace_row(
+            "reasoning_2",
+            "2. 确认拿到的上下文信息",
+            f"已加载：业务/知识库约 {len(knowledge_text)} 字；相似历史问法 {ref_n} 条；表与数据源说明约 {len(priority_context)} 字；Schema 约 {len(schema)} 字。",
+        )
+        await trace_row(
+            "reasoning_gq",
+            "3. 执行方式",
+            "不进行单表 SQL 查询；结合上述上下文由模型生成自然语言回答。",
+        )
         guardrail = guardrail_for_question(question)
         await emit("answer_generating")
         if guardrail:
-            await trace_row("guardrail", "安全与策略", "命中预设护栏，返回合规范围内的替代说明。")
             natural_answer = guardrail["answer"]
             explanation = guardrail["reason"]
         else:
-            await trace_row("general_llm", "生成自然语言回答", "已结合知识库片段与表/数据源说明作为上下文提示，调用模型生成回答。")
             hint_parts = [p for p in (knowledge_text.strip(), priority_context.strip()) if p]
             natural_answer = await answer_general_question(
                 question, db, context_hint="\n\n".join(hint_parts), chat_model=chat_model
@@ -293,8 +314,18 @@ async def answer(
             "pipeline_trace": pipeline_traces,
         }
 
+    await trace_row(
+        "reasoning_1",
+        "1. 明确用户输入，给出理解",
+        f"用户问题摘要：{q_preview or '（空）'}\n判定为「SQL 数据分析」。说明：{reason_txt or '（无）'}",
+    )
+    await trace_row(
+        "reasoning_2",
+        "2. 确认拿到的上下文信息",
+        f"已加载：业务/知识库约 {len(knowledge_text)} 字；相似历史问法 {ref_n} 条；表与数据源说明约 {len(priority_context)} 字；列语义 Schema 约 {len(schema)} 字。",
+    )
+
     await emit("answer_generating")
-    await trace_row("route", "执行路径", "判定为「SQL 分析」：组装 Copilot 上下文并由模型生成 SQL。")
     few_shot = json.dumps(refs, ensure_ascii=False)
     copilot_context = SqlCopilotContext(
         knowledge=knowledge_text.strip(),
@@ -302,23 +333,12 @@ async def answer(
         schema=schema.strip(),
         few_shot_json=few_shot,
     )
-    await trace_row(
-        "sql_context",
-        "注入 SQL 生成上下文",
-        f"知识块 {len(knowledge_text)} 字；数据源/表说明 {len(priority_context)} 字；Schema {len(schema)} 字；Few-shot 示例 JSON {len(few_shot)} 字。模型将据此把自然语言问题转化为 SQL。",
-    )
     result = await generate_sql(
         question,
         summary_text,
         db,
         chat_model,
         copilot_context=copilot_context,
-    )
-    raw_sql = str(result.get("sql") or "").strip()
-    await trace_row(
-        "sql_model_raw",
-        "模型输出 SQL（原始）",
-        (raw_sql[:2200] + ("…" if len(raw_sql) > 2200 else "")) if raw_sql else "（模型未返回可执行片段，后续经清洗可能仍为空）",
     )
 
     # query_examples.table_id has FK constraint, so we must persist a real table id.
@@ -329,6 +349,34 @@ async def answer(
         latest_table = db.execute(select(TableMeta).order_by(TableMeta.created_at.desc())).scalars().first()
         if latest_table:
             resolved_table_id = latest_table.id
+
+    scope_lines: list[str] = []
+    if table_id:
+        tm = db.get(TableMeta, table_id)
+        if tm:
+            scope_lines.append(
+                f"选表：请求携带 table_id={table_id}，已锁定「{tm.database_name}.{tm.table_name}」；列语义、表摘要与知识库片段优先从该表注入，模型应围绕该表生成 SQL。"
+            )
+        else:
+            scope_lines.append(f"请求携带 table_id={table_id}，但库中未找到对应表元数据。")
+    elif preferred_table_id:
+        tm = db.get(TableMeta, preferred_table_id)
+        if tm:
+            scope_lines.append(
+                f"选表：未在请求中指定 table_id；已按数据源与元数据顺序将主上下文对齐到「{tm.database_name}.{tm.table_name}」（id={preferred_table_id}），Schema 片段主要来自该表及同批候选表。"
+            )
+    else:
+        scope_lines.append(
+            "选表：当前未稳定对齐到单一主表；模型仍可根据 Schema 与知识库在候选表之间推断，执行阶段会绑定到已配置的数据源。"
+        )
+    if resolved_table_id and not table_id:
+        rt = db.get(TableMeta, resolved_table_id)
+        if rt and (preferred_table_id is None or resolved_table_id != preferred_table_id):
+            scope_lines.append(
+                f"示例与向量写入绑定到 table_id={resolved_table_id}（{rt.database_name}.{rt.table_name}），"
+                "与上文自动选表不一致时多为「无指定表」下的最近表回退。"
+            )
+    await trace_row("reasoning_3", "3. 明确使用的表", "\n".join(scope_lines))
 
     if resolved_table_id is not None:
         db.add(
@@ -345,7 +393,15 @@ async def answer(
     # Execute generated SQL and return data preview.
     sql_text = sanitize_sql_text(str(result.get("sql") or ""))
     result["sql"] = sql_text
-    await trace_row("sql_sanitize", "清洗与规范化", f"用于执行的 SQL 共 {len(sql_text)} 字符。" if sql_text else "清洗后为空，将跳过执行。")
+    exp_raw = str(result.get("explanation") or "").strip()
+    exp_show = (exp_raw[:1600] + ("…" if len(exp_raw) > 1600 else "")) if exp_raw else "（模型未给出说明）"
+    sql_show = (sql_text[:3200] + ("…" if len(sql_text) > 3200 else "")) if sql_text else "（清洗后暂无可执行 SQL）"
+    await trace_row(
+        "reasoning_4",
+        "4. 查询逻辑以及 SQL",
+        f"【判定与取数逻辑】\n{exp_show}\n\n【SQL（清洗后用于执行）】\n{sql_show}",
+    )
+
     execution: dict[str, Any] = {"ok": False, "columns": [], "rows": [], "error": "未生成 SQL"}
     if sql_text:
         await emit("sql_executing")
@@ -360,12 +416,16 @@ async def answer(
             datasource = db.execute(select(DataSource).order_by(DataSource.created_at.desc())).scalars().first()
 
         if datasource:
-            await trace_row(
-                "sql_connection",
-                "选择数据源与方言",
-                f"数据源：{datasource.name or datasource.id}（{datasource.source_type}）；用于 AST 校验与执行的方言已解析。",
-            )
             dialect = source_type_to_sqlglot_dialect(datasource.source_type)
+            dialect_label = str(dialect) if dialect else str(datasource.source_type)
+            await trace_row(
+                "reasoning_5",
+                "5. 核实执行 SQL 的策略",
+                f"数据源：{datasource.name or datasource.id}\n"
+                f"连接类型：{datasource.source_type}\n"
+                f"解析出的 SQL 方言（用于语法树校验）：{dialect_label}\n"
+                f"库/命名空间：{database_name or datasource.database or '（默认）'}",
+            )
             if _is_postgres_family(datasource.source_type):
                 conn_info = {
                     "source_type": datasource.source_type,
@@ -397,15 +457,13 @@ async def answer(
                 }
             attempted_sql = sql_text
             repair_attempts: list[dict[str, str]] = []
+            emitted_reasoning_6 = False
+            last_ast_error = ""
 
             for attempt_idx in range(3):
                 ast_ok_loop, ast_err_loop = validate_readonly_sql_ast(attempted_sql, dialect=dialect)
                 if not ast_ok_loop:
-                    await trace_row(
-                        "sql_ast",
-                        f"只读 AST 校验（第 {attempt_idx + 1} 次）",
-                        f"未通过：{ast_err_loop}",
-                    )
+                    last_ast_error = str(ast_err_loop or "")
                     execution = {
                         "ok": False,
                         "columns": [],
@@ -413,11 +471,14 @@ async def answer(
                         "error": f"SQL 安全校验未通过：{ast_err_loop}",
                     }
                 else:
-                    await trace_row(
-                        "sql_ast",
-                        f"只读 AST 校验（第 {attempt_idx + 1} 次）",
-                        "通过：语句树符合只读与安全策略，准备下发到数据源执行。",
-                    )
+                    last_ast_error = ""
+                    if not emitted_reasoning_6:
+                        await trace_row(
+                            "reasoning_6",
+                            "6. 最终 SQL 执行校验",
+                            f"方言 {dialect_label}：只读与安全 AST 已通过，准备向数据源下发（第 {attempt_idx + 1} 轮）。",
+                        )
+                        emitted_reasoning_6 = True
                     try:
                         execution = await asyncio.to_thread(execute_readonly_sql, conn_info, attempted_sql)
                     except Exception as exc:  # noqa: BLE001
@@ -427,8 +488,8 @@ async def answer(
                     rows_n = len(execution.get("rows") or [])
                     cols_n = len(execution.get("columns") or [])
                     await trace_row(
-                        "sql_execute",
-                        f"执行 SQL（第 {attempt_idx + 1} 次）",
+                        "reasoning_7",
+                        "7. 执行 SQL",
                         f"成功：返回 {rows_n} 行、{cols_n} 列（预览最多 20 行由前端展示）。",
                     )
                     if attempt_idx > 0:
@@ -449,11 +510,6 @@ async def answer(
                     break
 
                 current_error = str(execution.get("error") or "SQL执行失败")
-                await trace_row(
-                    "sql_repair",
-                    f"自动修复 SQL（第 {attempt_idx + 1} 次 → {attempt_idx + 2} 次）",
-                    f"错误摘要：{current_error[:600]}{'…' if len(current_error) > 600 else ''}\n将请求模型根据错误信息改写 SQL。",
-                )
                 fix = await repair_failed_sql(
                     question=question,
                     failed_sql=attempted_sql,
@@ -466,30 +522,41 @@ async def answer(
                 next_sql = sanitize_sql_text(fix.get("sql", ""))
                 reason = fix.get("reason", "自动修复")
                 repair_attempts.append({"reason": reason, "error": current_error, "sql": next_sql})
-                preview = next_sql[:1200] + ("…" if len(next_sql) > 1200 else "")
-                await trace_row("sql_repair_result", "模型给出的修复版 SQL", preview or "（空）")
 
                 if not next_sql or next_sql == attempted_sql:
                     break
                 attempted_sql = next_sql
 
             if not execution.get("ok") and repair_attempts:
-                report_lines = [
-                    "SQL 执行失败，系统已自动尝试修复但仍未成功：",
-                    *[
-                        f"{idx + 1}. 错误：{item['error']}；修复：{item['reason']}"
-                        for idx, item in enumerate(repair_attempts)
-                    ],
-                    f"最终错误：{execution.get('error', '未知错误')}",
-                ]
-                execution["error"] = "\n".join(report_lines)
+                final_err = str(execution.get("error") or "未知错误").strip()
+                if len(final_err) > 1200:
+                    final_err = final_err[:1200] + "…"
+                execution["error"] = final_err
+            if not execution.get("ok") and last_ast_error:
+                if not emitted_reasoning_6:
+                    await trace_row(
+                        "reasoning_6",
+                        "6. 最终 SQL 执行校验",
+                        f"方言 {dialect_label}：只读 AST 未通过 — {last_ast_error[:900]}{'…' if len(last_ast_error) > 900 else ''}",
+                    )
+                elif emitted_reasoning_6:
+                    # 首轮曾通过 AST，修复后 SQL 在后续轮次未再通过 AST
+                    await trace_row(
+                        "reasoning_6_last",
+                        "6. 最终 SQL 执行校验（后续轮次）",
+                        f"方言 {dialect_label}：AST 未通过 — {last_ast_error[:900]}{'…' if len(last_ast_error) > 900 else ''}",
+                    )
         else:
             execution = {"ok": False, "columns": [], "rows": [], "error": "未配置可用数据源"}
-            await trace_row("sql_execute", "执行 SQL", "失败：未配置可用数据源。")
-
-    if sql_text and execution.get("ok") is False and not any(t.get("id") == "sql_execute" for t in pipeline_traces):
-        err = str(execution.get("error") or "未知错误")
-        await trace_row("sql_execute", "执行 SQL", f"未成功：{err[:900]}{'…' if len(err) > 900 else ''}")
+            await trace_row(
+                "reasoning_5",
+                "5. 核实执行 SQL 的策略",
+                "未找到可用数据源，无法绑定执行环境与方言。",
+            )
+            await trace_row("reasoning_6", "6. 最终 SQL 执行校验", "未配置数据源，跳过 AST 与下发校验。")
+    else:
+        await trace_row("reasoning_5", "5. 核实执行 SQL 的策略", "无有效 SQL 文本，跳过数据源与方言绑定。")
+        await trace_row("reasoning_6", "6. 最终 SQL 执行校验", "无可执行语句，未进行 AST 校验。")
 
     result["query_result"] = execution
     result["intent"] = "sql_query"

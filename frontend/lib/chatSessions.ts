@@ -12,6 +12,23 @@ export type PipelineTraceStep = {
   detail?: string;
 };
 
+/** 对话展示用：隐藏内部 SQL 修复步骤，以及「SQL 执行失败」类 trace（错误已在正文 / 执行结果区呈现） */
+/** 流式阶段临时进度（不入库） */
+export function stripStreamEphemeralTraceSteps(steps: PipelineTraceStep[]): PipelineTraceStep[] {
+  return steps.filter((s) => !s.id.startsWith("live_"));
+}
+
+export function filterCopilotTraceSteps(steps: PipelineTraceStep[]): PipelineTraceStep[] {
+  return steps.filter((s) => {
+    if (s.id === "sql_repair" || s.id === "sql_repair_result") return false;
+    if (s.id !== "sql_execute") return true;
+    const d = (s.detail || "").trim();
+    if (/成功[：:]/.test(d)) return true;
+    if (/未成功|^失败|失败[：:]/.test(d)) return false;
+    return true;
+  });
+}
+
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant";

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
 
+import httpx
 from openai import AsyncOpenAI
 from sqlalchemy.orm import Session
 
@@ -99,7 +100,10 @@ def _async_client_for(provider: str, db: Session) -> AsyncOpenAI:
 
     cache_key = _client_cache_key(provider, api_key, base_url)
     if cache_key not in _async_clients:
-        kwargs: dict[str, Any] = {"api_key": api_key}
+        kwargs: dict[str, Any] = {
+            "api_key": api_key,
+            "timeout": httpx.Timeout(120.0, connect=25.0),
+        }
         if base_url:
             kwargs["base_url"] = base_url
         _async_clients[cache_key] = AsyncOpenAI(**kwargs)
@@ -120,7 +124,11 @@ def _async_client_for_connection_id(db: Session, conn_id: str) -> tuple[AsyncOpe
         raise RuntimeError("大模型接入未配置模型")
     cache_key = _client_cache_key("conn", api_key, base)
     if cache_key not in _async_conn_clients:
-        _async_conn_clients[cache_key] = AsyncOpenAI(api_key=api_key, base_url=base)
+        _async_conn_clients[cache_key] = AsyncOpenAI(
+            api_key=api_key,
+            base_url=base,
+            timeout=httpx.Timeout(120.0, connect=25.0),
+        )
     return _async_conn_clients[cache_key], model_name
 
 
