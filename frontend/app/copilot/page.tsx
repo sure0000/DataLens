@@ -1,8 +1,8 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../../lib/api";
 import { API } from "../../lib/api";
 import { readUserPreferences, writeUserPreferences } from "../../lib/userPreferences";
@@ -16,6 +16,8 @@ import {
   appendAssistantMessage,
   appendUserMessage,
   createSession,
+  deleteSession,
+  focusOrCreateUnassignedSession,
   getSessionStorageKeys,
   moveSessionToProject,
   readProjects,
@@ -56,6 +58,16 @@ type LlmCatalog = {
   has_llm: boolean;
 };
 
+/** 对话模型下拉：仅展示接入自定义名与模型 ID（与偏好设置中的命名一致） */
+function formatPreferenceModelDisplay(m: LlmCatalog["models"][number]): string {
+  const name = (m.connection_name || "").trim();
+  const mid = (m.model_id || "").trim();
+  if (name && mid) return `${name} · ${mid}`;
+  if (name) return name;
+  if (mid) return mid;
+  return m.label;
+}
+
 type AskPayload = {
   question: string;
   table_id: number | null;
@@ -91,6 +103,7 @@ function CopilotPageContent() {
     action: () => Promise<void> | void;
   } | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
+  const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
   const [businessDomains, setBusinessDomains] = useState<{ id: number; name: string }[]>([]);
   const [llmCatalog, setLlmCatalog] = useState<LlmCatalog | null>(null);
   const [chatModelSelect, setChatModelSelect] = useState("auto");
@@ -99,6 +112,10 @@ function CopilotPageContent() {
   const tableIdFromUrl = searchParams.get("table");
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
   const questionInputRef = useRef<HTMLTextAreaElement | null>(null);
+  const chatModelDropdownRef = useRef<HTMLDivElement | null>(null);
+  const chatModelMenuPortalRef = useRef<HTMLUListElement | null>(null);
+  const [chatModelMenuOpen, setChatModelMenuOpen] = useState(false);
+  const [chatModelMenuFixedStyle, setChatModelMenuFixedStyle] = useState<CSSProperties | null>(null);
 
   function loadSessionsFromStorage() {
     const state = readSessionState();
@@ -123,9 +140,18 @@ function CopilotPageContent() {
       syncState(state);
       return existing;
     }
-    const created = createSession();
-    syncState(created);
-    return created.sessions.find((s) => s.id === created.activeSessionId) || null;
+    const projectParam =
+      typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("project") : null;
+    if (projectParam && projectParam !== "__unassigned__") {
+      const created = createSession();
+      if (!created.activeSessionId) return null;
+      const moved = moveSessionToProject(created.activeSessionId, projectParam);
+      syncState(moved);
+      return moved.sessions.find((s) => s.id === moved.activeSessionId) || null;
+    }
+    const focused = focusOrCreateUnassignedSession();
+    syncState(focused);
+    return focused.sessions.find((s) => s.id === focused.activeSessionId) || null;
   }
 
   useEffect(() => {
@@ -145,12 +171,42 @@ function CopilotPageContent() {
       .catch(() => setBusinessDomains([]));
   }, []);
 
+  /** 与偏好设置「可选模型」一致：仅用户新增的接入，不含环境变量内置的 DeepSeek/OpenAI 条目 */
+  const preferenceChatModels = useMemo(() => {
+    if (!llmCatalog?.has_llm) return [];
+    return llmCatalog.models.filter((m) => m.model_family === "custom" || m.id.startsWith("conn:"));
+  }, [llmCatalog]);
+
+  const chatModelChoiceIds = useMemo(() => {
+    if (!llmCatalog) return new Set<string>();
+    return new Set([llmCatalog.auto_id, ...preferenceChatModels.map((m) => m.id)]);
+  }, [llmCatalog, preferenceChatModels]);
+
+  const chatModelDisplayFull = useMemo(() => {
+    if (!llmCatalog?.has_llm) return "未配置 LLM";
+    if (chatModelSelect === llmCatalog.auto_id) return llmCatalog.auto_label;
+    const m = preferenceChatModels.find((x) => x.id === chatModelSelect);
+    return m ? formatPreferenceModelDisplay(m) : llmCatalog.auto_label;
+  }, [llmCatalog, chatModelSelect, preferenceChatModels]);
+
+  const chatModelButtonTitle = useMemo(() => {
+    if (!llmCatalog?.has_llm) return undefined;
+    if (chatModelSelect === llmCatalog.auto_id) {
+      return llmCatalog.auto_resolved_label || llmCatalog.auto_resolved || llmCatalog.auto_label;
+    }
+    const m = preferenceChatModels.find((x) => x.id === chatModelSelect);
+    return m ? formatPreferenceModelDisplay(m) : "对话模型";
+  }, [llmCatalog, chatModelSelect, preferenceChatModels]);
+
   useEffect(() => {
     api<LlmCatalog>("/api/llm/catalog")
       .then((c) => {
         setLlmCatalog(c);
         const pref = readUserPreferences().chatModel;
-        const ids = new Set([c.auto_id, ...c.models.map((m) => m.id)]);
+        const ids = new Set([
+          c.auto_id,
+          ...c.models.filter((m) => m.model_family === "custom" || m.id.startsWith("conn:")).map((m) => m.id)
+        ]);
         setChatModelSelect(ids.has(pref) ? pref : c.auto_id);
       })
       .catch(() => setLlmCatalog(null));
@@ -161,13 +217,86 @@ function CopilotPageContent() {
       const pref = readUserPreferences().chatModel;
       setChatModelSelect((prev) => {
         if (!llmCatalog) return pref;
-        const ids = new Set([llmCatalog.auto_id, ...llmCatalog.models.map((m) => m.id)]);
-        return ids.has(pref) ? pref : llmCatalog.auto_id;
+        return chatModelChoiceIds.has(pref) ? pref : llmCatalog.auto_id;
       });
     };
     window.addEventListener("datalens-user-prefs-updated", onPrefs);
     return () => window.removeEventListener("datalens-user-prefs-updated", onPrefs);
-  }, [llmCatalog]);
+  }, [llmCatalog, chatModelChoiceIds]);
+
+  useEffect(() => {
+    if (!chatModelMenuOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setChatModelMenuOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [chatModelMenuOpen]);
+
+  useEffect(() => {
+    if (!chatModelMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (chatModelDropdownRef.current?.contains(t)) return;
+      if (chatModelMenuPortalRef.current?.contains(t)) return;
+      setChatModelMenuOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [chatModelMenuOpen]);
+
+  useLayoutEffect(() => {
+    if (!chatModelMenuOpen || !llmCatalog?.has_llm) {
+      setChatModelMenuFixedStyle(null);
+      return;
+    }
+    function updatePosition() {
+      const el = chatModelDropdownRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const margin = 8;
+      const maxHCap = Math.min(window.innerHeight * 0.5, 256);
+      const spaceAbove = rect.top - margin;
+      const spaceBelow = window.innerHeight - rect.bottom - margin;
+      const preferAbove = spaceAbove >= 64 && spaceAbove >= spaceBelow - 40;
+      const minW = rect.width;
+      const left = Math.max(margin, Math.min(rect.left, window.innerWidth - minW - margin));
+      if (preferAbove) {
+        const maxH = Math.min(maxHCap, Math.max(64, spaceAbove - 4));
+        setChatModelMenuFixedStyle({
+          position: "fixed",
+          left,
+          top: rect.top - 4,
+          minWidth: minW,
+          maxHeight: maxH,
+          transform: "translateY(-100%)",
+          zIndex: 200
+        });
+      } else {
+        const maxH = Math.min(maxHCap, Math.max(64, spaceBelow - 4));
+        setChatModelMenuFixedStyle({
+          position: "fixed",
+          left,
+          top: rect.bottom + 4,
+          minWidth: minW,
+          maxHeight: maxH,
+          transform: "none",
+          zIndex: 200
+        });
+      }
+    }
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [chatModelMenuOpen, llmCatalog?.has_llm]);
+
+  useEffect(() => {
+    if (loading) setChatModelMenuOpen(false);
+  }, [loading]);
 
   useEffect(() => {
     if (!sessionIdFromUrl) return;
@@ -290,6 +419,37 @@ function CopilotPageContent() {
   }
 
   const activeSession = useMemo(() => sessions.find((s) => s.id === activeSessionId) || null, [sessions, activeSessionId]);
+  const selectedBusinessDomainTitle = useMemo(() => {
+    if (!activeSession?.business_domain_id) {
+      return "关联业务域后可拉取该域下配置的知识库语义检索。";
+    }
+    const d = businessDomains.find((x) => x.id === activeSession.business_domain_id);
+    return (d?.name || "").trim() || "关联业务域后可拉取该域下配置的知识库语义检索。";
+  }, [activeSession, businessDomains]);
+  const chatBreadcrumbItems = useMemo(() => {
+    const title = activeSession?.title || "新对话";
+    const pid = (activeSession?.project_id || "").trim();
+    if (!pid) {
+      return [
+        { label: "首页", href: "/" },
+        { label: "未归类", href: "/copilot?project=__unassigned__" },
+        { label: title }
+      ];
+    }
+    const p = projects.find((x) => x.id === pid);
+    if (p) {
+      return [
+        { label: "首页", href: "/" },
+        { label: p.name, href: `/copilot?project=${encodeURIComponent(pid)}` },
+        { label: title }
+      ];
+    }
+    return [
+      { label: "首页", href: "/" },
+      { label: "未知项目", href: "/copilot" },
+      { label: title }
+    ];
+  }, [activeSession, projects]);
   const displayMessages = useMemo(() => activeSession?.messages || [], [activeSession]);
   const projectLandingMode = !!projectIdFromUrl && !sessionIdFromUrl;
   const projectSessions = useMemo(() => {
@@ -316,17 +476,41 @@ function CopilotPageContent() {
     router.push(`/copilot?session=${encodeURIComponent(sessionId)}`);
   }
 
+  function removeSessionById(sessionId: string) {
+    const meta = sessions.find((s) => s.id === sessionId);
+    const pid = (meta?.project_id || "").trim();
+    const next = deleteSession(sessionId);
+    loadSessionsFromStorage();
+    if (sessionIdFromUrl === sessionId) {
+      if (next.activeSessionId) {
+        router.push(`/copilot?session=${encodeURIComponent(next.activeSessionId)}`);
+      } else {
+        router.push(pid ? `/copilot?project=${encodeURIComponent(pid)}` : "/copilot?project=__unassigned__");
+      }
+    }
+  }
+
   function startFromProjectLanding() {
     const content = question.trim();
     if (!content) return;
-    const created = createSession();
-    if (!created.activeSessionId) return;
-    const targetProjectId = projectIdFromUrl === "__unassigned__" ? "" : projectIdFromUrl;
-    const moved = moveSessionToProject(created.activeSessionId, targetProjectId);
-    syncState(moved);
+    const base =
+      projectIdFromUrl === "__unassigned__"
+        ? focusOrCreateUnassignedSession()
+        : (() => {
+            const c = createSession();
+            if (!c.activeSessionId) return c;
+            return moveSessionToProject(c.activeSessionId, projectIdFromUrl);
+          })();
+    if (!base.activeSessionId) return;
+    syncState(base);
     sessionStorage.setItem(PENDING_PROJECT_QUESTION_KEY, content);
     setQuestion("");
-    router.push(`/copilot?session=${encodeURIComponent(created.activeSessionId)}`);
+    const sid = base.activeSessionId;
+    if (projectIdFromUrl === "__unassigned__") {
+      router.push(`/copilot?project=__unassigned__&session=${encodeURIComponent(sid)}`);
+    } else {
+      router.push(`/copilot?session=${encodeURIComponent(sid)}`);
+    }
   }
 
   useEffect(() => {
@@ -404,75 +588,76 @@ function CopilotPageContent() {
           <>
             <section className="min-h-0 flex-1 overflow-y-auto px-4 py-5 text-app-primary sm:px-6">
               <div className="mx-auto w-full max-w-3xl">
-                <div className="mb-5 flex items-center gap-2 text-[32px] font-semibold leading-tight text-app-ink">
-                  <svg className="h-7 w-7 text-app-ink" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                    <path d="M4 7.5a2.5 2.5 0 0 1 2.5-2.5h3l1.6 1.8h6.4A2.5 2.5 0 0 1 20 9.3v7.2a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5v-9z" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
-                  </svg>
-                  <h1 className="text-[34px] font-semibold tracking-[-0.01em] text-app-primary">
+                <div className="mb-5">
+                  <h1 className="text-[28px] font-semibold leading-tight tracking-[-0.01em] text-app-primary sm:text-[32px]">
                     {activeProject?.name || (projectIdFromUrl === "__unassigned__" ? "未归类" : "临时问答")}
                   </h1>
                 </div>
 
-                <div className="mb-6 flex items-center gap-2 rounded-full border border-app-border bg-white px-3 py-2">
-                  <button
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-app-secondary hover:bg-app-hover"
-                    onClick={startFromProjectLanding}
-                    aria-label="新建聊天"
-                  >
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                      <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-                    </svg>
-                  </button>
-                  <textarea
-                    ref={questionInputRef}
-                    className="min-h-[28px] flex-1 resize-none bg-transparent text-[16px] leading-7 text-app-primary outline-none placeholder:text-app-muted"
-                    placeholder={`在${activeProject?.name || "临时问答"}中新聊天`}
-                    value={question}
-                    onChange={(e) => setQuestion(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && !e.shiftKey) {
-                        e.preventDefault();
-                        startFromProjectLanding();
-                      }
-                    }}
-                  />
-                  <div className="flex items-center gap-1">
-                    <button className="inline-flex h-7 w-7 items-center justify-center rounded-full text-app-secondary hover:bg-app-hover" aria-label="语音">
+                <div className="mb-6">
+                  <div className="flex min-h-[48px] items-end gap-2 rounded-full border border-neutral-200 bg-white px-3 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.05)] sm:items-center">
+                    <button
+                      type="button"
+                      className="mb-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800 sm:mb-0"
+                      aria-label="清空输入"
+                      onClick={() => {
+                        setQuestion("");
+                        questionInputRef.current?.focus();
+                      }}
+                    >
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <rect x="9" y="4" width="6" height="10" rx="3" stroke="currentColor" strokeWidth="1.6" />
-                        <path d="M6 11a6 6 0 0 0 12 0M12 17v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                        <path d="M12 5v14M5 12h14" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
                       </svg>
                     </button>
-                    <button className="inline-flex h-7 w-7 items-center justify-center rounded-full text-app-secondary hover:bg-app-hover" aria-label="更多">
-                      <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-                        <circle cx="6" cy="12" r="1.2" fill="currentColor" />
-                        <circle cx="12" cy="12" r="1.2" fill="currentColor" />
-                        <circle cx="18" cy="12" r="1.2" fill="currentColor" />
-                      </svg>
-                    </button>
+                    <textarea
+                      ref={questionInputRef}
+                      rows={1}
+                      className="max-h-[200px] min-h-[28px] w-0 flex-1 resize-none border-0 bg-transparent py-2 text-[15px] leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus-visible:ring-0"
+                      placeholder={`${activeProject?.name || (projectIdFromUrl === "__unassigned__" ? "未归类" : "临时问答")}中的新聊天`}
+                      value={question}
+                      maxLength={2000}
+                      onChange={(e) => setQuestion(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault();
+                          startFromProjectLanding();
+                        }
+                      }}
+                    />
                   </div>
                 </div>
 
-                <div className="mb-2 flex items-center gap-2 text-[13px]">
-                  <span className="rounded-full bg-app-subtle px-3 py-1 font-medium text-app-primary">聊天</span>
-                  <span className="px-2 py-1 text-app-secondary">来源</span>
-                </div>
+                <h2 className="mb-2 text-left text-[13px] font-medium text-app-secondary">历史会话</h2>
 
                 <div className="divide-y divide-app-subtle rounded-xl bg-white/60">
                   {projectSessions.map((session) => (
-                    <button
+                    <div
                       key={session.id}
-                      className="w-full px-3 py-3 text-left transition hover:bg-app-hover"
-                      onClick={() => openSessionFromProject(session.id)}
+                      className="flex w-full items-stretch gap-1 px-2 py-2 transition hover:bg-app-hover sm:px-3 sm:py-3"
                     >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="min-w-0">
-                          <p className="line-clamp-1 text-[20px] font-semibold text-app-primary">{session.title}</p>
-                          <p className="mt-0.5 line-clamp-1 text-[14px] text-app-secondary">{getSessionPreview(session)}</p>
+                      <button
+                        type="button"
+                        className="min-w-0 flex-1 px-1 py-1 text-left sm:px-2"
+                        onClick={() => openSessionFromProject(session.id)}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="line-clamp-1 text-[18px] font-semibold text-app-primary sm:text-[20px]">{session.title}</p>
+                            <p className="mt-0.5 line-clamp-1 text-[13px] text-app-secondary sm:text-[14px]">{getSessionPreview(session)}</p>
+                          </div>
+                          <span className="shrink-0 pt-1 text-[13px] text-app-muted sm:text-[14px]">
+                            {new Date(session.updated_at).toLocaleDateString("zh-CN")}
+                          </span>
                         </div>
-                        <span className="shrink-0 pt-1 text-[14px] text-app-muted">{new Date(session.updated_at).toLocaleDateString("zh-CN")}</span>
-                      </div>
-                    </button>
+                      </button>
+                      <button
+                        type="button"
+                        className="shrink-0 self-center rounded-md px-2 py-1.5 text-xs text-[var(--app-danger)] hover:bg-red-50"
+                        onClick={() => setPendingDeleteSessionId(session.id)}
+                      >
+                        删除
+                      </button>
+                    </div>
                   ))}
                   {!projectSessions.length && <p className="px-3 py-10 text-center text-sm text-app-muted">该项目还没有历史对话</p>}
                 </div>
@@ -481,14 +666,17 @@ function CopilotPageContent() {
           </>
         ) : (
           <>
-            <div className="border-b border-app-subtle px-4 py-3 sm:px-6">
-              <Breadcrumbs
-                items={[
-                  { label: "首页", href: "/" },
-                  { label: "Copilot", href: "/copilot" },
-                  { label: activeSession?.title || "新对话" }
-                ]}
-              />
+            <div className="flex flex-wrap items-center justify-between gap-2 border-b border-app-subtle px-4 py-3 sm:px-6">
+              <Breadcrumbs items={chatBreadcrumbItems} />
+              {activeSession ? (
+                <button
+                  type="button"
+                  className="shrink-0 text-sm text-[var(--app-danger)] hover:underline"
+                  onClick={() => setPendingDeleteSessionId(activeSession.id)}
+                >
+                  删除对话
+                </button>
+              ) : null}
             </div>
 
             <section className="min-h-0 flex-1 overflow-y-auto px-4 pb-36 pt-3 sm:px-6 sm:pb-40">
@@ -694,110 +882,15 @@ function CopilotPageContent() {
             <section className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-app-main via-app-main to-transparent px-4 pb-4 pt-8 sm:px-6 sm:pb-5">
               <div className="mx-auto w-full max-w-3xl">
                 <div className="pointer-events-auto">
-                <div className="rounded-[1.7rem] border border-app-border bg-white p-2 shadow-[0_2px_12px_rgba(15,23,42,0.06)]">
-                  {activeSession && (
-                    <div className="flex flex-col gap-2 px-2 pb-2 pt-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:gap-y-2">
-                      <label className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs text-app-secondary sm:flex-initial">
-                        <span className="shrink-0">对话模型</span>
-                        <select
-                          className="max-w-[min(100%,260px)] rounded-lg border border-app-border bg-app-hover px-2 py-1.5 text-xs text-app-primary outline-none focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1"
-                          value={chatModelSelect}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setChatModelSelect(v);
-                            writeUserPreferences({ chatModel: v });
-                          }}
-                          disabled={!llmCatalog?.has_llm}
-                        >
-                          {llmCatalog?.has_llm ? (
-                            <>
-                              <option value={llmCatalog.auto_id}>
-                                {llmCatalog.auto_label}
-                                {llmCatalog.auto_resolved_label || llmCatalog.auto_resolved
-                                  ? `（→ ${llmCatalog.auto_resolved_label || llmCatalog.auto_resolved}）`
-                                  : ""}
-                              </option>
-                              {(() => {
-                                const dsV4 = llmCatalog.models.filter((m) => m.provider === "deepseek" && m.model_family === "v4");
-                                const dsChat = llmCatalog.models.filter((m) => m.provider === "deepseek" && m.model_family === "chat");
-                                const oa = llmCatalog.models.filter((m) => m.provider === "openai");
-                                return (
-                                  <>
-                                    {dsV4.length > 0 ? (
-                                      <optgroup label="DeepSeek · V4">
-                                        {dsV4.map((m) => (
-                                          <option key={m.id} value={m.id}>
-                                            {m.label}
-                                          </option>
-                                        ))}
-                                      </optgroup>
-                                    ) : null}
-                                    {dsChat.length > 0 ? (
-                                      <optgroup label="DeepSeek · Chat / Reasoner（兼容别名）">
-                                        {dsChat.map((m) => (
-                                          <option key={m.id} value={m.id}>
-                                            {m.label}
-                                          </option>
-                                        ))}
-                                      </optgroup>
-                                    ) : null}
-                                    {oa.length > 0 ? (
-                                      <optgroup label="OpenAI 兼容">
-                                        {oa.map((m) => (
-                                          <option key={m.id} value={m.id}>
-                                            {m.label}
-                                          </option>
-                                        ))}
-                                      </optgroup>
-                                    ) : null}
-                                  </>
-                                );
-                              })()}
-                            </>
-                          ) : (
-                            <option value="auto">未配置 LLM</option>
-                          )}
-                        </select>
-                      </label>
-                      <Link href="/settings" className="shrink-0 text-[11px] text-app-link hover:underline">
-                        偏好设置
-                      </Link>
-                      <label className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs text-app-secondary sm:flex-initial">
-                        <span className="shrink-0">会话业务域</span>
-                        <select
-                          className="max-w-[min(100%,280px)] rounded-lg border border-app-border bg-app-hover px-2 py-1.5 text-xs text-app-primary outline-none focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1"
-                          value={activeSession.business_domain_id ?? ""}
-                          onChange={(e) => {
-                            const raw = e.target.value;
-                            const next = raw === "" ? undefined : Number(raw);
-                            setSessionBusinessDomain(activeSession.id, Number.isFinite(next) ? next : undefined);
-                            loadSessionsFromStorage();
-                          }}
-                        >
-                          <option value="">不关联（仅表侧知识库生效）</option>
-                          {businessDomains.map((d) => (
-                            <option key={d.id} value={d.id}>
-                              {d.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      {tableIdFromUrl && Number.isFinite(Number(tableIdFromUrl)) && (
-                        <span className="w-full text-[11px] leading-snug text-app-link sm:w-auto">
-                          URL 已指定数据表 ID {tableIdFromUrl}，请求将带上表级知识库与固定条目
-                        </span>
-                      )}
-                      <p className="w-full text-[11px] leading-snug text-app-muted sm:order-last sm:basis-full">
-                        关联业务域后可拉取该域下配置的知识库语义检索。
-                      </p>
-                    </div>
-                  )}
+                <div className="copilot-dock-composer rounded-[14px] border border-app-border bg-app-card shadow-[var(--app-shadow-card)]">
                   <textarea
                     ref={questionInputRef}
-                    className="min-h-[86px] w-full resize-none rounded-xl bg-transparent px-2 py-2 text-sm leading-relaxed text-app-primary outline-none placeholder:text-app-muted focus-visible:ring-2 focus-visible:ring-slate-200 focus-visible:ring-offset-0"
-                    placeholder="例如：近30天各渠道订单转化率趋势，并标注异常波动日期"
+                    rows={2}
+                    className="max-h-[200px] min-h-[4.5rem] w-full resize-none border-0 bg-transparent px-4 pb-2 pt-3 text-[15px] leading-relaxed text-app-primary outline-none placeholder:text-app-muted focus-visible:ring-0 disabled:opacity-50"
+                    placeholder="追加或继续提问…"
                     value={question}
                     maxLength={2000}
+                    disabled={loading}
                     onChange={(e) => setQuestion(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === "Enter" && !e.shiftKey) {
@@ -806,18 +899,79 @@ function CopilotPageContent() {
                       }
                     }}
                   />
-                  <div className="flex items-center justify-end gap-2 px-1 pb-1">
-                    <p className="mr-auto self-center text-xs text-app-muted">Enter 发送，Shift+Enter 换行</p>
-                    {question.length > 1800 && (
-                      <p className="self-center text-xs text-amber-500">{question.length}/2000</p>
-                    )}
-                    <button
-                      className={`inline-flex min-h-[2.25rem] items-center justify-center rounded-full border border-app-primary bg-app-primary px-4 text-sm font-medium text-white transition hover:bg-[var(--app-primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-primary focus-visible:ring-offset-2 focus-visible:ring-offset-app-card disabled:cursor-not-allowed disabled:opacity-60 ${loading ? "is-loading" : ""}`}
-                      onClick={() => submit()}
-                      disabled={loading || !question.trim()}
-                    >
-                      {loading ? "生成中..." : "发送"}
-                    </button>
+                  <div className="flex flex-nowrap items-center justify-between gap-2 px-3 py-2.5">
+                    <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+                      <div
+                        ref={chatModelDropdownRef}
+                        className="relative inline-flex min-h-[2rem] w-max shrink-0 items-center gap-1.5 rounded-full border border-app-border bg-app-hover px-2.5 py-1.5"
+                      >
+                        <span className="select-none shrink-0 text-[13px] leading-none text-app-secondary" aria-hidden title="模型">
+                          ∞
+                        </span>
+                        <button
+                          type="button"
+                          disabled={!llmCatalog?.has_llm || loading}
+                          title={chatModelButtonTitle}
+                          aria-expanded={chatModelMenuOpen}
+                          aria-haspopup="listbox"
+                          className="flex cursor-pointer items-center gap-1 rounded-md py-0.5 text-left text-xs font-medium text-app-primary outline-none focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
+                          onClick={() => setChatModelMenuOpen((o) => !o)}
+                        >
+                          <span className="whitespace-nowrap leading-snug">{chatModelDisplayFull}</span>
+                          <svg
+                            className={`h-3.5 w-3.5 shrink-0 text-app-secondary transition-transform ${chatModelMenuOpen ? "rotate-180" : ""}`}
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            aria-hidden
+                          >
+                            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </button>
+                      </div>
+                      {activeSession ? (
+                        <div className="flex min-h-[2rem] max-w-[min(9.5rem,34vw)] shrink-0 items-center gap-1.5 rounded-full border border-app-border bg-app-hover px-2.5 py-1.5 sm:max-w-[11rem]">
+                          <span className="shrink-0 text-app-secondary" aria-hidden title="业务域">
+                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
+                              <path d="M4 5h7v6H4zM13 5h7v4h-7zM13 11h7v8h-7zM4 13h7v6H4z" strokeLinejoin="round" />
+                            </svg>
+                          </span>
+                          <select
+                            className="min-w-0 w-full max-w-full flex-1 cursor-pointer overflow-hidden text-ellipsis whitespace-nowrap border-0 bg-transparent py-0 pl-0 pr-5 text-xs font-medium text-app-primary outline-none focus-visible:ring-0 disabled:opacity-50"
+                            value={activeSession.business_domain_id ?? ""}
+                            disabled={loading}
+                            title={selectedBusinessDomainTitle}
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              const next = raw === "" ? undefined : Number(raw);
+                              setSessionBusinessDomain(activeSession.id, Number.isFinite(next) ? next : undefined);
+                              loadSessionsFromStorage();
+                            }}
+                          >
+                            <option value="">不关联</option>
+                            {businessDomains.map((d) => (
+                              <option key={d.id} value={d.id}>
+                                {d.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      {question.length > 1800 && (
+                        <span className="text-[10px] text-amber-600">{question.length}/2000</span>
+                      )}
+                      {tableIdFromUrl && Number.isFinite(Number(tableIdFromUrl)) && (
+                        <span
+                          className="max-w-[4.5rem] truncate text-[10px] text-app-secondary"
+                          title={`URL 已指定数据表 ID ${tableIdFromUrl}，请求将带上表级知识库与固定条目`}
+                        >
+                          表 {tableIdFromUrl}
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
                 </div>
@@ -826,6 +980,65 @@ function CopilotPageContent() {
           </>
         )}
       </section>
+
+      {typeof document !== "undefined" &&
+        chatModelMenuOpen &&
+        llmCatalog &&
+        llmCatalog.has_llm &&
+        chatModelMenuFixedStyle &&
+        createPortal(
+          <ul
+            ref={chatModelMenuPortalRef}
+            role="listbox"
+            style={chatModelMenuFixedStyle}
+            className="w-max overflow-auto rounded-xl border border-app-border bg-app-card py-1 shadow-[var(--app-shadow-card)]"
+          >
+            <li role="none">
+              <button
+                type="button"
+                role="option"
+                aria-selected={chatModelSelect === llmCatalog.auto_id}
+                className={`flex w-full px-3 py-2 text-left text-xs ${
+                  chatModelSelect === llmCatalog.auto_id
+                    ? "bg-app-activeBg font-medium text-app-chipText"
+                    : "text-app-primary hover:bg-app-hover"
+                }`}
+                onClick={() => {
+                  setChatModelSelect(llmCatalog.auto_id);
+                  writeUserPreferences({ chatModel: llmCatalog.auto_id });
+                  setChatModelMenuOpen(false);
+                }}
+              >
+                {llmCatalog.auto_label}
+              </button>
+            </li>
+            {preferenceChatModels.map((m) => {
+              const line = formatPreferenceModelDisplay(m);
+              return (
+                <li key={m.id} role="none">
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={chatModelSelect === m.id}
+                    className={`flex w-full px-3 py-2 text-left text-xs whitespace-nowrap ${
+                      chatModelSelect === m.id
+                        ? "bg-app-activeBg font-medium text-app-chipText"
+                        : "text-app-primary hover:bg-app-hover"
+                    }`}
+                    onClick={() => {
+                      setChatModelSelect(m.id);
+                      writeUserPreferences({ chatModel: m.id });
+                      setChatModelMenuOpen(false);
+                    }}
+                  >
+                    {line}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>,
+          document.body
+        )}
 
       <ConfirmDialog
         open={!!confirmState}
@@ -836,6 +1049,19 @@ function CopilotPageContent() {
         loading={confirmLoading}
         onCancel={() => setConfirmState(null)}
         onConfirm={handleConfirm}
+      />
+
+      <ConfirmDialog
+        open={pendingDeleteSessionId !== null}
+        title="删除对话"
+        description="删除后无法恢复，确定删除该对话？"
+        danger
+        confirmText="删除"
+        onCancel={() => setPendingDeleteSessionId(null)}
+        onConfirm={() => {
+          if (pendingDeleteSessionId) removeSessionById(pendingDeleteSessionId);
+          setPendingDeleteSessionId(null);
+        }}
       />
     </main>
   );

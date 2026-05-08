@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
 
 type ConfirmDialogProps = {
   open: boolean;
@@ -47,7 +48,7 @@ export default function ConfirmDialog({
 
   if (!open) return null;
 
-  return (
+  const surface = (
     <div className="app-modal-backdrop app-modal-backdrop--front" role="presentation" onClick={onCancel}>
       <div
         className="app-modal-surface app-chatgpt-dialog w-full max-w-[420px] rounded-2xl p-5 sm:p-6"
@@ -71,4 +72,6 @@ export default function ConfirmDialog({
       </div>
     </div>
   );
+
+  return typeof document !== "undefined" ? createPortal(surface, document.body) : null;
 }

@@ -26,6 +26,8 @@ def get_db() -> Generator[Session, None, None]:
 
 
 def init_db() -> None:
+    import models  # noqa: F401 — 注册 ORM 元数据（含 llm_connections 等新表）
+
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
     Base.metadata.create_all(bind=engine)

@@ -187,3 +187,19 @@ class TableKnowledgeEntry(Base):
     table_id: Mapped[int] = mapped_column(ForeignKey("tables.id", ondelete="CASCADE"), nullable=False)
     knowledge_entry_id: Mapped[int] = mapped_column(ForeignKey("knowledge_entries.id", ondelete="CASCADE"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class LlmConnection(Base):
+    """用户配置的一条大模型接入（厂商 + Endpoint + Key + 固定模型）。"""
+
+    __tablename__ = "llm_connections"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    vendor_id: Mapped[str] = mapped_column(Text, nullable=False)
+    vendor_label: Mapped[str] = mapped_column(Text, nullable=False)
+    custom_name: Mapped[str] = mapped_column(Text, nullable=False)
+    base_url: Mapped[str] = mapped_column(Text, nullable=False)
+    api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)
+    model_id: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

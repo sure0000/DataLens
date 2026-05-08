@@ -157,6 +157,29 @@ export function emitSessionUpdate() {
   window.dispatchEvent(new Event(UPDATE_EVENT));
 }
 
+export function isUnusedUnassignedSession(s: ChatSession): boolean {
+  return !(s.project_id || "").trim() && !s.archived_at && s.messages.length === 0;
+}
+
+/** 未归类下仅保留一个空对话槽：有则激活并合并重复空会话，无则新建。 */
+export function focusOrCreateUnassignedSession(): StoredState {
+  const state = readSessionState();
+  const empties = state.sessions
+    .filter(isUnusedUnassignedSession)
+    .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+  if (empties.length > 0) {
+    const keep = empties[0];
+    const sessions =
+      empties.length > 1
+        ? state.sessions.filter((s) => !isUnusedUnassignedSession(s) || s.id === keep.id)
+        : state.sessions;
+    writeSessionState({ sessions, activeSessionId: keep.id });
+    emitSessionUpdate();
+    return readSessionState();
+  }
+  return createSession();
+}
+
 export function createSession(initialTitle = "新对话"): StoredState {
   const state = readSessionState();
   const ts = nowIso();
@@ -267,7 +290,7 @@ export function appendUserMessage(
 }
 
 function appendUserMessageInNewSession(content: string) {
-  const created = createSession();
+  const created = focusOrCreateUnassignedSession();
   const active = created.sessions.find((s) => s.id === created.activeSessionId);
   if (!active) {
     throw new Error("创建会话失败");

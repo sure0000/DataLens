@@ -16,6 +16,7 @@
 - 连接器：PyMySQL、clickhouse-driver
 - LLM：DeepSeek（主）/ OpenAI（备）
 - Embedding：`text-embedding-3-small`（1536维），可本地兜底
+- SQL 解析与 AST 护栏：[sqlglot](https://github.com/tobymao/sqlglot)（方言随数据源 `source_type` 映射）
 - 前端：Next.js App Router + TypeScript + Tailwind
 
 ## 3) 代码结构（高价值目录）
@@ -56,15 +57,19 @@
   - 字段统计与质量指标计算
   - 风险等级推断（low/medium/high）
 - `llm_service.py`
-  - 字段语义分析、表总结、SQL 生成
+  - 字段语义分析、表总结、SQL 生成与失败修复
+  - Copilot：`SqlCopilotContext` 将知识库 / 数据源与表分析 / 结构化字段 / 历史相似问拆成 **BUSINESS CONTEXT** 与 **FEW-SHOT** 块；`generate_sql` / `repair_failed_sql` 使用 **system（固定规则）+ user（分层上下文）** 的多条消息调用 LLM，与「语义上下文引擎」中的 Prompt 分层一致
   - JSON 输出解析重试
   - 无 API Key 的规则兜底
+- `sql_ast_guard.py`
+  - 对生成或修复后的 SQL 做 **sqlglot AST** 校验：禁止多语句、禁止 INSERT/UPDATE/DELETE/DDL 等写操作节点、限制 JOIN 数量上限
+  - `source_type_to_sqlglot_dialect`：将数据源类型映射为 sqlglot `read` 方言，再解析校验
 - `embedding_service.py`
   - 向量化写入与相似检索
   - 无 Key 的 deterministic 本地向量兜底
 - `rag_service.py`
-  - 拼接优先上下文（数据源信息 + AI 分析信息 + 历史问答）
-  - 调用 SQL 生成
+  - 组装 `SqlCopilotContext`（知识库、数据源与 AI 分析、字段 schema、向量检索到的历史问答 JSON）
+  - 调用 SQL 生成；每次执行（及自动修复重试）前经 **AST 只读校验**，未通过则不访问数据库并进入修复流程（若仍失败则返回校验或执行错误信息）
   - 写入 query history 并执行 SQL 返回结果
 
 ## 5) 核心数据流（实现视角）
@@ -82,12 +87,12 @@
 
 ### 5.2 Copilot 链路
 
-1. 接收 `question` + 可选 `table_id`
-2. 向量检索历史上下文
-3. 拼接结构化 schema 与摘要信息
-4. 调用 LLM 生成 SQL 与解释
-5. 写入 `query_examples` 与 query embedding
-6. 在目标数据源执行只读 SQL
+1. 接收 `question` + 可选 `table_id` / `business_domain_id`
+2. 向量检索历史相似问答；拉取知识库（固定条目 + 语义片段）
+3. 构建 `SqlCopilotContext`（知识库、数据源与表分析、结构化字段、few-shot JSON）与表摘要 `summary_text`
+4. 调用 LLM：`system` 承载只读/时间语义/输出格式等固定规则，`user` 承载分层 BUSINESS / FEW-SHOT / SUMMARY / QUESTION
+5. 清洗 SQL 文本后写入 `query_examples` 与 query embedding
+6. 按解析目标表解析 `DataSource`，得到 sqlglot 方言；**AST 校验通过**后再 `execute_readonly_sql`；失败时带同一 `SqlCopilotContext` 调用修复 LLM，最多重试三轮，每轮再次 AST 校验
 7. 返回 SQL + explanation + query_result
 
 ## 6) 关键数据模型
@@ -152,7 +157,7 @@
 ## 10) 现有限制与风险
 
 - `data_sources.password` 明文存储（需加密）
-- SQL 安全仅做语句前缀白名单（建议升级 AST 级校验）
+- SQL 执行入口仍保留**语句前缀白名单**（`execute_readonly_sql`）；Copilot 路径上已增加 **sqlglot AST 只读校验**（多语句、写类 AST、过多 JOIN 等），二者叠加，但复杂方言或边界语法仍可能出现「校验通过但执行失败」或「校验误伤」，需按数据源逐步调参
 - 分析任务为进程内异步/线程，不适合高并发队列化场景
 - 前端存在 `dangerouslySetInnerHTML` 渲染点，需要输入清洗
 
@@ -162,7 +167,7 @@ P0：
 
 - 数据源凭据加密存储
 - 异步任务队列化（Celery/RQ）
-- SQL AST 安全校验
+- SQL AST 安全校验：Copilot 已接入 sqlglot AST 校验；可继续增强（笛卡尔积启发式、与执行器方言对齐的细粒度规则）
 
 P1：
 
@@ -183,4 +188,5 @@ P2：
 ## 13) 参考资料
 
 - 初始设计文档：[DataLens MVP 产品设计文档](https://www.notion.so/xuyouchang/DataLens-MVP-35045c17aec08175b54fc43d811c90f9?source=copy_link)
+- 语义上下文与 Prompt 分层思路参考：[AI Semantic Context Engine（ASCE）详细方案](https://www.notion.so/35a45c17aec0815dacbdd43c058befdb)
 - 仓库说明：`README.md`

@@ -1,8 +1,9 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from database import get_db
+from services.llm_connections import connection_to_public_dict, create_connection, delete_connection, get_connection, list_connections
 from services.llm_models import catalog_models, is_allowed_semantic_value, resolve_auto_model, resolve_effective_model
 from services.runtime_llm_config import (
     apply_llm_credential_updates,
@@ -24,6 +25,68 @@ class LlmConfigBody(BaseModel):
     openai_base_url: str | None = None
     openai_api_key: str | None = None
     openai_connection_name: str | None = None
+
+
+class LlmConnectionCreateBody(BaseModel):
+    vendor_id: str = Field(..., min_length=1)
+    vendor_label: str = Field(default="", description="厂商展示名，可空则使用 vendor_id")
+    custom_name: str = Field(default="", description="自定义接入名称")
+    base_url: str = Field(..., min_length=1)
+    api_key: str = Field(..., min_length=1)
+    provider: str = Field(..., description="deepseek 或 openai（兼容通道）")
+    model_id: str = Field(..., min_length=1)
+
+
+@router.get("/llm/connections")
+def llm_connections_list(db: Session = Depends(get_db)) -> dict:
+    return {"connections": [connection_to_public_dict(r) for r in list_connections(db)]}
+
+
+@router.post("/llm/connections")
+def llm_connections_create(body: LlmConnectionCreateBody, db: Session = Depends(get_db)) -> dict:
+    try:
+        row = create_connection(
+            db,
+            vendor_id=body.vendor_id,
+            vendor_label=body.vendor_label or body.vendor_id,
+            custom_name=body.custom_name,
+            base_url=body.base_url,
+            api_key=body.api_key,
+            provider=body.provider,
+            model_id=body.model_id,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return connection_to_public_dict(row)
+
+
+@router.get("/llm/connections/{conn_id}")
+def llm_connections_get(
+    conn_id: str,
+    db: Session = Depends(get_db),
+    reveal_secret: bool = Query(default=False, description="为 true 时在响应中返回 api_key 明文（仅用于受信任环境下的详情查看）"),
+) -> dict:
+    row = get_connection(db, conn_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="接入不存在")
+    out: dict = {
+        **connection_to_public_dict(row),
+        "api_key_configured": bool((row.api_key or "").strip()),
+    }
+    if reveal_secret:
+        out["api_key"] = row.api_key or ""
+    return out
+
+
+@router.delete("/llm/connections/{conn_id}")
+def llm_connections_delete(conn_id: str, db: Session = Depends(get_db)) -> dict:
+    if not delete_connection(db, conn_id):
+        raise HTTPException(status_code=404, detail="接入不存在")
+    cat = catalog_models(db)
+    stored = get_semantic_llm_model_stored(db)
+    display = stored if stored else "auto"
+    resolved = resolve_effective_model(stored, db) if cat["has_llm"] else ""
+    return {"ok": True, "semantic_llm_model": display, "semantic_llm_model_resolved": resolved, "catalog": cat}
 
 
 @router.get("/llm/catalog")

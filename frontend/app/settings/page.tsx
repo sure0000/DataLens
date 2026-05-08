@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import Link from "next/link";
+import { createPortal } from "react-dom";
 import Breadcrumbs from "../../components/Breadcrumbs";
+import ConfirmDialog from "../../components/ConfirmDialog";
 import PageHeader from "../../components/PageHeader";
 import Toast from "../../components/Toast";
 import { api } from "../../lib/api";
@@ -21,22 +22,49 @@ type Catalog = {
     model_id: string;
     model_short_label?: string;
     model_family?: string;
+    vendor_id?: string;
   }[];
   has_llm: boolean;
 };
 
+/** 语义分析展示：名称（接入自定义名）、厂商、具体模型 ID */
+function tripletFromCatalogModel(m: Catalog["models"][number] | undefined): { name: string; vendor: string; model: string } {
+  if (!m) return { name: "—", vendor: "—", model: "—" };
+  return {
+    name: (m.connection_name || "").trim() || "—",
+    vendor: (m.kind_label || "").trim() || "—",
+    model: (m.model_id || "").trim() || "—"
+  };
+}
+
+function tripletForModelRef(catalog: Catalog, ref: string): { name: string; vendor: string; model: string } {
+  const m = catalog.models.find((x) => x.id === ref);
+  if (m) return tripletFromCatalogModel(m);
+  return { name: "—", vendor: "—", model: ref || "—" };
+}
+
+function formatTripletLine(t: { name: string; vendor: string; model: string }) {
+  return `${t.name} · ${t.vendor} · ${t.model}`;
+}
+
 type LlmConfig = {
   semantic_llm_model: string;
   semantic_llm_model_resolved: string;
-  deepseek_base_url: string;
-  openai_base_url: string;
-  deepseek_connection_name: string;
-  openai_connection_name: string;
-  deepseek_api_key_configured: boolean;
-  openai_api_key_configured: boolean;
-  deepseek_base_url_effective: string;
-  openai_base_url_effective: string;
 };
+
+type LlmConnPublic = {
+  id: string;
+  catalog_id: string;
+  vendor_id: string;
+  vendor_label: string;
+  custom_name: string;
+  base_url: string;
+  provider: string;
+  model_id: string;
+  created_at: string;
+};
+
+type LlmConnDetail = LlmConnPublic & { api_key_configured?: boolean; api_key?: string };
 
 type Channel = "openai" | "deepseek";
 
@@ -46,12 +74,10 @@ type VendorDef = {
   subtitle?: string;
   channel: Channel;
   presetBaseUrl?: string;
-  /** 填入预设时写入连接名称（若当前名称为空或用户未改过时可配合使用） */
   presetConnectionName?: string;
   badge: "直连" | "OpenAI 兼容";
 };
 
-/** 与后端能力对齐：DeepSeek 直连一条；其余厂商走 OpenAI 兼容单槽（官方文档中的兼容 Base URL 作预设） */
 const LLM_VENDORS: VendorDef[] = [
   { id: "openai", name: "OpenAI", channel: "openai", presetBaseUrl: "https://api.openai.com/v1", presetConnectionName: "OpenAI 官方", badge: "OpenAI 兼容" },
   { id: "azure", name: "Microsoft Azure OpenAI", channel: "openai", subtitle: "Azure 资源中的 OpenAI 兼容端点", presetConnectionName: "Azure OpenAI", badge: "OpenAI 兼容" },
@@ -71,6 +97,19 @@ const LLM_VENDORS: VendorDef[] = [
   { id: "bedrock", name: "Amazon Bedrock", channel: "openai", subtitle: "经 OpenAI 兼容代理或自定义网关", presetConnectionName: "Bedrock", badge: "OpenAI 兼容" },
   { id: "tencent", name: "腾讯云混元 / LKEAP", channel: "openai", subtitle: "控制台提供的 OpenAI 兼容根地址", presetConnectionName: "腾讯云", badge: "OpenAI 兼容" },
   { id: "custom", name: "自定义 / 其他", channel: "openai", subtitle: "任意提供 OpenAI 风格 /v1 的网关", badge: "OpenAI 兼容" }
+];
+
+const DEEPSEEK_MODEL_IDS: { id: string; label: string }[] = [
+  { id: "deepseek-v4-flash", label: "deepseek-v4-flash（V4 Flash）" },
+  { id: "deepseek-v4-pro", label: "deepseek-v4-pro（V4 Pro）" },
+  { id: "deepseek-chat", label: "deepseek-chat（兼容别名）" },
+  { id: "deepseek-reasoner", label: "deepseek-reasoner（兼容别名）" }
+];
+
+const OPENAI_MODEL_IDS: { id: string; label: string }[] = [
+  { id: "gpt-4o-mini", label: "gpt-4o-mini" },
+  { id: "gpt-4o", label: "gpt-4o" },
+  { id: "gpt-4-turbo", label: "gpt-4-turbo" }
 ];
 
 function StatusDot({ ok }: { ok: boolean }) {
@@ -101,25 +140,19 @@ function IconColumns({ className = "h-5 w-5" }: { className?: string }) {
   );
 }
 
-function IconCopilotLink({ className = "h-4 w-4" }: { className?: string }) {
+function IconEye({ className = "h-4 w-4" }: { className?: string }) {
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
-      <path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6M15 3h6v6M10 14L21 3" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" strokeLinejoin="round" />
+      <circle cx="12" cy="12" r="2.5" />
     </svg>
   );
 }
 
-function IconChevron({ className = "h-4 w-4", open }: { className?: string; open?: boolean }) {
+function IconEyeOff({ className = "h-4 w-4" }: { className?: string }) {
   return (
-    <svg
-      className={`${className} shrink-0 transition-transform ${open ? "rotate-90" : ""}`}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      aria-hidden
-    >
-      <path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" />
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+      <path d="M3 3l18 18M10.6 10.6a2 2 0 002.8 2.8M9.9 5.1A10.3 10.3 0 0112 5c6 0 10 7 10 7a18.4 18.4 0 01-2.9 3.1M6.2 6.2C3.9 8.2 2 12 2 12s4 7 10 7a9.7 9.7 0 004.1-.8" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }
@@ -127,35 +160,75 @@ function IconChevron({ className = "h-4 w-4", open }: { className?: string; open
 export default function SettingsPage() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [cfg, setCfg] = useState<LlmConfig | null>(null);
+  const [connections, setConnections] = useState<LlmConnPublic[]>([]);
   const [semantic, setSemantic] = useState("auto");
   const [savedSemantic, setSavedSemantic] = useState("");
-  const [dsUrl, setDsUrl] = useState("");
-  const [oaUrl, setOaUrl] = useState("");
-  const [dsKey, setDsKey] = useState("");
-  const [oaKey, setOaKey] = useState("");
-  const [dsName, setDsName] = useState("");
-  const [oaName, setOaName] = useState("");
-  const [selectedVendorId, setSelectedVendorId] = useState<string>(LLM_VENDORS[0].id);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [savingApi, setSavingApi] = useState(false);
+  const [savingConn, setSavingConn] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone?: "success" | "error" } | null>(null);
+
+  const [addOpen, setAddOpen] = useState(false);
+  const [addVendorId, setAddVendorId] = useState(LLM_VENDORS[0].id);
+  const [addModelId, setAddModelId] = useState(OPENAI_MODEL_IDS[0].id);
+  const [addName, setAddName] = useState("");
+  const [addUrl, setAddUrl] = useState("");
+  const [addKey, setAddKey] = useState("");
+
+  const [viewConnId, setViewConnId] = useState<string | null>(null);
+  const [viewDetail, setViewDetail] = useState<LlmConnDetail | null>(null);
+  const [viewLoading, setViewLoading] = useState(false);
+  const [viewKeyVisible, setViewKeyVisible] = useState(false);
+  const [viewKeyLoading, setViewKeyLoading] = useState(false);
+
+  const [deleteConnId, setDeleteConnId] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+
   const connectRef = useRef<HTMLElement>(null);
+
+  const addVendor = useMemo(() => LLM_VENDORS.find((v) => v.id === addVendorId) ?? LLM_VENDORS[0], [addVendorId]);
+  const addChannel = addVendor.channel;
+  const modelIdOptions = useMemo(() => (addChannel === "deepseek" ? DEEPSEEK_MODEL_IDS : OPENAI_MODEL_IDS), [addChannel]);
+
+  useEffect(() => {
+    setAddModelId((prev) => (modelIdOptions.some((o) => o.id === prev) ? prev : modelIdOptions[0].id));
+  }, [modelIdOptions]);
+
+  useEffect(() => {
+    if (!addOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setAddOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [addOpen]);
+
+  useEffect(() => {
+    if (!viewConnId) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setViewConnId(null);
+        setViewDetail(null);
+        setViewKeyVisible(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [viewConnId]);
 
   async function load() {
     setLoading(true);
     try {
-      const [cat, c] = await Promise.all([api<Catalog>("/api/llm/catalog"), api<LlmConfig>("/api/llm/config")]);
+      const [cat, c, connRes] = await Promise.all([
+        api<Catalog>("/api/llm/catalog"),
+        api<LlmConfig>("/api/llm/config"),
+        api<{ connections: LlmConnPublic[] }>("/api/llm/connections")
+      ]);
       setCatalog(cat);
       setCfg(c);
       setSemantic(c.semantic_llm_model || "auto");
       setSavedSemantic(c.semantic_llm_model_resolved || "");
-      setDsUrl(c.deepseek_base_url || "");
-      setOaUrl(c.openai_base_url || "");
-      setDsName(c.deepseek_connection_name || "");
-      setOaName(c.openai_connection_name || "");
-      setDsKey("");
-      setOaKey("");
+      setConnections(connRes.connections || []);
     } catch {
       setToast({ message: "加载失败，请确认后端已启动", tone: "error" });
     } finally {
@@ -176,151 +249,146 @@ export default function SettingsPage() {
       });
       setSavedSemantic(res.semantic_llm_model_resolved || "");
       setCfg(res);
-      setDsName(res.deepseek_connection_name || "");
-      setOaName(res.openai_connection_name || "");
       const cat = await api<Catalog>("/api/llm/catalog");
       setCatalog(cat);
       setToast({ message: "已保存语义分析模型", tone: "success" });
     } catch {
-      setToast({ message: "保存失败，请检查模型是否在可选列表中且至少一方 API 已配置", tone: "error" });
+      setToast({ message: "保存失败，请从可用模型中选择或选择自动", tone: "error" });
     } finally {
       setSaving(false);
     }
   }
 
-  async function saveApiCredentials() {
-    setSavingApi(true);
-    try {
-      const body: Record<string, string> = {
-        deepseek_base_url: dsUrl,
-        openai_base_url: oaUrl,
-        deepseek_connection_name: dsName,
-        openai_connection_name: oaName
-      };
-      if (dsKey.trim()) body.deepseek_api_key = dsKey.trim();
-      if (oaKey.trim()) body.openai_api_key = oaKey.trim();
-      const res = await api<LlmConfig>("/api/llm/config", { method: "PUT", body: JSON.stringify(body) });
-      setCfg(res);
-      setDsName(res.deepseek_connection_name || "");
-      setOaName(res.openai_connection_name || "");
-      setDsKey("");
-      setOaKey("");
-      const cat = await api<Catalog>("/api/llm/catalog");
-      setCatalog(cat);
-      setToast({ message: "已保存接入配置", tone: "success" });
-    } catch {
-      setToast({ message: "保存失败", tone: "error" });
-    } finally {
-      setSavingApi(false);
-    }
+  function openAddModal(vendorId?: string) {
+    const vid = vendorId && LLM_VENDORS.some((v) => v.id === vendorId) ? vendorId : "openai";
+    setAddVendorId(vid);
+    const v = LLM_VENDORS.find((x) => x.id === vid) ?? LLM_VENDORS[0];
+    setAddUrl(v.presetBaseUrl || "");
+    setAddName(v.presetConnectionName || "");
+    setAddKey("");
+    setAddModelId(v.channel === "deepseek" ? DEEPSEEK_MODEL_IDS[0].id : OPENAI_MODEL_IDS[0].id);
+    setAddOpen(true);
   }
 
-  async function clearDeepseekKey() {
-    setSavingApi(true);
-    try {
-      const res = await api<LlmConfig>("/api/llm/config", {
-        method: "PUT",
-        body: JSON.stringify({ deepseek_api_key: "" })
-      });
-      setCfg(res);
-      const cat = await api<Catalog>("/api/llm/catalog");
-      setCatalog(cat);
-      setToast({ message: "已清除 DeepSeek 库内密钥覆盖", tone: "success" });
-    } catch {
-      setToast({ message: "操作失败", tone: "error" });
-    } finally {
-      setSavingApi(false);
-    }
+  function applyVendorPresetInModal() {
+    if (addVendor.presetBaseUrl) setAddUrl(addVendor.presetBaseUrl);
+    if (addVendor.presetConnectionName) setAddName((n) => (n.trim() ? n : addVendor.presetConnectionName!));
   }
 
-  async function clearOpenaiKey() {
-    setSavingApi(true);
-    try {
-      const res = await api<LlmConfig>("/api/llm/config", {
-        method: "PUT",
-        body: JSON.stringify({ openai_api_key: "" })
-      });
-      setCfg(res);
-      const cat = await api<Catalog>("/api/llm/catalog");
-      setCatalog(cat);
-      setToast({ message: "已清除 OpenAI 兼容侧库内密钥覆盖", tone: "success" });
-    } catch {
-      setToast({ message: "操作失败", tone: "error" });
-    } finally {
-      setSavingApi(false);
-    }
-  }
-
-  const activeVendor = useMemo(
-    () => LLM_VENDORS.find((v) => v.id === selectedVendorId) ?? LLM_VENDORS[0],
-    [selectedVendorId]
-  );
-  const channel: Channel = activeVendor.channel;
-
-  function goConfigureVendor(vendorId: string) {
-    setSelectedVendorId(vendorId);
-    requestAnimationFrame(() => {
-      connectRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-  }
-
-  function applyVendorPreset() {
-    if (activeVendor.channel === "deepseek" && activeVendor.presetBaseUrl) {
-      setDsUrl(activeVendor.presetBaseUrl);
-      if (activeVendor.presetConnectionName) setDsName((n) => (n.trim() ? n : activeVendor.presetConnectionName!));
+  async function submitNewConnection() {
+    if (!addName.trim() || !addUrl.trim() || !addKey.trim()) {
+      setToast({ message: "请填写自定义名称、Endpoint 与 API Key", tone: "error" });
       return;
     }
-    if (activeVendor.channel === "openai" && activeVendor.presetBaseUrl) {
-      setOaUrl(activeVendor.presetBaseUrl);
-      if (activeVendor.presetConnectionName) setOaName((n) => (n.trim() ? n : activeVendor.presetConnectionName!));
+    setSavingConn(true);
+    try {
+      await api<LlmConnPublic>("/api/llm/connections", {
+        method: "POST",
+        body: JSON.stringify({
+          vendor_id: addVendor.id,
+          vendor_label: addVendor.name,
+          custom_name: addName.trim(),
+          base_url: addUrl.trim(),
+          api_key: addKey.trim(),
+          provider: addChannel === "deepseek" ? "deepseek" : "openai",
+          model_id: addModelId
+        })
+      });
+      setAddOpen(false);
+      setAddKey("");
+      await load();
+      setToast({ message: "已保存接入", tone: "success" });
+    } catch {
+      setToast({ message: "保存失败，请检查 Endpoint 与模型名是否与厂商一致", tone: "error" });
+    } finally {
+      setSavingConn(false);
     }
   }
 
-  const catalogGroups = catalog
-    ? {
-        dsV4: catalog.models.filter((m) => m.provider === "deepseek" && m.model_family === "v4"),
-        dsChat: catalog.models.filter((m) => m.provider === "deepseek" && m.model_family === "chat"),
-        openai: catalog.models.filter((m) => m.provider === "openai")
+  async function openViewConnection(id: string) {
+    setViewConnId(id);
+    setViewDetail(null);
+    setViewKeyVisible(false);
+    setViewLoading(true);
+    try {
+      const d = await api<LlmConnDetail>(`/api/llm/connections/${id}`);
+      setViewDetail(d);
+    } catch {
+      setToast({ message: "加载详情失败", tone: "error" });
+      setViewConnId(null);
+    } finally {
+      setViewLoading(false);
+    }
+  }
+
+  async function toggleViewApiKeyPlaintext() {
+    if (!viewConnId || !viewDetail) return;
+    if (viewKeyVisible) {
+      setViewKeyVisible(false);
+      return;
+    }
+    if (viewDetail.api_key !== undefined && viewDetail.api_key !== "") {
+      setViewKeyVisible(true);
+      return;
+    }
+    setViewKeyLoading(true);
+    try {
+      const d = await api<LlmConnDetail>(`/api/llm/connections/${viewConnId}?reveal_secret=true`);
+      setViewDetail(d);
+      setViewKeyVisible(true);
+    } catch {
+      setToast({ message: "无法获取密钥", tone: "error" });
+    } finally {
+      setViewKeyLoading(false);
+    }
+  }
+
+  async function confirmDeleteConnection() {
+    const id = deleteConnId;
+    if (!id) return;
+    setDeleting(true);
+    try {
+      const res = await api<{ catalog: Catalog; semantic_llm_model: string; semantic_llm_model_resolved: string }>(
+        `/api/llm/connections/${id}`,
+        { method: "DELETE" }
+      );
+      setDeleteConnId(null);
+      setCatalog(res.catalog);
+      if (cfg) {
+        setCfg({
+          ...cfg,
+          semantic_llm_model: res.semantic_llm_model,
+          semantic_llm_model_resolved: res.semantic_llm_model_resolved
+        });
       }
-    : null;
+      setSemantic(res.semantic_llm_model || "auto");
+      setSavedSemantic(res.semantic_llm_model_resolved || "");
+      const connRes = await api<{ connections: LlmConnPublic[] }>("/api/llm/connections");
+      setConnections(connRes.connections || []);
+      setToast({ message: "已从列表中删除该接入", tone: "success" });
+    } catch {
+      setToast({ message: "删除失败", tone: "error" });
+    } finally {
+      setDeleting(false);
+    }
+  }
 
-  const autoSelectLabel = catalog
-    ? `${catalog.auto_label}${
-        catalog.auto_resolved_label || catalog.auto_resolved
-          ? ` → ${catalog.auto_resolved_label || catalog.auto_resolved}`
-          : ""
-      }`
-    : "";
+  const semanticCustomModels = catalog
+    ? catalog.models.filter((m) => m.model_family === "custom" || m.id.startsWith("conn:"))
+    : [];
 
-  const resolvedHumanLabel =
-    (catalog && savedSemantic && catalog.models.find((m) => m.id === savedSemantic)?.label) ||
-    (semantic === "auto" && catalog?.auto_resolved_label) ||
-    savedSemantic;
+  const semanticSelectIds = useMemo(() => new Set(semanticCustomModels.map((m) => m.id)), [semanticCustomModels]);
 
-  const openaiKeyOk = Boolean(cfg?.openai_api_key_configured);
-  const deepseekKeyOk = Boolean(cfg?.deepseek_api_key_configured);
-  const modelCount = catalog?.models.length ?? 0;
+  const hasSemanticConnections = connections.length > 0;
 
-  const providerChips =
-    catalog?.has_llm && catalog.models.length
-      ? Array.from(
-          new Map(
-            catalog.models.map((m) => {
-              const conn = (m.connection_name || "").trim();
-              const text = conn ? `${m.kind_label}「${conn}」` : m.kind_label;
-              return [text, text] as const;
-            })
-          ).values()
-        ).map((text) => (
-          <span
-            key={text}
-            className="inline-flex items-center gap-1 rounded-full border border-app-border bg-app-hover px-2 py-0.5 text-[11px] font-medium text-app-secondary"
-          >
-            <StatusDot ok />
-            {text}
-          </span>
-        ))
-      : null;
+  const semanticOrphanOption =
+    Boolean(catalog) &&
+    semantic &&
+    semantic !== "auto" &&
+    !semanticSelectIds.has(semantic);
+
+  const effectiveTriplet =
+    catalog && savedSemantic ? tripletForModelRef(catalog, savedSemantic) : null;
 
   return (
     <main className="app-page">
@@ -341,7 +409,7 @@ export default function SettingsPage() {
             <div className="my-2 min-h-[3rem] w-0 flex-1 border-l-2 border-dashed border-app-border sm:min-h-[4rem]" aria-hidden />
             <div
               className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 text-xs font-bold ${
-                catalog?.has_llm ? "border-app-primary bg-app-activeBg text-app-primary" : "border-app-border bg-app-hover text-app-muted"
+                hasSemanticConnections ? "border-app-primary bg-app-activeBg text-app-primary" : "border-app-border bg-app-hover text-app-muted"
               }`}
               aria-hidden
             >
@@ -351,13 +419,19 @@ export default function SettingsPage() {
 
           <div className="space-y-6">
             <section ref={connectRef} className="app-card rounded-2xl p-5 sm:p-6">
-              <div className="flex items-start gap-3">
-                <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-app-primary">
-                  <IconPlug />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <h2 className="app-card-title text-base">大模型接入</h2>
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-app-primary">
+                    <IconPlug />
+                  </span>
+                  <div>
+                    <h2 className="app-card-title text-base">大模型接入</h2>
+                    <p className="mt-1 text-[11px] text-app-muted">新增后写入数据库，并出现在下方「可用大模型」与语义分析/Copilot 可选列表中。</p>
+                  </div>
                 </div>
+                <button type="button" className="app-button shrink-0 rounded-xl px-4 py-2 text-sm font-medium" onClick={() => openAddModal()}>
+                  新增接入
+                </button>
               </div>
 
               {loading ? (
@@ -366,200 +440,60 @@ export default function SettingsPage() {
                   加载中
                 </div>
               ) : (
-                <div className="mt-5 flex flex-col gap-5 lg:flex-row lg:items-start">
-                  <div className="lg:sticky lg:top-4 lg:max-h-[min(70vh,520px)] lg:w-[min(100%,300px)] lg:shrink-0 lg:overflow-y-auto">
-                    <ul className="divide-y divide-app-border overflow-hidden rounded-xl border border-app-border bg-white">
-                      {LLM_VENDORS.map((v) => {
-                        const keyOk = v.channel === "deepseek" ? deepseekKeyOk : openaiKeyOk;
-                        const selected = v.id === selectedVendorId;
-                        return (
-                          <li key={v.id}>
+                <div className="mt-5">
+                  <h3 className="text-xs font-semibold uppercase tracking-wide text-app-muted">可用大模型</h3>
+                  {connections.length === 0 ? (
+                    <div className="mt-3 rounded-xl border border-dashed border-app-border bg-app-hover/30 px-4 py-8 text-center text-sm text-app-muted">
+                      暂无接入，请点击右上角「新增接入」。
+                    </div>
+                  ) : (
+                    <ul className="mt-3 divide-y divide-app-border overflow-hidden rounded-xl border border-app-border bg-white">
+                      {connections.map((row) => (
+                        <li key={row.id} className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4">
+                          <div className="min-w-0 flex-1 space-y-1">
+                            <p className="truncate text-sm font-semibold text-app-ink">{row.custom_name}</p>
+                            <p className="text-[11px] text-app-secondary">
+                              <span className="text-app-muted">厂商</span> {row.vendor_label}
+                              <span className="mx-1.5 text-app-border">·</span>
+                              <span className="text-app-muted">模型</span>{" "}
+                              <span className="font-mono text-app-ink">{row.model_id}</span>
+                            </p>
+                            <p className="truncate font-mono text-[10px] text-app-muted" title={row.base_url}>
+                              {row.base_url}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 flex-wrap gap-2">
                             <button
                               type="button"
-                              onClick={() => setSelectedVendorId(v.id)}
-                              className={`flex w-full items-center gap-2 px-3 py-2.5 text-left transition sm:px-4 sm:py-3 ${
-                                selected ? "border-l-[3px] border-l-app-primary bg-app-activeBg" : "border-l-[3px] border-l-transparent hover:bg-app-hover"
-                              }`}
+                              className="app-button-secondary rounded-lg px-3 py-1.5 text-xs font-medium"
+                              onClick={() => void openViewConnection(row.id)}
                             >
-                              <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                                <span className="flex flex-wrap items-center gap-1.5">
-                                  <span className="truncate text-xs font-semibold text-app-ink">{v.name}</span>
-                                  <span
-                                    className={`shrink-0 rounded px-1.5 py-px text-[10px] font-medium ${
-                                      v.badge === "直连"
-                                        ? "bg-emerald-100 text-emerald-800"
-                                        : "bg-slate-100 text-slate-600"
-                                    }`}
-                                  >
-                                    {v.badge}
-                                  </span>
-                                </span>
-                                {v.subtitle ? (
-                                  <span className="line-clamp-2 text-[10px] leading-snug text-app-muted">{v.subtitle}</span>
-                                ) : null}
-                              </span>
-                              <span className="flex shrink-0 items-center gap-1.5">
-                                <StatusDot ok={keyOk} />
-                                <IconChevron className="text-app-muted opacity-60" open={selected} />
-                              </span>
+                              查看
                             </button>
-                          </li>
-                        );
-                      })}
+                            <button
+                              type="button"
+                              className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50"
+                              onClick={() => setDeleteConnId(row.id)}
+                            >
+                              删除
+                            </button>
+                          </div>
+                        </li>
+                      ))}
                     </ul>
-                  </div>
-
-                  <div className="min-w-0 flex-1 space-y-4">
-                    <div className="rounded-xl border border-app-border bg-app-hover/30 px-3 py-2">
-                      <p className="text-xs font-semibold text-app-ink">{activeVendor.name}</p>
-                      {activeVendor.subtitle ? <p className="mt-0.5 text-[11px] text-app-muted">{activeVendor.subtitle}</p> : null}
-                    </div>
-
-                    {activeVendor.presetBaseUrl ? (
-                      <button
-                        type="button"
-                        className="app-button-secondary w-full rounded-xl px-3 py-2 text-xs font-medium sm:w-auto"
-                        disabled={savingApi}
-                        onClick={applyVendorPreset}
-                      >
-                        填入推荐 Base URL
-                      </button>
-                    ) : null}
-
-                    {channel === "openai" ? (
-                      <div className="app-nested-panel space-y-3">
-                        <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                          名称
-                          <input
-                            className="app-input rounded-xl px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1"
-                            value={oaName}
-                            onChange={(e) => setOaName(e.target.value)}
-                            placeholder="在语义分析中区分接入"
-                            autoComplete="off"
-                          />
-                        </label>
-                        <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                          Base URL
-                          <input
-                            className="app-input rounded-xl px-3 py-2 text-sm font-mono focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1"
-                            value={oaUrl}
-                            onChange={(e) => setOaUrl(e.target.value)}
-                            placeholder="https://…/v1"
-                            autoComplete="off"
-                          />
-                        </label>
-                        <p className="font-mono text-[11px] text-app-muted">
-                          <span className="text-app-secondary">→</span> {cfg?.openai_base_url_effective || "—"}
-                        </p>
-                        <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                          API Key
-                          <input
-                            type="password"
-                            className="app-input rounded-xl px-3 py-2 text-sm font-mono focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1"
-                            value={oaKey}
-                            onChange={(e) => setOaKey(e.target.value)}
-                            autoComplete="off"
-                            placeholder={cfg?.openai_api_key_configured ? "········（留空不改）" : "sk-…"}
-                          />
-                        </label>
-                        {cfg?.openai_api_key_configured && (
-                          <button
-                            type="button"
-                            className="self-start rounded-lg px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50"
-                            disabled={savingApi}
-                            onClick={() => void clearOpenaiKey()}
-                          >
-                            清除库内覆盖
-                          </button>
-                        )}
-                      </div>
-                    ) : (
-                      <div className="app-nested-panel space-y-3">
-                        <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                          名称
-                          <input
-                            className="app-input rounded-xl px-3 py-2 text-sm focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1"
-                            value={dsName}
-                            onChange={(e) => setDsName(e.target.value)}
-                            placeholder="在语义分析中区分接入"
-                            autoComplete="off"
-                          />
-                        </label>
-                        <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                          Base URL
-                          <input
-                            className="app-input rounded-xl px-3 py-2 text-sm font-mono focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1"
-                            value={dsUrl}
-                            onChange={(e) => setDsUrl(e.target.value)}
-                            placeholder="https://api.deepseek.com"
-                            autoComplete="off"
-                          />
-                        </label>
-                        <p className="font-mono text-[11px] text-app-muted">
-                          <span className="text-app-secondary">→</span> {cfg?.deepseek_base_url_effective || "—"}
-                        </p>
-                        <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                          API Key
-                          <input
-                            type="password"
-                            className="app-input rounded-xl px-3 py-2 text-sm font-mono focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1"
-                            value={dsKey}
-                            onChange={(e) => setDsKey(e.target.value)}
-                            autoComplete="off"
-                            placeholder={cfg?.deepseek_api_key_configured ? "········（留空不改）" : "填写密钥"}
-                          />
-                        </label>
-                        {cfg?.deepseek_api_key_configured && (
-                          <button
-                            type="button"
-                            className="self-start rounded-lg px-2 py-1 text-[11px] text-rose-600 hover:bg-rose-50"
-                            disabled={savingApi}
-                            onClick={() => void clearDeepseekKey()}
-                          >
-                            清除库内覆盖
-                          </button>
-                        )}
-                      </div>
-                    )}
-
-                    <button
-                      type="button"
-                      className="app-button w-full rounded-xl px-4 py-2.5 text-sm font-medium sm:w-auto"
-                      disabled={savingApi}
-                      onClick={() => void saveApiCredentials()}
-                    >
-                      {savingApi ? "保存中…" : "保存接入"}
-                    </button>
-                  </div>
+                  )}
                 </div>
               )}
             </section>
 
             <section className="app-card rounded-2xl p-5 sm:p-6">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-app-primary">
-                    <IconColumns />
-                  </span>
-                  <div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h2 className="app-card-title text-base">语义分析</h2>
-                      {catalog?.has_llm && (
-                        <span className="rounded-full border border-app-border bg-app-hover px-2 py-0.5 text-[11px] font-medium tabular-nums text-app-secondary">
-                          {modelCount} 个模型
-                        </span>
-                      )}
-                    </div>
-                    {providerChips && <div className="mt-2 flex flex-wrap gap-1.5">{providerChips}</div>}
-                  </div>
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-app-primary">
+                  <IconColumns />
+                </span>
+                <div className="min-w-0 flex-1">
+                  <h2 className="app-card-title text-base">语义分析</h2>
                 </div>
-                <Link
-                  href="/copilot"
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-transparent px-2 py-1.5 text-app-link hover:border-app-border hover:bg-app-hover"
-                >
-                  <IconCopilotLink />
-                  <span className="text-xs font-medium">Copilot</span>
-                </Link>
               </div>
 
               {loading ? (
@@ -567,66 +501,39 @@ export default function SettingsPage() {
                   <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-app-border border-t-app-primary" />
                   加载中
                 </div>
-              ) : !catalog?.has_llm ? (
+              ) : !hasSemanticConnections ? (
                 <div className="mt-6 flex flex-col items-center gap-4 rounded-2xl border border-dashed border-app-border bg-app-hover/30 px-4 py-10">
                   <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100/80 text-amber-700">
                     <IconColumns className="h-7 w-7" />
                   </div>
-                  <div className="flex flex-wrap justify-center gap-2">
-                    <button
-                      type="button"
-                      className="app-button rounded-xl px-4 py-2 text-sm font-medium"
-                      onClick={() => goConfigureVendor("openai")}
-                    >
-                      去填 OpenAI 兼容
-                    </button>
-                    <button
-                      type="button"
-                      className="app-button-secondary rounded-xl px-4 py-2 text-sm font-medium"
-                      onClick={() => goConfigureVendor("deepseek")}
-                    >
-                      去填 DeepSeek
-                    </button>
-                  </div>
+                  <p className="text-center text-sm text-app-secondary">尚未配置可用大模型，请先新增一条接入。</p>
+                  <button type="button" className="app-button rounded-xl px-4 py-2 text-sm font-medium" onClick={() => openAddModal()}>
+                    新增接入
+                  </button>
                 </div>
+              ) : !catalog ? (
+                <p className="mt-6 text-sm text-app-muted">模型目录加载中…</p>
               ) : (
-                <div className="mt-5 space-y-3">
+                <div className="mt-5 space-y-4">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
                     <label className="flex min-w-0 flex-1 flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                      模型
+                      可选模型
                       <select
                         className="app-input rounded-xl px-3 py-2.5 text-sm focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1"
                         value={semantic}
                         onChange={(e) => setSemantic(e.target.value)}
                       >
-                        <option value={catalog.auto_id}>{autoSelectLabel}</option>
-                        {catalogGroups && catalogGroups.dsV4.length > 0 ? (
-                          <optgroup label="DeepSeek · V4">
-                            {catalogGroups.dsV4.map((m) => (
-                              <option key={m.id} value={m.id}>
-                                {m.label}
-                              </option>
-                            ))}
-                          </optgroup>
+                        <option value={catalog.auto_id}>自动</option>
+                        {semanticOrphanOption ? (
+                          <option value={semantic} disabled>
+                            （已不在列表）{formatTripletLine(tripletForModelRef(catalog, semantic))}
+                          </option>
                         ) : null}
-                        {catalogGroups && catalogGroups.dsChat.length > 0 ? (
-                          <optgroup label="DeepSeek · Chat / Reasoner（兼容别名）">
-                            {catalogGroups.dsChat.map((m) => (
-                              <option key={m.id} value={m.id}>
-                                {m.label}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ) : null}
-                        {catalogGroups && catalogGroups.openai.length > 0 ? (
-                          <optgroup label="OpenAI 兼容">
-                            {catalogGroups.openai.map((m) => (
-                              <option key={m.id} value={m.id}>
-                                {m.label}
-                              </option>
-                            ))}
-                          </optgroup>
-                        ) : null}
+                        {semanticCustomModels.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {formatTripletLine(tripletFromCatalogModel(m))}
+                          </option>
+                        ))}
                       </select>
                     </label>
                     <button
@@ -638,11 +545,23 @@ export default function SettingsPage() {
                       {saving ? "保存中…" : "保存"}
                     </button>
                   </div>
-                  {savedSemantic ? (
-                    <div className="rounded-xl border border-app-border bg-app-hover/40 px-3 py-2 text-[11px] leading-snug text-app-secondary">
-                      <span className="text-app-muted">当前生效</span>
-                      <p className="mt-0.5 font-medium text-app-ink">{resolvedHumanLabel}</p>
-                      <p className="mt-1 font-mono text-[10px] text-app-muted">{savedSemantic}</p>
+                  {effectiveTriplet ? (
+                    <div className="rounded-xl border border-app-border bg-app-hover/40 px-3 py-3 text-sm">
+                      <p className="text-[11px] font-medium text-app-muted">当前生效</p>
+                      <dl className="mt-2 grid gap-2 sm:grid-cols-3">
+                        <div>
+                          <dt className="text-[10px] font-medium uppercase tracking-wide text-app-muted">名称</dt>
+                          <dd className="mt-0.5 font-medium text-app-ink">{effectiveTriplet.name}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-[10px] font-medium uppercase tracking-wide text-app-muted">厂商</dt>
+                          <dd className="mt-0.5 text-app-ink">{effectiveTriplet.vendor}</dd>
+                        </div>
+                        <div>
+                          <dt className="text-[10px] font-medium uppercase tracking-wide text-app-muted">模型</dt>
+                          <dd className="mt-0.5 font-mono text-xs text-app-ink">{effectiveTriplet.model}</dd>
+                        </div>
+                      </dl>
                     </div>
                   ) : null}
                 </div>
@@ -651,6 +570,216 @@ export default function SettingsPage() {
           </div>
         </div>
       </div>
+
+      {addOpen &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div className="app-modal-backdrop app-modal-backdrop--front" role="presentation" onClick={() => setAddOpen(false)}>
+            <div
+              className="app-modal-surface app-chatgpt-dialog mx-4 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl p-5 sm:p-6"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="llm-add-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 id="llm-add-title" className="text-base font-semibold text-app-ink">
+                新增大模型接入
+              </h3>
+              <div className="mt-4 space-y-3">
+                <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
+                  模型厂商
+                  <select
+                    className="app-input rounded-xl px-3 py-2.5 text-sm"
+                    value={addVendorId}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setAddVendorId(id);
+                      const v = LLM_VENDORS.find((x) => x.id === id);
+                      if (v?.presetBaseUrl) setAddUrl(v.presetBaseUrl);
+                      if (v?.presetConnectionName) setAddName(v.presetConnectionName);
+                    }}
+                  >
+                    {LLM_VENDORS.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.name}（{v.badge}）
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                {addVendor.subtitle ? <p className="text-[11px] text-app-muted">{addVendor.subtitle}</p> : null}
+                <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
+                  模型
+                  <select className="app-input rounded-xl px-3 py-2.5 text-sm" value={addModelId} onChange={(e) => setAddModelId(e.target.value)}>
+                    {modelIdOptions.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
+                  自定义名称
+                  <input
+                    className="app-input rounded-xl px-3 py-2 text-sm"
+                    value={addName}
+                    onChange={(e) => setAddName(e.target.value)}
+                    placeholder="在列表中展示的名称"
+                    autoComplete="off"
+                  />
+                </label>
+                <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
+                  Endpoint（Base URL）
+                  <input
+                    className="app-input rounded-xl px-3 py-2 text-sm font-mono"
+                    value={addUrl}
+                    onChange={(e) => setAddUrl(e.target.value)}
+                    placeholder="https://…"
+                    autoComplete="off"
+                  />
+                </label>
+                {addVendor.presetBaseUrl ? (
+                  <button type="button" className="app-button-secondary rounded-lg px-3 py-1.5 text-xs" onClick={applyVendorPresetInModal}>
+                    填入推荐 Base URL
+                  </button>
+                ) : null}
+                <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
+                  API Key
+                  <input
+                    type="password"
+                    className="app-input rounded-xl px-3 py-2 text-sm font-mono"
+                    value={addKey}
+                    onChange={(e) => setAddKey(e.target.value)}
+                    autoComplete="off"
+                    placeholder="保存后仅服务端存储，界面不回显"
+                  />
+                </label>
+              </div>
+              <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+                <button type="button" className="app-dialog-btn app-dialog-btn-secondary w-full sm:w-auto" onClick={() => setAddOpen(false)} disabled={savingConn}>
+                  取消
+                </button>
+                <button type="button" className="app-dialog-btn app-dialog-btn-primary w-full sm:w-auto" disabled={savingConn} onClick={() => void submitNewConnection()}>
+                  {savingConn ? "保存中…" : "保存"}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      {viewConnId &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            className="app-modal-backdrop app-modal-backdrop--front"
+            role="presentation"
+            onClick={() => {
+              setViewConnId(null);
+              setViewDetail(null);
+              setViewKeyVisible(false);
+            }}
+          >
+            <div
+              className="app-modal-surface app-chatgpt-dialog mx-4 max-h-[85vh] w-full max-w-md overflow-y-auto rounded-2xl p-5 sm:p-6"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="llm-conn-view-title"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <h3 id="llm-conn-view-title" className="text-base font-semibold text-app-ink">
+                接入详情
+              </h3>
+              {viewLoading ? (
+                <p className="mt-4 text-sm text-app-muted">加载中…</p>
+              ) : viewDetail ? (
+                <dl className="mt-4 space-y-3 text-sm">
+                  <div>
+                    <dt className="text-[11px] font-medium text-app-muted">自定义名称</dt>
+                    <dd className="mt-0.5 font-medium text-app-ink">{viewDetail.custom_name}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[11px] font-medium text-app-muted">厂商</dt>
+                    <dd className="mt-0.5 text-app-ink">{viewDetail.vendor_label}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[11px] font-medium text-app-muted">模型</dt>
+                    <dd className="mt-0.5 font-mono text-xs text-app-secondary">{viewDetail.model_id}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-[11px] font-medium text-app-muted">Endpoint</dt>
+                    <dd className="mt-0.5 break-all font-mono text-xs text-app-secondary">{viewDetail.base_url}</dd>
+                  </div>
+                  <div>
+                    <dt className="flex items-center justify-between gap-2 text-[11px] font-medium text-app-muted">
+                      <span className="flex items-center gap-2">
+                        API Key
+                        <StatusDot ok={Boolean(viewDetail.api_key_configured)} />
+                      </span>
+                      {viewDetail.api_key_configured ? (
+                        <button
+                          type="button"
+                          className="inline-flex shrink-0 rounded-lg p-1.5 text-app-secondary hover:bg-app-hover hover:text-app-ink"
+                          onClick={() => void toggleViewApiKeyPlaintext()}
+                          disabled={viewKeyLoading}
+                          aria-label={viewKeyVisible ? "隐藏 API Key" : "显示 API Key 明文"}
+                          aria-pressed={viewKeyVisible}
+                          title={viewKeyVisible ? "隐藏" : "查看明文"}
+                        >
+                          {viewKeyLoading ? (
+                            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-app-border border-t-app-primary" />
+                          ) : viewKeyVisible ? (
+                            <IconEyeOff className="h-4 w-4" />
+                          ) : (
+                            <IconEye className="h-4 w-4" />
+                          )}
+                        </button>
+                      ) : null}
+                    </dt>
+                    <dd className="mt-1 break-all font-mono text-xs text-app-ink">
+                      {!viewDetail.api_key_configured ? (
+                        "未配置"
+                      ) : viewKeyVisible && viewDetail.api_key !== undefined ? (
+                        <span className="select-all">{viewDetail.api_key || "（空）"}</span>
+                      ) : (
+                        <span className="text-app-muted">············ 点击眼睛图标查看明文</span>
+                      )}
+                    </dd>
+                  </div>
+                </dl>
+              ) : (
+                <p className="mt-4 text-sm text-app-muted">无数据</p>
+              )}
+              <button
+                type="button"
+                className="app-dialog-btn app-dialog-btn-secondary mt-6 w-full"
+                onClick={() => {
+                  setViewConnId(null);
+                  setViewDetail(null);
+                  setViewKeyVisible(false);
+                }}
+              >
+                关闭
+              </button>
+            </div>
+          </div>,
+          document.body
+        )}
+
+      <ConfirmDialog
+        open={deleteConnId !== null}
+        title="删除该接入？"
+        description="将从数据库中删除此条配置，并从可用大模型列表中移除。若语义分析正使用该模型，将自动改回「自动」。"
+        confirmText="删除"
+        cancelText="取消"
+        danger
+        loading={deleting}
+        onCancel={() => setDeleteConnId(null)}
+        onConfirm={() => {
+          const id = deleteConnId;
+          if (id) void confirmDeleteConnection();
+        }}
+      />
+
       {toast && <Toast message={toast.message} tone={toast.tone} onClose={() => setToast(null)} />}
     </main>
   );

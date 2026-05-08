@@ -2,6 +2,13 @@
 
 from sqlalchemy.orm import Session
 
+from services.llm_connections import (
+    connection_catalog_id,
+    get_connection,
+    is_connection_ref,
+    list_connections,
+    parse_connection_id,
+)
 from services.runtime_llm_config import (
     get_effective_deepseek_api_key,
     get_effective_openai_api_key,
@@ -47,14 +54,30 @@ def provider_has_key(provider: str, db: Session | None = None) -> bool:
     return False
 
 
-def has_any_llm_key(db: Session | None = None) -> bool:
+def _has_legacy_llm_key(db: Session | None = None) -> bool:
     return provider_has_key("deepseek", db) or provider_has_key("openai", db)
 
 
+def has_any_llm_key(db: Session | None = None) -> bool:
+    if db is not None and list_connections(db):
+        return True
+    return _has_legacy_llm_key(db)
+
+
+def connection_row_has_credentials(db: Session, ref: str) -> bool:
+    if not is_connection_ref(ref):
+        return False
+    row = get_connection(db, parse_connection_id(ref))
+    return bool(row and (row.api_key or "").strip())
+
+
 def resolve_auto_model(db: Session | None = None) -> str:
-    """自动策略：已配置 DeepSeek 时优先，否则 OpenAI。"""
+    """自动策略：优先最早添加的自定义接入，否则旧版 DeepSeek / OpenAI 槽位。"""
+    if db is not None:
+        rows = list_connections(db)
+        if rows:
+            return connection_catalog_id(rows[0].id)
     if provider_has_key("deepseek", db):
-        # 与官方文档一致：V4 为主力；deepseek-chat / deepseek-reasoner 为兼容别名（有停用时间表）
         return "deepseek:deepseek-v4-flash"
     if provider_has_key("openai", db):
         return "openai:gpt-4o-mini"
@@ -63,12 +86,14 @@ def resolve_auto_model(db: Session | None = None) -> str:
 
 def resolve_effective_model(requested: str | None, db: Session | None = None) -> str:
     """
-    将前端传入的 chat_model / 存库的 semantic 配置解析为具体 provider:model。
-    - None / '' / 'auto' -> resolve_auto_model()
-    - 显式引用在对应 Key 存在时原样返回，否则回退自动。
+    将前端传入的 chat_model / 存库的 semantic 配置解析为具体 provider:model 或 conn:uuid。
     """
     r = (requested or "").strip()
     if not r or r == "auto":
+        return resolve_auto_model(db)
+    if is_connection_ref(r):
+        if db is not None and connection_row_has_credentials(db, r):
+            return r
         return resolve_auto_model(db)
     try:
         provider, _ = parse_model_ref(r)
@@ -87,6 +112,13 @@ def _fmt_catalog_label(kind_label: str, connection_name: str, model_tail: str) -
 
 
 def _label_for_ref(ref: str, db: Session | None) -> str:
+    if is_connection_ref(ref):
+        if db is None:
+            return ref
+        row = get_connection(db, parse_connection_id(ref))
+        if not row:
+            return ref
+        return f"{row.vendor_label}「{row.custom_name}」· {row.model_id}"
     provider, mid = parse_model_ref(ref)
     oa_nm = (get_stored_openai_connection_name(db) or "").strip()
     ds_nm = (get_stored_deepseek_connection_name(db) or "").strip()
@@ -95,12 +127,38 @@ def _label_for_ref(ref: str, db: Session | None) -> str:
     return _fmt_catalog_label("OpenAI 兼容", oa_nm, mid)
 
 
+def _custom_connection_catalog_entries(db: Session) -> list[dict[str, str]]:
+    out: list[dict[str, str]] = []
+    for row in list_connections(db):
+        if not (row.api_key or "").strip():
+            continue
+        cid = connection_catalog_id(row.id)
+        label = f"{row.vendor_label} · {row.custom_name} · {row.model_id}"
+        out.append(
+            {
+                "id": cid,
+                "label": label,
+                "provider": row.provider,
+                "kind_label": row.vendor_label,
+                "connection_name": row.custom_name,
+                "model_id": row.model_id,
+                "model_short_label": row.model_id,
+                "model_family": "custom",
+                "vendor_id": row.vendor_id,
+            }
+        )
+    return out
+
+
 def catalog_models(db: Session | None = None) -> dict:
     """供 GET /api/llm/catalog：可选模型列表与自动解析结果。"""
-    oa_nm = (get_stored_openai_connection_name(db) or "").strip()
-    ds_nm = (get_stored_deepseek_connection_name(db) or "").strip()
-
     chat_models: list[dict[str, str]] = []
+    if db is not None:
+        chat_models.extend(_custom_connection_catalog_entries(db))
+
+    oa_nm = (get_stored_openai_connection_name(db) or "").strip() if db is not None else ""
+    ds_nm = (get_stored_deepseek_connection_name(db) or "").strip() if db is not None else ""
+
     if provider_has_key("deepseek", db):
         for mid, short_label, family in DEEPSEEK_CATALOG_ROWS:
             tail = f"{short_label} · {mid}"
@@ -132,7 +190,9 @@ def catalog_models(db: Session | None = None) -> dict:
             )
     auto = resolve_auto_model(db)
     auto_label = "自动"
-    if auto.startswith("deepseek:"):
+    if auto.startswith("conn:"):
+        auto_label = "自动（优先首个自定义接入）"
+    elif auto.startswith("deepseek:"):
         auto_label = "自动（优先 DeepSeek）"
     elif auto.startswith("openai:"):
         auto_label = "自动（优先 OpenAI 兼容）"
@@ -156,6 +216,8 @@ def is_allowed_semantic_value(value: str, db: Session | None = None) -> bool:
     v = (value or "").strip()
     if not v or v == "auto":
         return True
+    if is_connection_ref(v):
+        return connection_row_has_credentials(db, v) if db is not None else False
     try:
         provider, _ = parse_model_ref(v)
     except ValueError:

@@ -606,6 +606,27 @@ canvas {
   box-shadow: 0 14px 30px rgba(15, 23, 42, 0.1);
 }
 
+/* Copilot 侧栏：文件夹 + 缩进会话列表（树形） */
+.app-project-sidebar-tree {
+  display: flex;
+  flex-direction: column;
+}
+
+.app-project-sidebar-children {
+  margin-left: 0.45rem;
+  padding-left: 0.65rem;
+  border-left: 1px solid #e5e7eb;
+}
+
+/* Copilot 底部输入 dock：内联 select 统一样式箭头 */
+.copilot-dock-composer select {
+  appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b7280' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.1rem center;
+  background-size: 12px;
+}
+
 .app-sidebar-chip {
   border: 1px solid transparent;
   background: #ffffff;

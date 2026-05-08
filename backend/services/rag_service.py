@@ -20,6 +20,7 @@ from models import (
 )
 from services.embedding_service import embed_and_store_async, search_knowledge_semantic, search_similar_async
 from services.llm_service import (
+    SqlCopilotContext,
     answer_general_question,
     classify_question_intent,
     generate_sql,
@@ -28,6 +29,7 @@ from services.llm_service import (
     sanitize_sql_text,
 )
 from services.schema_extractor import _is_postgres_family, execute_readonly_sql
+from services.sql_ast_guard import source_type_to_sqlglot_dialect, validate_readonly_sql_ast
 
 
 def _latest_table_summaries(db: Session) -> dict[int, TableSummary]:
@@ -254,20 +256,19 @@ async def answer(
         }
 
     await emit("answer_generating")
-    llm_blocks = []
-    if knowledge_text.strip():
-        llm_blocks.append(knowledge_text.strip())
-    llm_blocks.extend(
-        [
-            priority_context,
-            "[结构化字段]",
-            schema,
-            "[历史相似问答]",
-            json.dumps(refs, ensure_ascii=False),
-        ]
+    copilot_context = SqlCopilotContext(
+        knowledge=knowledge_text.strip(),
+        datasource_priority=priority_context.strip(),
+        schema=schema.strip(),
+        few_shot_json=json.dumps(refs, ensure_ascii=False),
     )
-    llm_context = "\n\n".join(llm_blocks)
-    result = await generate_sql(question, llm_context, summary_text, db, chat_model)
+    result = await generate_sql(
+        question,
+        summary_text,
+        db,
+        chat_model,
+        copilot_context=copilot_context,
+    )
 
     # query_examples.table_id has FK constraint, so we must persist a real table id.
     resolved_table_id = table_id
@@ -307,6 +308,7 @@ async def answer(
             datasource = db.execute(select(DataSource).order_by(DataSource.created_at.desc())).scalars().first()
 
         if datasource:
+            dialect = source_type_to_sqlglot_dialect(datasource.source_type)
             if _is_postgres_family(datasource.source_type):
                 conn_info = {
                     "source_type": datasource.source_type,
@@ -340,10 +342,19 @@ async def answer(
             repair_attempts: list[dict[str, str]] = []
 
             for attempt_idx in range(3):
-                try:
-                    execution = await asyncio.to_thread(execute_readonly_sql, conn_info, attempted_sql)
-                except Exception as exc:  # noqa: BLE001
-                    execution = {"ok": False, "columns": [], "rows": [], "error": str(exc)}
+                ast_ok_loop, ast_err_loop = validate_readonly_sql_ast(attempted_sql, dialect=dialect)
+                if not ast_ok_loop:
+                    execution = {
+                        "ok": False,
+                        "columns": [],
+                        "rows": [],
+                        "error": f"SQL 安全校验未通过：{ast_err_loop}",
+                    }
+                else:
+                    try:
+                        execution = await asyncio.to_thread(execute_readonly_sql, conn_info, attempted_sql)
+                    except Exception as exc:  # noqa: BLE001
+                        execution = {"ok": False, "columns": [], "rows": [], "error": str(exc)}
 
                 if execution.get("ok"):
                     if attempt_idx > 0:
@@ -368,10 +379,10 @@ async def answer(
                     question=question,
                     failed_sql=attempted_sql,
                     error_message=current_error,
-                    table_schema=llm_context,
                     table_summary=summary_text,
                     db=db,
                     chat_model=chat_model,
+                    copilot_context=copilot_context,
                 )
                 next_sql = sanitize_sql_text(fix.get("sql", ""))
                 reason = fix.get("reason", "自动修复")

@@ -109,13 +109,21 @@ def get_llm_credentials_for_config_api(db: Session) -> dict:
     """GET /api/llm/config：可展示的 URL 与密钥是否已配置（不回传明文 Key）。"""
     ds_url = _get_raw(db, KEY_DEEPSEEK_URL) or ""
     oa_url = _get_raw(db, KEY_OPENAI_URL) or ""
+    ds_key_db = bool(_get_raw(db, KEY_DEEPSEEK_KEY))
+    oa_key_db = bool(_get_raw(db, KEY_OPENAI_KEY))
+    ds_key_env = bool((get_settings().deepseek_api_key or "").strip())
+    oa_key_env = bool((get_settings().openai_api_key or "").strip())
     return {
         "deepseek_base_url": ds_url,
         "openai_base_url": oa_url,
         "deepseek_connection_name": _get_raw(db, KEY_DEEPSEEK_NAME) or "",
         "openai_connection_name": _get_raw(db, KEY_OPENAI_NAME) or "",
-        "deepseek_api_key_configured": bool(_get_raw(db, KEY_DEEPSEEK_KEY) or (get_settings().deepseek_api_key or "").strip()),
-        "openai_api_key_configured": bool(_get_raw(db, KEY_OPENAI_KEY) or (get_settings().openai_api_key or "").strip()),
+        "deepseek_api_key_configured": ds_key_db or ds_key_env,
+        "openai_api_key_configured": oa_key_db or oa_key_env,
+        "deepseek_api_key_in_database": ds_key_db,
+        "deepseek_api_key_from_environment": ds_key_env,
+        "openai_api_key_in_database": oa_key_db,
+        "openai_api_key_from_environment": oa_key_env,
         "deepseek_base_url_effective": get_effective_deepseek_base_url(db),
         "openai_base_url_effective": get_effective_openai_base_url(db) or "",
     }
@@ -140,3 +148,4 @@ def apply_llm_credential_updates(db: Session, updates: dict[str, str | None]) ->
     if "openai_connection_name" in updates and updates["openai_connection_name"] is not None:
         _set_raw(db, KEY_OPENAI_NAME, updates["openai_connection_name"])
     db.commit()
+    db.expire_all()

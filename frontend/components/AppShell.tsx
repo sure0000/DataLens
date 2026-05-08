@@ -8,6 +8,8 @@ import {
   createProject,
   createSession,
   deleteProject,
+  deleteSession,
+  focusOrCreateUnassignedSession,
   getSessionStorageKeys,
   moveSessionToProject,
   readProjects,
@@ -19,6 +21,8 @@ import {
 } from "../lib/chatSessions";
 
 const SIDEBAR_COLLAPSE_KEY = "datalens_sidebar_collapsed_v1";
+/** 侧栏每个项目分组下默认展示的会话条数 */
+const SIDEBAR_SESSION_PREVIEW_LIMIT = 5;
 
 type NavIcon =
   | "domain"
@@ -31,7 +35,9 @@ type NavIcon =
   | "chevronRight"
   | "brand"
   | "more"
-  | "settings";
+  | "settings"
+  | "folder"
+  | "chevronDown";
 
 function isActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
@@ -66,6 +72,13 @@ function Icon({ name, className = "h-4 w-4" }: { name: NavIcon; className?: stri
     return (
       <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M9 6l6 6-6 6" {...common} />
+      </svg>
+    );
+  }
+  if (name === "chevronDown") {
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path d="M6 9l6 6 6-6" {...common} />
       </svg>
     );
   }
@@ -118,6 +131,16 @@ function Icon({ name, className = "h-4 w-4" }: { name: NavIcon; className?: stri
       </svg>
     );
   }
+  if (name === "folder") {
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d="M4 7a2 2 0 012-2h3.343a2 2 0 011.414.586L11.828 7H19a2 2 0 012 2v9a2 2 0 01-2 2H6a2 2 0 01-2-2V7z"
+          {...common}
+        />
+      </svg>
+    );
+  }
   return (
     <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M12 3l2.1 4.56L19 10l-4.9 2.44L12 17l-2.1-4.56L5 10l4.9-2.44L12 3z" {...common} />
@@ -145,6 +168,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const sessionSearchInputRef = useRef<HTMLInputElement | null>(null);
   const newProjectInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingDeleteProjectId, setPendingDeleteProjectId] = useState<string | null>(null);
+  const [sessionMenuId, setSessionMenuId] = useState("");
+  const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
+  /** false / undefined = 展开；true = 折叠子列表 */
+  const [sidebarGroupCollapsed, setSidebarGroupCollapsed] = useState<Record<string, boolean>>({});
+  /** true = 显示该分组下全部会话；false/undefined = 仅最近 5 条 */
+  const [sidebarGroupSessionsFull, setSidebarGroupSessionsFull] = useState<Record<string, boolean>>({});
   const isCopilot = pathname.startsWith("/copilot");
   const { updateEvent } = getSessionStorageKeys();
 
@@ -179,15 +208,29 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }
 
   function createCopilotSession() {
-    let state = createSession();
-    if (activeProjectId !== "all" && activeProjectId !== "__unassigned__" && state.activeSessionId) {
+    const isNamedProject = activeProjectId !== "all" && activeProjectId !== "__unassigned__";
+    let state = isNamedProject ? createSession() : focusOrCreateUnassignedSession();
+    if (isNamedProject && state.activeSessionId) {
       state = moveSessionToProject(state.activeSessionId, activeProjectId);
     }
     setSessions(state.sessions);
     setActiveSessionId(state.activeSessionId);
+    setActiveProjectId(isNamedProject ? activeProjectId : "__unassigned__");
     setSearchMode(false);
     setSessionSearch("");
-    if (!isCopilot) router.push("/copilot");
+    const sid = state.activeSessionId;
+    if (!sid) return;
+    if (!isCopilot) {
+      if (isNamedProject) {
+        router.push("/copilot");
+      } else {
+        router.push(`/copilot?project=__unassigned__&session=${encodeURIComponent(sid)}`);
+      }
+      return;
+    }
+    if (!isNamedProject) {
+      router.push(`/copilot?project=__unassigned__&session=${encodeURIComponent(sid)}`);
+    }
   }
 
   function openProjectView(projectId: string) {
@@ -239,6 +282,24 @@ export default function AppShell({ children }: { children: ReactNode }) {
     if (activeProjectId === id) setActiveProjectId("all");
   }
 
+  function removeCopilotSession(id: string) {
+    const meta = sessions.find((s) => s.id === id);
+    const pid = (meta?.project_id || "").trim();
+    const params = typeof window !== "undefined" ? new URLSearchParams(window.location.search) : null;
+    const sessionInUrl = params?.get("session") || "";
+    const next = deleteSession(id);
+    setSessions(next.sessions);
+    setActiveSessionId(next.activeSessionId);
+    setSessionMenuId("");
+    if (isCopilot && sessionInUrl === id) {
+      if (next.activeSessionId) {
+        router.push(`/copilot?session=${encodeURIComponent(next.activeSessionId)}`);
+      } else {
+        router.push(pid ? `/copilot?project=${encodeURIComponent(pid)}` : "/copilot?project=__unassigned__");
+      }
+    }
+  }
+
 
   function cancelSearchMode() {
     setSearchMode(false);
@@ -263,6 +324,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       if (!(evt.target instanceof HTMLElement)) return;
       if (evt.target.closest("[data-menu-root='1']")) return;
       setMenuProjectId("");
+      setSessionMenuId("");
     };
     window.addEventListener("mousedown", onClickOutside);
     return () => window.removeEventListener("mousedown", onClickOutside);
@@ -277,6 +339,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
       }
       if (evt.key === "Escape") {
         setMenuProjectId("");
+        setSessionMenuId("");
         if (searchMode) cancelSearchMode();
       }
     };
@@ -306,6 +369,113 @@ export default function AppShell({ children }: { children: ReactNode }) {
     if (!session) return;
     setActiveProjectId(session.project_id || "__unassigned__");
   }, [pathname, sessions]);
+
+  const unassignedSessionsSidebar = useMemo(
+    () =>
+      [...sessions]
+        .filter((s) => !(s.project_id || "").trim() && !s.archived_at)
+        .sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
+    [sessions]
+  );
+
+  function isSidebarGroupOpen(treeKey: string) {
+    return sidebarGroupCollapsed[treeKey] !== true;
+  }
+
+  function toggleSidebarGroup(treeKey: string) {
+    setSidebarGroupCollapsed((prev) => {
+      const isOpen = prev[treeKey] !== true;
+      if (isOpen) {
+        setSidebarGroupSessionsFull((s) => ({ ...s, [treeKey]: false }));
+        return { ...prev, [treeKey]: true };
+      }
+      return { ...prev, [treeKey]: false };
+    });
+  }
+
+  function isSidebarGroupSessionsFull(treeKey: string) {
+    return !!sidebarGroupSessionsFull[treeKey];
+  }
+
+  function toggleSidebarGroupSessionsFull(treeKey: string) {
+    setSidebarGroupSessionsFull((prev) => ({ ...prev, [treeKey]: !prev[treeKey] }));
+  }
+
+  function renderSidebarSessionBlock(list: ChatSession[], treeKey: string) {
+    if (!list.length || !isSidebarGroupOpen(treeKey)) return null;
+    const full = isSidebarGroupSessionsFull(treeKey);
+    const visible = full ? list : list.slice(0, SIDEBAR_SESSION_PREVIEW_LIMIT);
+    const hasMore = list.length > SIDEBAR_SESSION_PREVIEW_LIMIT;
+    return (
+      <>
+        <ul className="app-project-sidebar-children mt-0.5 space-y-0.5">
+          {visible.map((s) => {
+            const isSessionActive = activeSessionId === s.id;
+            return (
+              <li key={s.id} className="group/session-item relative">
+                <div
+                  className={`flex w-full items-center gap-0.5 rounded-[10px] py-0.5 pl-1 pr-0.5 transition-colors ${
+                    isSessionActive ? "bg-neutral-100" : "hover:bg-neutral-50"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    className="min-w-0 flex-1 truncate py-2 pl-0.5 text-left text-[13px] leading-snug text-neutral-900"
+                    onClick={() => selectCopilotSession(s.id)}
+                  >
+                    {s.title}
+                  </button>
+                  <button
+                    type="button"
+                    className={`app-control-button h-7 w-7 shrink-0 p-0 text-neutral-500 ${
+                      sessionMenuId === s.id ? "opacity-100" : "opacity-0 group-hover/session-item:opacity-100"
+                    }`}
+                    data-menu-root="1"
+                    aria-label="会话操作"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setSessionMenuId((prev) => (prev === s.id ? "" : s.id));
+                    }}
+                  >
+                    <Icon name="more" className="h-4 w-4" />
+                  </button>
+                </div>
+                {sessionMenuId === s.id && (
+                  <div
+                    className="app-dropdown-surface absolute left-0 right-0 top-full z-[25] mt-0.5 rounded-lg p-1 shadow-md"
+                    data-menu-root="1"
+                  >
+                    <button
+                      type="button"
+                      className="app-control-button w-full justify-start text-[var(--app-danger)] hover:text-[var(--app-danger-hover)]"
+                      onClick={() => {
+                        setPendingDeleteSessionId(s.id);
+                        setSessionMenuId("");
+                      }}
+                    >
+                      删除对话
+                    </button>
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+        {hasMore ? (
+          <div className="app-project-sidebar-children mt-0.5 pl-1">
+            <button
+              type="button"
+              className="text-xs text-neutral-500 underline-offset-2 hover:text-neutral-800 hover:underline"
+              onClick={() => toggleSidebarGroupSessionsFull(treeKey)}
+            >
+              {full ? `仅显示最近 ${SIDEBAR_SESSION_PREVIEW_LIMIT} 条` : `展开全部（${list.length}）`}
+            </button>
+          </div>
+        ) : null}
+      </>
+    );
+  }
 
   const normalizedSearch = sessionSearch.trim().toLowerCase();
   const searchResults = useMemo(() => {
@@ -488,36 +658,67 @@ export default function AppShell({ children }: { children: ReactNode }) {
                             }
                           }}
                         />
-                        <button className="app-control-button app-toolbar-action" onClick={createCopilotProject}>
+                        <button
+                          type="button"
+                          className="app-control-button shrink-0"
+                          onClick={() => {
+                            setCreatingProject(false);
+                            setNewProjectName("");
+                          }}
+                        >
+                          取消
+                        </button>
+                        <button type="button" className="app-control-button app-toolbar-action shrink-0" onClick={createCopilotProject}>
                           确定
                         </button>
                       </div>
                     )}
-                    <div className="mt-1 space-y-1">
-                      <button
-                        className={`app-sidebar-chip w-full rounded-lg px-2 py-1.5 text-left text-xs ${
-                          activeProjectId === "all" ? "is-active" : ""
-                        }`}
-                        onClick={() => openProjectView("all")}
-                      >
-                        全部会话 ({sessions.length})
-                      </button>
-                      <button
-                        className={`app-sidebar-chip w-full rounded-lg px-2 py-1.5 text-left text-xs ${
-                          activeProjectId === "__unassigned__" ? "is-active" : ""
-                        }`}
-                        onClick={() => openProjectView("__unassigned__")}
-                      >
-                        未归类 ({sessions.filter((s) => !s.project_id).length})
-                      </button>
+                    <div className="app-project-sidebar-tree mt-1 space-y-3">
+                      <div className="app-project-sidebar-group">
+                        <div
+                          className={`app-project-sidebar-folder group/unassigned flex items-center gap-0.5 rounded-[10px] pr-1 transition-colors ${
+                            activeProjectId === "__unassigned__" ? "bg-neutral-100" : "hover:bg-neutral-50"
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            className="app-control-button h-7 w-7 shrink-0 p-0 text-neutral-500"
+                            aria-expanded={isSidebarGroupOpen("__unassigned__")}
+                            aria-label="展开或折叠未归类下的会话"
+                            onClick={() => toggleSidebarGroup("__unassigned__")}
+                          >
+                            <Icon
+                              name={isSidebarGroupOpen("__unassigned__") ? "chevronDown" : "chevronRight"}
+                              className="h-4 w-4"
+                            />
+                          </button>
+                          <button
+                            type="button"
+                            className="flex min-w-0 flex-1 items-center gap-2 px-0.5 py-2 text-left text-[13px] font-medium text-neutral-900"
+                            onClick={() => openProjectView("__unassigned__")}
+                          >
+                            <Icon name="folder" className="h-[18px] w-[18px] shrink-0 text-neutral-500" />
+                            <span className="min-w-0 flex-1 truncate">
+                              未归类
+                              <span className="font-normal text-neutral-400"> ({unassignedSessionsSidebar.length})</span>
+                            </span>
+                          </button>
+                        </div>
+                        {renderSidebarSessionBlock(unassignedSessionsSidebar, "__unassigned__")}
+                      </div>
+
                       {projects.map((project) => {
                         const isEditing = editingProjectId === project.id;
-                        const count = sessions.filter((s) => s.project_id === project.id).length;
+                        const projSessions = sessions
+                          .filter((s) => s.project_id === project.id && !s.archived_at)
+                          .sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+                        const count = projSessions.length;
+                        const treeKey = project.id;
                         return (
-                          <div key={project.id} className="group relative rounded">
+                          <div key={project.id} className="app-project-sidebar-group">
                             {isEditing ? (
                               <input
-                                className="app-input !rounded-md !px-2 !py-1 text-xs"
+                                className="app-input w-full rounded-[10px] border border-neutral-200 px-2 py-2 text-[13px]"
                                 value={editingProjectName}
                                 autoFocus
                                 onChange={(e) => setEditingProjectName(e.target.value)}
@@ -531,61 +732,89 @@ export default function AppShell({ children }: { children: ReactNode }) {
                                 }}
                               />
                             ) : (
-                              <button
-                                className={`app-sidebar-chip w-full rounded-lg px-2 py-1.5 text-left text-xs ${
-                                  activeProjectId === project.id ? "is-active" : ""
-                                }`}
-                                onClick={() => openProjectView(project.id)}
-                              >
-                                <span className="line-clamp-1">
-                                  {project.name} ({count})
-                                </span>
-                              </button>
-                            )}
-                            {!isEditing && (
-                              <button
-                                className={`app-control-button absolute right-1 top-0 ${menuProjectId === project.id ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}
-                                data-menu-root="1"
-                                onClick={() => setMenuProjectId((prev) => (prev === project.id ? "" : project.id))}
-                              >
-                                <Icon name="more" className="h-4 w-4" />
-                              </button>
-                            )}
-                            {menuProjectId === project.id && (
                               <div
-                                className="app-dropdown-surface absolute right-2 top-7 z-20 min-w-[120px] rounded-lg p-1"
-                                data-menu-root="1"
+                                className={`app-project-sidebar-folder group/proj relative flex items-center gap-0.5 rounded-[10px] pr-1 transition-colors ${
+                                  activeProjectId === project.id ? "bg-neutral-100" : "hover:bg-neutral-50"
+                                }`}
                               >
                                 <button
-                                  className="app-control-button w-full justify-start"
-                                  onClick={() => {
-                                    createSessionInProject(project.id);
-                                    setMenuProjectId("");
-                                  }}
+                                  type="button"
+                                  className="app-control-button h-7 w-7 shrink-0 p-0 text-neutral-500"
+                                  aria-expanded={isSidebarGroupOpen(treeKey)}
+                                  aria-label={`展开或折叠「${project.name}」下的会话`}
+                                  onClick={() => toggleSidebarGroup(treeKey)}
                                 >
-                                  在此项目中新聊天
+                                  <Icon
+                                    name={isSidebarGroupOpen(treeKey) ? "chevronDown" : "chevronRight"}
+                                    className="h-4 w-4"
+                                  />
                                 </button>
                                 <button
-                                  className="app-control-button w-full justify-start"
-                                  onClick={() => {
-                                    setEditingProjectId(project.id);
-                                    setEditingProjectName(project.name);
-                                    setMenuProjectId("");
-                                  }}
+                                  type="button"
+                                  className="flex min-w-0 flex-1 items-center gap-2 px-0.5 py-2 text-left text-[13px] font-medium text-neutral-900"
+                                  onClick={() => openProjectView(project.id)}
                                 >
-                                  重命名
+                                  <Icon name="folder" className="h-[18px] w-[18px] shrink-0 text-neutral-500" />
+                                  <span className="min-w-0 flex-1 truncate">
+                                    {project.name}
+                                    <span className="font-normal text-neutral-400"> ({count})</span>
+                                  </span>
                                 </button>
                                 <button
-                                  className="app-control-button w-full justify-start text-[var(--app-danger)] hover:text-[var(--app-danger-hover)]"
-                                  onClick={() => {
-                                    setPendingDeleteProjectId(project.id);
-                                    setMenuProjectId("");
+                                  type="button"
+                                  className={`app-control-button h-7 w-7 shrink-0 p-0 ${
+                                    menuProjectId === project.id ? "opacity-100" : "opacity-0 group-hover/proj:opacity-100"
+                                  }`}
+                                  data-menu-root="1"
+                                  aria-label="项目菜单"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setMenuProjectId((prev) => (prev === project.id ? "" : project.id));
                                   }}
                                 >
-                                  删除项目
+                                  <Icon name="more" className="h-4 w-4" />
                                 </button>
+                                {menuProjectId === project.id && (
+                                  <div
+                                    className="app-dropdown-surface absolute right-0 top-[calc(100%-2px)] z-20 min-w-[140px] rounded-lg p-1"
+                                    data-menu-root="1"
+                                  >
+                                    <button
+                                      type="button"
+                                      className="app-control-button w-full justify-start"
+                                      onClick={() => {
+                                        createSessionInProject(project.id);
+                                        setMenuProjectId("");
+                                      }}
+                                    >
+                                      在此项目中新聊天
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="app-control-button w-full justify-start"
+                                      onClick={() => {
+                                        setEditingProjectId(project.id);
+                                        setEditingProjectName(project.name);
+                                        setMenuProjectId("");
+                                      }}
+                                    >
+                                      重命名
+                                    </button>
+                                    <button
+                                      type="button"
+                                      className="app-control-button w-full justify-start text-[var(--app-danger)] hover:text-[var(--app-danger-hover)]"
+                                      onClick={() => {
+                                        setPendingDeleteProjectId(project.id);
+                                        setMenuProjectId("");
+                                      }}
+                                    >
+                                      删除项目
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             )}
+                            {!isEditing ? renderSidebarSessionBlock(projSessions, treeKey) : null}
                           </div>
                         );
                       })}
@@ -626,6 +855,19 @@ export default function AppShell({ children }: { children: ReactNode }) {
         onConfirm={() => {
           if (pendingDeleteProjectId) removeCopilotProject(pendingDeleteProjectId);
           setPendingDeleteProjectId(null);
+        }}
+      />
+
+      <ConfirmDialog
+        open={pendingDeleteSessionId !== null}
+        title="删除对话"
+        description="删除后无法恢复，确定删除该对话？"
+        danger
+        confirmText="删除"
+        onCancel={() => setPendingDeleteSessionId(null)}
+        onConfirm={() => {
+          if (pendingDeleteSessionId) removeCopilotSession(pendingDeleteSessionId);
+          setPendingDeleteSessionId(null);
         }}
       />
 

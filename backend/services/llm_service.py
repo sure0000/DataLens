@@ -2,12 +2,14 @@ import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
 
 from openai import AsyncOpenAI
 from sqlalchemy.orm import Session
 
+from services.llm_connections import get_connection, is_connection_ref, parse_connection_id
 from services.llm_models import has_any_llm_key, parse_model_ref, resolve_effective_model
 from services.runtime_llm_config import (
     get_effective_deepseek_api_key,
@@ -18,7 +20,58 @@ from services.runtime_llm_config import (
 
 TABLE_DESC_SECTIONS = ["业务描述", "数据定位", "核心口径", "使用建议", "风险边界"]
 
+SQL_GENERATION_SYSTEM = """你是 DataLens ChatBI 的 SQL 生成器。只输出一条只读业务查询的 JSON。
+
+硬性规则：
+1) 仅生成只读查询：允许 SELECT、WITH（公共表表达式）及只读子查询。禁止 INSERT/UPDATE/DELETE/DDL、管理类语句与多语句批次。
+2) 优先采信「数据源与表分析」「结构化字段」中的真实库表与字段；仅在信息不足时参考 FEW-SHOT。
+3) 时间语义：若用户表达「最近7天」「上周」「本月」「T+1」等，必须在 SQL 中体现为明确的日期或时间过滤条件。
+4) SQL 关键字大写，SELECT/FROM/WHERE/JOIN/GROUP BY/ORDER BY/HAVING/LIMIT 等子句分行书写，保证可读性。
+5) explanation 需简要说明你依据哪些 BUSINESS CONTEXT 选择了表与字段。
+6) 输出严格 JSON 对象，键为：sql（字符串）、explanation（字符串）、referenced_columns（字符串数组）。禁止 Markdown 代码块与 JSON 外多余文字。"""
+
+SQL_REPAIR_SYSTEM = """你是 DataLens ChatBI 的 SQL 修复助手。在保持只读前提下修复 SQL，只输出 JSON。
+
+硬性规则：
+1) 仅输出 JSON，键为 sql（字符串）、reason（字符串）。
+2) sql 必须为单条只读语句（SELECT / WITH / SHOW / DESCRIBE / EXPLAIN），禁止写操作与多语句。
+3) 优先根据 error_message 与现有 schema 修正，不要臆造上下文中不存在的表或字段。
+4) SQL 关键字大写、子句分行，禁止 Markdown 代码块。"""
+
+
+@dataclass(frozen=True)
+class SqlCopilotContext:
+    """分层 Prompt 的业务侧块（对齐语义上下文引擎：Business + Few-shot）。"""
+
+    knowledge: str
+    datasource_priority: str
+    schema: str
+    few_shot_json: str
+
+    def business_sections(self) -> str:
+        parts: list[str] = []
+        if self.knowledge.strip():
+            parts.append(f"## BUSINESS CONTEXT — 知识库与业务口径\n{self.knowledge.strip()}")
+        parts.append(
+            f"## BUSINESS CONTEXT — 数据源与表分析（优先采信）\n{self.datasource_priority.strip()}"
+        )
+        parts.append(f"## BUSINESS CONTEXT — 结构化字段\n{self.schema.strip()}")
+        return "\n\n".join(parts)
+
+    def few_shot_section(self) -> str:
+        return f"## FEW-SHOT — 历史相似问答（仅上下文不足时参考）\n{self.few_shot_json.strip()}"
+
+
+def _sql_generation_user_message(question: str, summary: str, ctx: SqlCopilotContext) -> str:
+    return (
+        f"{ctx.business_sections()}\n\n"
+        f"{ctx.few_shot_section()}\n\n"
+        f"## TABLE SUMMARY（表级摘要聚合）\n{summary.strip()}\n\n"
+        f"## USER QUESTION\n{question.strip()}"
+    )
+
 _async_clients: dict[str, AsyncOpenAI] = {}
+_async_conn_clients: dict[str, AsyncOpenAI] = {}
 
 
 def _has_llm_key(db: Session) -> bool:
@@ -53,6 +106,31 @@ def _async_client_for(provider: str, db: Session) -> AsyncOpenAI:
     return _async_clients[cache_key]
 
 
+def _async_client_for_connection_id(db: Session, conn_id: str) -> tuple[AsyncOpenAI, str]:
+    """自定义接入：OpenAI SDK + 行内 base_url / api_key / model_id。"""
+    row = get_connection(db, conn_id)
+    if not row or not (row.api_key or "").strip():
+        raise RuntimeError("大模型接入不存在或未配置密钥")
+    api_key = row.api_key.strip()
+    base = (row.base_url or "").strip().rstrip("/")
+    if not base:
+        raise RuntimeError("大模型接入未配置 Endpoint")
+    model_name = (row.model_id or "").strip()
+    if not model_name:
+        raise RuntimeError("大模型接入未配置模型")
+    cache_key = _client_cache_key("conn", api_key, base)
+    if cache_key not in _async_conn_clients:
+        _async_conn_clients[cache_key] = AsyncOpenAI(api_key=api_key, base_url=base)
+    return _async_conn_clients[cache_key], model_name
+
+
+def _client_and_model_for_ref(model_ref: str, db: Session) -> tuple[AsyncOpenAI, str]:
+    if is_connection_ref(model_ref):
+        return _async_client_for_connection_id(db, parse_connection_id(model_ref))
+    provider, model_name = parse_model_ref(model_ref)
+    return _async_client_for(provider, db), model_name
+
+
 async def _retry_json(call: Callable[[], Awaitable[str]], max_attempts: int = 3, delay: int = 1) -> dict[str, Any]:
     import logging
 
@@ -83,13 +161,27 @@ async def _chat_json(
     *,
     temperature: float = 0.1,
 ) -> dict[str, Any]:
-    provider, model_name = parse_model_ref(model_ref)
-    client = _async_client_for(provider, db)
+    return await _chat_json_messages(
+        [{"role": "user", "content": prompt}],
+        model_ref,
+        db,
+        temperature=temperature,
+    )
+
+
+async def _chat_json_messages(
+    messages: list[dict[str, str]],
+    model_ref: str,
+    db: Session,
+    *,
+    temperature: float = 0.1,
+) -> dict[str, Any]:
+    client, model_name = _client_and_model_for_ref(model_ref, db)
 
     async def do_call() -> str:
         resp = await client.chat.completions.create(
             model=model_name,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
             temperature=temperature,
             response_format={"type": "json_object"},
         )
@@ -99,8 +191,7 @@ async def _chat_json(
 
 
 async def _chat_text(prompt: str, model_ref: str, db: Session, temperature: float = 0.3) -> str:
-    provider, model_name = parse_model_ref(model_ref)
-    client = _async_client_for(provider, db)
+    client, model_name = _client_and_model_for_ref(model_ref, db)
     resp = await client.chat.completions.create(
         model=model_name,
         messages=[{"role": "user", "content": prompt}],
@@ -446,10 +537,11 @@ async def analyze_table(
 
 async def generate_sql(
     question: str,
-    table_schema: str,
     table_summary: str,
     db: Session,
     chat_model: str | None = None,
+    *,
+    copilot_context: SqlCopilotContext,
 ) -> dict[str, Any]:
     if not _has_llm_key(db):
         return {
@@ -464,20 +556,15 @@ async def generate_sql(
             "explanation": "无可用对话模型",
             "referenced_columns": [],
         }
-    prompt = f"""你是数据分析专家，请根据信息生成MySQL SQL。
-必须遵循：
-1) 优先使用"优先上下文-数据源采集信息"和"优先上下文-AI分析信息"中的信息确定数据来源、业务口径和可用表。
-2) 仅在上下文不足时，才参考"历史相似问答"。
-3) SQL 必须可执行、只读、无写操作。
-4) SQL 必须格式化输出：关键字大写，每个子句（SELECT/FROM/WHERE/JOIN/GROUP BY/ORDER BY/HAVING/LIMIT）单独一行，嵌套子查询缩进2个空格。
-5) explanation 需说明你如何利用数据源采集信息与AI分析信息。
-6) 禁止输出 markdown 代码块。
-
-context: {table_schema}
-summary: {table_summary}
-question: {question}
-输出JSON键: sql,explanation,referenced_columns"""
-    return await _chat_json(prompt, model_ref, db)
+    user_content = _sql_generation_user_message(question, table_summary, copilot_context)
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": SQL_GENERATION_SYSTEM},
+        {
+            "role": "user",
+            "content": user_content + "\n\n请根据 USER QUESTION 生成 SQL，并输出 JSON 键：sql,explanation,referenced_columns",
+        },
+    ]
+    return await _chat_json_messages(messages, model_ref, db)
 
 
 def _format_sql(sql: str) -> str:
@@ -526,10 +613,11 @@ async def repair_failed_sql(
     question: str,
     failed_sql: str,
     error_message: str,
-    table_schema: str,
     table_summary: str,
     db: Session,
     chat_model: str | None = None,
+    *,
+    copilot_context: SqlCopilotContext,
 ) -> dict[str, str]:
     sanitized_failed_sql = sanitize_sql_text(failed_sql)
     if not _has_llm_key(db):
@@ -544,21 +632,18 @@ async def repair_failed_sql(
             "reason": "无可用对话模型，仅执行基础SQL清洗。",
         }
 
-    prompt = f"""你是资深 SQL 修复助手。请根据执行错误修复 SQL。
-要求：
-1) 只允许输出 JSON，键为 sql,reason。
-2) sql 必须是可执行只读语句（SELECT/SHOW/WITH/DESC/EXPLAIN）。
-3) 必须优先依据 error_message 修复，不要凭空新增不存在的字段。
-4) SQL 必须格式化输出：关键字大写，每个子句单独一行，嵌套子查询缩进2个空格。
-5) 禁止输出 markdown 代码块。
-
-question: {question}
-failed_sql: {sanitized_failed_sql}
-error_message: {error_message}
-context: {table_schema}
-summary: {table_summary}
-"""
-    fixed = await _chat_json(prompt, model_ref, db)
+    ctx_block = _sql_generation_user_message(question, table_summary, copilot_context)
+    user_content = (
+        f"{ctx_block}\n\n"
+        f"## FAILED SQL\n{sanitized_failed_sql}\n\n"
+        f"## DATABASE ERROR\n{error_message.strip()}\n\n"
+        "请修复 FAILED SQL，输出 JSON 键：sql,reason"
+    )
+    messages: list[dict[str, str]] = [
+        {"role": "system", "content": SQL_REPAIR_SYSTEM},
+        {"role": "user", "content": user_content},
+    ]
+    fixed = await _chat_json_messages(messages, model_ref, db)
     candidate = sanitize_sql_text(str(fixed.get("sql") or ""))
     reason = str(fixed.get("reason") or "").strip() or "根据数据库报错自动修复 SQL。"
     return {"sql": candidate, "reason": reason}
