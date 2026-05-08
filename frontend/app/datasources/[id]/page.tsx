@@ -47,7 +47,7 @@ export default function DataSourceDetailPage({ params }: { params: { id: string 
     load();
   }
 
-  if (!catalog) return <main className="app-page text-[#6b7280]">正在加载数据源详情...</main>;
+  if (!catalog) return <main className="app-page text-app-secondary">正在加载数据源详情...</main>;
   const normalizedKeyword = keyword.trim().toLowerCase();
   const filteredDatabases = catalog.databases
     .filter((db) => {

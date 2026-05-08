@@ -18,7 +18,9 @@ from models import (
     TableSummary,
 )
 from services.embedding_service import embed_and_store
+from services.llm_models import has_any_llm_key, resolve_effective_model
 from services.llm_service import analyze_table, batch_analyze_columns
+from services.runtime_llm_config import get_semantic_llm_model_stored
 from services.profiler import profile_column
 from services.schema_extractor import get_columns, get_ddl, get_row_count, get_sample, get_tables_meta_for_database
 
@@ -150,7 +152,15 @@ async def _run_analyze(table_id: int, table_name: str, conn_info: dict) -> None:
         t.ddl = ddl
 
         profiles = [profile_column(sample, c["column_name"], row_count, c.get("data_type")) for c in cols]
-        semantic = await batch_analyze_columns(table_name, list(zip(cols, profiles)))
+        semantic_model_ref = (
+            resolve_effective_model(get_semantic_llm_model_stored(db), db) if has_any_llm_key(db) else ""
+        )
+        semantic = await batch_analyze_columns(
+            table_name,
+            list(zip(cols, profiles)),
+            db,
+            semantic_model_ref=semantic_model_ref,
+        )
         rows_for_summary = []
         for c, p, s in zip(cols, profiles, semantic, strict=False):
             col = ColumnMeta(
@@ -186,7 +196,14 @@ async def _run_analyze(table_id: int, table_name: str, conn_info: dict) -> None:
             )
 
         business_context = _build_table_business_context(db, t, table_name, conn_info)
-        summary = await analyze_table(table_name, rows_for_summary, row_count, business_context=business_context)
+        summary = await analyze_table(
+            table_name,
+            rows_for_summary,
+            row_count,
+            db,
+            business_context=business_context,
+            semantic_model_ref=semantic_model_ref,
+        )
         db.add(
             TableSummary(
                 table_id=table_id,

@@ -93,6 +93,15 @@ class DataSource(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class RuntimeSetting(Base):
+    """键值配置，如数据语义分析所用大模型。"""
+
+    __tablename__ = "runtime_settings"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 class BusinessDomain(Base):
     __tablename__ = "business_domains"
 

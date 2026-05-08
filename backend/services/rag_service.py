@@ -219,6 +219,7 @@ async def answer(
     table_id: int | None = None,
     business_domain_id: int | None = None,
     stage_callback: Callable[[str], Awaitable[None]] | None = None,
+    chat_model: str | None = None,
 ) -> dict[str, Any]:
     async def emit(stage: str) -> None:
         if stage_callback:
@@ -228,7 +229,7 @@ async def answer(
     refs = await search_similar_async(db, question, top_k=5, table_id=table_id, ref_type="query")
     priority_context, schema, summary_text, preferred_table_id = _build_priority_context(db, table_id)
     knowledge_text = _collect_knowledge_context_text(db, question, business_domain_id, table_id)
-    intent_info = await classify_question_intent(question)
+    intent_info = await classify_question_intent(question, db, chat_model)
     intent = intent_info.get("intent", "general_qa")
 
     if intent != "sql_query":
@@ -239,7 +240,9 @@ async def answer(
             explanation = guardrail["reason"]
         else:
             hint_parts = [p for p in (knowledge_text.strip(), priority_context.strip()) if p]
-            natural_answer = await answer_general_question(question, context_hint="\n\n".join(hint_parts))
+            natural_answer = await answer_general_question(
+                question, db, context_hint="\n\n".join(hint_parts), chat_model=chat_model
+            )
             explanation = intent_info.get("reason", "该问题更适合自然语言回答，无需执行 SQL")
         await embed_and_store_async(db, "query", table_id or 0, f"{question} -> {natural_answer}")
         return {
@@ -264,7 +267,7 @@ async def answer(
         ]
     )
     llm_context = "\n\n".join(llm_blocks)
-    result = await generate_sql(question, llm_context, summary_text)
+    result = await generate_sql(question, llm_context, summary_text, db, chat_model)
 
     # query_examples.table_id has FK constraint, so we must persist a real table id.
     resolved_table_id = table_id
@@ -367,6 +370,8 @@ async def answer(
                     error_message=current_error,
                     table_schema=llm_context,
                     table_summary=summary_text,
+                    db=db,
+                    chat_model=chat_model,
                 )
                 next_sql = sanitize_sql_text(fix.get("sql", ""))
                 reason = fix.get("reason", "自动修复")

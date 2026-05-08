@@ -17,6 +17,9 @@
   --app-card-bg: #ffffff;
   --app-card-border: #e5e7eb;
   --app-card-radius: 18px;
+  /* 轻量阴影：贴近 ChatGPT 类产品的扁平层次，避免多层重阴影 */
+  --app-shadow-card: 0 1px 2px rgba(15, 23, 42, 0.05), 0 4px 16px rgba(15, 23, 42, 0.06);
+  --app-shadow-elevated: 0 8px 24px rgba(15, 23, 42, 0.08);
   --app-space-page-x: clamp(1rem, 1.6vw, 1.5rem);
   --app-space-page-y: clamp(1rem, 1.8vw, 1.75rem);
   --app-space-section: clamp(1rem, 1.5vw, 1.5rem);
@@ -37,6 +40,17 @@
   --app-success-soft: rgba(5, 150, 105, 0.12);
   --app-info: #0284c7;
   --app-info-soft: rgba(2, 132, 199, 0.12);
+  --app-border-subtle: #eceff1;
+  --app-border-soft: #eef2f7;
+  --app-surface-subtle: #fafbfc;
+  --app-surface-hover: #f9fafb;
+  --app-text-ink: #374151;
+  --app-text-placeholder: #9ca3af;
+  --app-link: #4f46e5;
+  --app-active-border: #c7d2fe;
+  --app-active-bg: #eef2ff;
+  --app-chip-bg: #f8fafc;
+  --app-chip-text: #475569;
   --font-inter: "Inter", system-ui, -apple-system, sans-serif;
 }
 
@@ -135,9 +149,10 @@ canvas {
   align-items: center;
   gap: 0.5rem;
   min-width: 0;
+  min-height: 2.25rem;
   border-radius: 0.75rem;
   border: 1px solid transparent;
-  padding: 0.46rem 0.58rem;
+  padding: 0.5rem 0.62rem;
   font-size: 0.84rem;
   color: #4b5563;
   transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
@@ -155,16 +170,16 @@ canvas {
 }
 
 .app-nav-item.is-active {
-  background: #eef2ff;
-  border-color: #c7d2fe;
-  color: #111827;
+  background: var(--app-active-bg);
+  border-color: var(--app-active-border);
+  color: var(--app-text-primary);
 }
 
 .app-card {
   border-radius: var(--app-card-radius);
   border: 1px solid var(--app-card-border);
   background: var(--app-card-bg);
-  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+  box-shadow: var(--app-shadow-card);
 }
 
 .app-button {
@@ -173,7 +188,7 @@ canvas {
   justify-content: center;
   min-height: 2.4rem;
   border-radius: 999px;
-  border: 1px solid rgba(103, 232, 249, 0.38);
+  border: 1px solid rgba(17, 24, 39, 0.12);
   background: var(--app-primary);
   padding: 0.55rem 0.95rem;
   font-size: 0.875rem;
@@ -181,12 +196,12 @@ canvas {
   font-weight: 600;
   color: var(--app-primary-text);
   transition: background 0.2s ease, transform 0.15s ease, box-shadow 0.2s ease, opacity 0.2s ease;
-  box-shadow: 0 8px 24px rgba(14, 116, 144, 0.35);
+  box-shadow: 0 2px 8px rgba(17, 24, 39, 0.12);
 }
 
 .app-button:hover {
   background: var(--app-primary-hover);
-  box-shadow: 0 10px 30px rgba(79, 70, 229, 0.35);
+  box-shadow: 0 4px 14px rgba(17, 24, 39, 0.16);
 }
 
 .app-button:active,
@@ -399,10 +414,11 @@ canvas {
 
 .prose {
   color: #374151;
+  line-height: 1.6;
 }
 
 .prose :where(strong, h1, h2, h3, h4) {
-  color: #fafafa;
+  color: #111827;
 }
 
 .app-page {
@@ -414,7 +430,7 @@ canvas {
 
 .app-page-title {
   font-size: clamp(1.55rem, 2.2vw, 1.95rem);
-  line-height: 1.15;
+  line-height: 1.2;
   font-weight: 700;
   color: #111827;
   letter-spacing: 0.01em;
@@ -458,8 +474,9 @@ canvas {
 }
 
 .app-page-subtitle {
-  margin-top: 0.4rem;
+  margin-top: 0.5rem;
   font-size: 0.875rem;
+  line-height: 1.55;
   color: var(--app-text-secondary);
 }
 
@@ -602,15 +619,15 @@ canvas {
 }
 
 .app-sidebar-chip.is-active {
-  border-color: #c7d2fe;
-  background: #eef2ff;
-  color: #111827;
+  border-color: var(--app-active-border);
+  background: var(--app-active-bg);
+  color: var(--app-text-primary);
 }
 
 .app-copilot-panel {
   border: 1px solid var(--app-card-border);
   background: var(--app-card-bg);
-  box-shadow: 0 8px 24px rgba(2, 6, 23, 0.22);
+  box-shadow: var(--app-shadow-card);
 }
 
 .app-copilot-badge {
@@ -635,19 +652,19 @@ canvas {
 .app-surface-panel {
   border: 1px solid var(--app-card-border);
   background: var(--app-card-bg);
-  box-shadow: 0 10px 26px rgba(2, 6, 23, 0.22);
+  box-shadow: var(--app-shadow-card);
 }
 
 .app-modal-surface {
   border: 1px solid #e5e7eb;
   background: #ffffff;
-  box-shadow: 0 22px 48px rgba(15, 23, 42, 0.14);
+  box-shadow: var(--app-shadow-elevated);
 }
 
 .app-chatgpt-dialog {
   border: 1px solid #e5e7eb;
   background: #ffffff;
-  box-shadow: 0 18px 42px rgba(15, 23, 42, 0.18);
+  box-shadow: var(--app-shadow-elevated);
 }
 
 .app-dialog-btn {
@@ -704,8 +721,50 @@ canvas {
 }
 
 .app-search-overlay {
-  background: rgba(17, 24, 39, 0.32);
+  background: var(--app-overlay-backdrop);
   backdrop-filter: blur(6px);
+}
+
+/* 全页模态遮罩（与 ConfirmDialog、各业务弹层一致） */
+.app-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: var(--app-overlay-backdrop);
+  backdrop-filter: blur(2px);
+}
+
+.app-modal-backdrop--front {
+  z-index: 100;
+}
+
+/* 与 app-page 水平内边距对齐的面包屑条（顶栏分隔） */
+.app-breadcrumb-strip {
+  margin-left: calc(-1 * var(--app-space-page-x));
+  margin-right: calc(-1 * var(--app-space-page-x));
+  padding-left: var(--app-space-page-x);
+  padding-right: var(--app-space-page-x);
+  padding-top: 0.75rem;
+  padding-bottom: 0.75rem;
+  border-bottom: 1px solid var(--app-border-subtle);
+}
+
+.app-card-title {
+  font-size: 1rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--app-text-primary);
+}
+
+.app-nested-panel {
+  border-radius: 0.75rem;
+  border: 1px solid var(--app-border-soft);
+  background: var(--app-surface-subtle);
+  padding: 1rem;
 }
 
 .app-text-primary {

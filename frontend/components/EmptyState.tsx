@@ -6,7 +6,7 @@ function Illustration({ name }: { name: IllustrationName }) {
   const common = { stroke: "currentColor", strokeWidth: 1.4, strokeLinecap: "round" as const, strokeLinejoin: "round" as const, fill: "none" };
   if (name === "search") {
     return (
-      <svg className="h-16 w-16 text-[#d1d5db]" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="h-16 w-16 text-app-border" viewBox="0 0 64 64" aria-hidden="true">
         <circle cx="28" cy="28" r="16" {...common} />
         <path d="M40 40l12 12" {...common} />
         <path d="M22 28h12M28 22v12" {...common} />
@@ -15,7 +15,7 @@ function Illustration({ name }: { name: IllustrationName }) {
   }
   if (name === "datasource") {
     return (
-      <svg className="h-16 w-16 text-[#d1d5db]" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="h-16 w-16 text-app-border" viewBox="0 0 64 64" aria-hidden="true">
         <ellipse cx="32" cy="18" rx="18" ry="7" {...common} />
         <path d="M14 18v14c0 3.87 8.06 7 18 7s18-3.13 18-7V18" {...common} />
         <path d="M14 32v14c0 3.87 8.06 7 18 7s18-3.13 18-7V32" {...common} />
@@ -24,7 +24,7 @@ function Illustration({ name }: { name: IllustrationName }) {
   }
   if (name === "domain") {
     return (
-      <svg className="h-16 w-16 text-[#d1d5db]" viewBox="0 0 64 64" aria-hidden="true">
+      <svg className="h-16 w-16 text-app-border" viewBox="0 0 64 64" aria-hidden="true">
         <rect x="8" y="12" width="20" height="18" rx="2" {...common} />
         <rect x="36" y="12" width="20" height="12" rx="2" {...common} />
         <rect x="36" y="30" width="20" height="22" rx="2" {...common} />
@@ -33,7 +33,7 @@ function Illustration({ name }: { name: IllustrationName }) {
     );
   }
   return (
-    <svg className="h-16 w-16 text-[#d1d5db]" viewBox="0 0 64 64" aria-hidden="true">
+    <svg className="h-16 w-16 text-app-border" viewBox="0 0 64 64" aria-hidden="true">
       <rect x="8" y="16" width="48" height="36" rx="4" {...common} />
       <path d="M8 26h48" {...common} />
       <path d="M20 38h24M20 44h16" {...common} />

@@ -59,7 +59,7 @@ function CopilotResultContent() {
 
           <div className="app-card p-4">
             <p className="app-text-muted text-xs">生成 SQL</p>
-            <pre className="mt-2 overflow-x-auto rounded bg-[#f3f4f6] p-3 text-xs text-[#111827]">{record.sql || "-- 暂无 SQL 结果 --"}</pre>
+            <pre className="mt-2 overflow-x-auto rounded bg-app-hover p-3 text-xs text-app-primary">{record.sql || "-- 暂无 SQL 结果 --"}</pre>
           </div>
 
           <div className="app-card p-4">
@@ -76,7 +76,7 @@ function CopilotResultContent() {
 
 export default function CopilotResultPage() {
   return (
-    <Suspense fallback={<main className="app-page text-[#6b7280]">加载中...</main>}>
+    <Suspense fallback={<main className="app-page text-app-secondary">加载中...</main>}>
       <CopilotResultContent />
     </Suspense>
   );

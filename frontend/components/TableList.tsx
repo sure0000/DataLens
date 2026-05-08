@@ -18,7 +18,7 @@ export default function TableList({
               <a className="app-link break-all font-semibold" href={`/table/${t.id}`}>
                 {t.table_name}
               </a>
-              <span className="rounded-full border border-[#cbd5e1] bg-[#f8fafc] px-2 py-0.5 text-xs text-[#475569]">{t.status}</span>
+              <span className="rounded-full border border-app-border bg-app-chip px-2 py-0.5 text-xs text-app-chipText">{t.status}</span>
             </div>
             <p className="app-text-muted mt-2 text-sm">行数：{t.row_count ?? "-"}</p>
           </div>

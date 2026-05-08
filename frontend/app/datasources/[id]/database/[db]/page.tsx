@@ -62,7 +62,7 @@ export default function DatabaseDetailPage({ params }: { params: { id: string; d
     load();
   }
 
-  if (!catalog) return <main className="app-page text-[#6b7280]">加载中...</main>;
+  if (!catalog) return <main className="app-page text-app-secondary">加载中...</main>;
   const normalizedKeyword = keyword.trim().toLowerCase();
   const filteredTables = catalog.tables
     .filter((t) => {
@@ -125,10 +125,10 @@ export default function DatabaseDetailPage({ params }: { params: { id: string; d
                     <p className="font-medium">{t.name}</p>
                   )}
                 </td>
-                <td className="max-w-[260px] text-[#374151]">{t.comment || "-"}</td>
-                <td className="max-w-[300px] text-[#374151]">{t.ai_analysis || "-"}</td>
+                <td className="max-w-[260px] text-app-ink">{t.comment || "-"}</td>
+                <td className="max-w-[300px] text-app-ink">{t.ai_analysis || "-"}</td>
                 <td>{t.status}</td>
-                <td className="text-[#374151]">{t.latest_analyzed_at ? new Date(t.latest_analyzed_at).toLocaleString() : "-"}</td>
+                <td className="text-app-ink">{t.latest_analyzed_at ? new Date(t.latest_analyzed_at).toLocaleString() : "-"}</td>
                 <td>
                   <button className="app-button" onClick={() => analyzeTable(t.name)}>
                     分析数据表
@@ -138,7 +138,7 @@ export default function DatabaseDetailPage({ params }: { params: { id: string; d
             ))}
             {!filteredTables.length && (
               <tr>
-                <td className="text-[#6b7280]" colSpan={6}>
+                <td className="text-app-secondary" colSpan={6}>
                   未匹配到数据表
                 </td>
               </tr>

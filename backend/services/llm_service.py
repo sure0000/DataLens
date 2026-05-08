@@ -2,39 +2,60 @@ import asyncio
 import json
 import re
 from collections.abc import Awaitable, Callable
+from hashlib import sha256
 from typing import Any
 
 from openai import AsyncOpenAI
+from sqlalchemy.orm import Session
 
-from config import get_settings
+from services.llm_models import has_any_llm_key, parse_model_ref, resolve_effective_model
+from services.runtime_llm_config import (
+    get_effective_deepseek_api_key,
+    get_effective_deepseek_base_url,
+    get_effective_openai_api_key,
+    get_effective_openai_base_url,
+)
 
-settings = get_settings()
 TABLE_DESC_SECTIONS = ["业务描述", "数据定位", "核心口径", "使用建议", "风险边界"]
 
-
-def _has_llm_key() -> bool:
-    return bool(settings.deepseek_api_key or settings.openai_api_key)
+_async_clients: dict[str, AsyncOpenAI] = {}
 
 
-_llm_client: AsyncOpenAI | None = None
+def _has_llm_key(db: Session) -> bool:
+    return has_any_llm_key(db)
 
 
-def _client() -> AsyncOpenAI:
-    global _llm_client
-    if _llm_client is not None:
-        return _llm_client
-    api_key = settings.deepseek_api_key or settings.openai_api_key
-    if not api_key:
-        raise RuntimeError("DEEPSEEK_API_KEY or OPENAI_API_KEY is required")
-    if settings.deepseek_api_key:
-        _llm_client = AsyncOpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+def _client_cache_key(provider: str, api_key: str, base_url: str | None) -> str:
+    raw = f"{provider}\0{api_key}\0{base_url or ''}"
+    return sha256(raw.encode()).hexdigest()
+
+
+def _async_client_for(provider: str, db: Session) -> AsyncOpenAI:
+    if provider == "deepseek":
+        api_key = get_effective_deepseek_api_key(db)
+        base_url = get_effective_deepseek_base_url(db)
+        if not api_key:
+            raise RuntimeError("DeepSeek API key 未配置")
+    elif provider == "openai":
+        api_key = get_effective_openai_api_key(db)
+        base_url = get_effective_openai_base_url(db)
+        if not api_key:
+            raise RuntimeError("OpenAI API key 未配置")
     else:
-        _llm_client = AsyncOpenAI(api_key=api_key)
-    return _llm_client
+        raise RuntimeError(f"未知 provider: {provider}")
+
+    cache_key = _client_cache_key(provider, api_key, base_url)
+    if cache_key not in _async_clients:
+        kwargs: dict[str, Any] = {"api_key": api_key}
+        if base_url:
+            kwargs["base_url"] = base_url
+        _async_clients[cache_key] = AsyncOpenAI(**kwargs)
+    return _async_clients[cache_key]
 
 
 async def _retry_json(call: Callable[[], Awaitable[str]], max_attempts: int = 3, delay: int = 1) -> dict[str, Any]:
     import logging
+
     _logger = logging.getLogger(__name__)
     last_error: Exception | None = None
     last_raw: str = ""
@@ -55,14 +76,21 @@ async def _retry_json(call: Callable[[], Awaitable[str]], max_attempts: int = 3,
     raise RuntimeError(f"LLM JSON parse failed after {max_attempts} attempts: {last_error}")
 
 
-async def _chat_json(prompt: str) -> dict[str, Any]:
-    client = _client()
+async def _chat_json(
+    prompt: str,
+    model_ref: str,
+    db: Session,
+    *,
+    temperature: float = 0.1,
+) -> dict[str, Any]:
+    provider, model_name = parse_model_ref(model_ref)
+    client = _async_client_for(provider, db)
 
     async def do_call() -> str:
         resp = await client.chat.completions.create(
-            model="deepseek-chat" if settings.deepseek_api_key else "gpt-4o-mini",
+            model=model_name,
             messages=[{"role": "user", "content": prompt}],
-            temperature=0.1,
+            temperature=temperature,
             response_format={"type": "json_object"},
         )
         return resp.choices[0].message.content or "{}"
@@ -70,10 +98,11 @@ async def _chat_json(prompt: str) -> dict[str, Any]:
     return await _retry_json(do_call)
 
 
-async def _chat_text(prompt: str, temperature: float = 0.3) -> str:
-    client = _client()
+async def _chat_text(prompt: str, model_ref: str, db: Session, temperature: float = 0.3) -> str:
+    provider, model_name = parse_model_ref(model_ref)
+    client = _async_client_for(provider, db)
     resp = await client.chat.completions.create(
-        model="deepseek-chat" if settings.deepseek_api_key else "gpt-4o-mini",
+        model=model_name,
         messages=[{"role": "user", "content": prompt}],
         temperature=temperature,
     )
@@ -102,13 +131,17 @@ def _heuristic_intent(question: str) -> str:
     return "general_qa"
 
 
-async def classify_question_intent(question: str) -> dict[str, str]:
-    if not _has_llm_key():
+async def classify_question_intent(question: str, db: Session, chat_model: str | None = None) -> dict[str, str]:
+    if not _has_llm_key(db):
         intent = _heuristic_intent(question)
         return {
             "intent": intent,
             "reason": "未配置LLM Key，使用规则进行意图识别",
         }
+    model_ref = resolve_effective_model(chat_model, db)
+    if not model_ref:
+        intent = _heuristic_intent(question)
+        return {"intent": intent, "reason": "无可用模型，使用规则进行意图识别"}
     prompt = f"""你是 ChatBI 助手的意图分类器。
 请判断用户问题是否需要"生成并执行SQL"。
 
@@ -122,7 +155,7 @@ async def classify_question_intent(question: str) -> dict[str, str]:
 仅输出JSON，键为: intent,reason
 intent 只能是 sql_query 或 general_qa
 """
-    data = await _chat_json(prompt)
+    data = await _chat_json(prompt, model_ref, db)
     intent = str(data.get("intent") or "").strip()
     if intent not in {"sql_query", "general_qa"}:
         intent = "general_qa"
@@ -189,8 +222,13 @@ def guardrail_for_question(question: str) -> dict[str, str] | None:
     return None
 
 
-async def answer_general_question(question: str, context_hint: str = "") -> str:
-    if not _has_llm_key():
+async def answer_general_question(
+    question: str,
+    db: Session,
+    context_hint: str = "",
+    chat_model: str | None = None,
+) -> str:
+    if not _has_llm_key(db):
         return (
             "结论\n"
             "- 这是一个非 SQL 查询问题，建议直接用自然语言解答。\n\n"
@@ -198,6 +236,16 @@ async def answer_general_question(question: str, context_hint: str = "") -> str:
             "- 当前未配置 LLM Key，暂时无法给出更智能的上下文化回答。\n\n"
             "下一步\n"
             "- 你可以继续补充背景、目标和限制条件，我会给出更具体的建议。"
+        )
+    model_ref = resolve_effective_model(chat_model, db)
+    if not model_ref:
+        return (
+            "结论\n"
+            "- 这是一个非 SQL 查询问题。\n\n"
+            "说明\n"
+            "- 当前无可用对话模型配置。\n\n"
+            "下一步\n"
+            "- 请在偏好设置中填写 API URL 与 Key，或配置环境变量。"
         )
     prompt = f"""你是 DataLens 的 ChatBI 助手。
 请直接回答用户问题，不要生成 SQL。
@@ -221,7 +269,7 @@ async def answer_general_question(question: str, context_hint: str = "") -> str:
 用户问题:
 {question}
 """
-    text = await _chat_text(prompt, temperature=0.4)
+    text = await _chat_text(prompt, model_ref, db, temperature=0.4)
     if not text:
         return (
             "结论\n"
@@ -250,8 +298,15 @@ async def answer_general_question(question: str, context_hint: str = "") -> str:
     return "\n".join(normalized).strip()
 
 
-async def analyze_column(table_name: str, column_info: dict[str, Any], profiling_result: dict[str, Any]) -> dict[str, Any]:
-    if not _has_llm_key():
+async def analyze_column(
+    table_name: str,
+    column_info: dict[str, Any],
+    profiling_result: dict[str, Any],
+    db: Session,
+    *,
+    semantic_model_ref: str,
+) -> dict[str, Any]:
+    if not _has_llm_key(db):
         col = column_info.get("column_name", "")
         ctype = (column_info.get("data_type") or "").lower()
         semantic_type = "dimension"
@@ -272,19 +327,21 @@ async def analyze_column(table_name: str, column_info: dict[str, Any], profiling
 字段信息: {json.dumps(column_info, ensure_ascii=False)}
 统计信息: {json.dumps(profiling_result, ensure_ascii=False)}
 输出JSON键: desc,type,is_usable,reason"""
-    return await _chat_json(prompt)
+    return await _chat_json(prompt, semantic_model_ref, db)
 
 
 async def analyze_table(
     table_name: str,
     columns_with_semantic: list[dict[str, Any]],
     row_count: int,
+    db: Session,
     business_context: dict[str, Any] | None = None,
+    *,
+    semantic_model_ref: str,
 ) -> dict[str, Any]:
     def fallback_summary_text() -> str:
         domain_names = [d.get("domain_name", "") for d in domain_contexts if d.get("domain_name")]
         domain_descs = [d.get("domain_description", "") for d in domain_contexts if d.get("domain_description")]
-        datasource_desc = str(context.get("datasource_description") or "").strip() or "暂无数据源描述"
         database_desc = str(context.get("database_description") or "").strip() or "暂无数据库描述"
         table_desc = str(context.get("table_business_description") or "").strip() or "暂无表级业务描述"
         prev_desc = str(context.get("previous_table_description") or "").strip()
@@ -341,7 +398,7 @@ async def analyze_table(
 
     context = business_context or {}
     domain_contexts = context.get("domain_contexts") or []
-    if not _has_llm_key():
+    if not _has_llm_key(db):
         return {
             "summary": fallback_summary_text(),
             "use_cases": ["基础统计分析", "趋势分析", "明细核对"],
@@ -377,7 +434,7 @@ async def analyze_table(
 4) warnings 明确风险/歧义/缺失信息
 
 输出JSON键: summary,use_cases,key_columns,warnings"""
-    result = await _chat_json(prompt)
+    result = await _chat_json(prompt, semantic_model_ref, db)
     use_cases = result.get("use_cases")
     key_columns = result.get("key_columns")
     result["summary"] = normalize_summary_template(str(result.get("summary") or ""))
@@ -387,12 +444,25 @@ async def analyze_table(
     return result
 
 
-async def generate_sql(question: str, table_schema: str, table_summary: str) -> dict[str, Any]:
-    if not _has_llm_key():
+async def generate_sql(
+    question: str,
+    table_schema: str,
+    table_summary: str,
+    db: Session,
+    chat_model: str | None = None,
+) -> dict[str, Any]:
+    if not _has_llm_key(db):
         return {
             "sql": "SELECT DATE(created_at) AS date, SUM(order_amt) AS gmv FROM orders WHERE created_at >= NOW() - INTERVAL 7 DAY GROUP BY DATE(created_at) ORDER BY date;",
             "explanation": "未配置LLM Key，返回本地兜底SQL模板用于联调",
             "referenced_columns": ["created_at", "order_amt"],
+        }
+    model_ref = resolve_effective_model(chat_model, db)
+    if not model_ref:
+        return {
+            "sql": "",
+            "explanation": "无可用对话模型",
+            "referenced_columns": [],
         }
     prompt = f"""你是数据分析专家，请根据信息生成MySQL SQL。
 必须遵循：
@@ -407,15 +477,28 @@ context: {table_schema}
 summary: {table_summary}
 question: {question}
 输出JSON键: sql,explanation,referenced_columns"""
-    return await _chat_json(prompt)
+    return await _chat_json(prompt, model_ref, db)
 
 
 def _format_sql(sql: str) -> str:
     """Basic SQL formatter: uppercase keywords, one clause per line."""
     keywords = [
-        "SELECT", "FROM", "WHERE", "LEFT JOIN", "RIGHT JOIN", "INNER JOIN",
-        "JOIN", "ON", "GROUP BY", "ORDER BY", "HAVING", "LIMIT", "OFFSET",
-        "UNION ALL", "UNION", "WITH",
+        "SELECT",
+        "FROM",
+        "WHERE",
+        "LEFT JOIN",
+        "RIGHT JOIN",
+        "INNER JOIN",
+        "JOIN",
+        "ON",
+        "GROUP BY",
+        "ORDER BY",
+        "HAVING",
+        "LIMIT",
+        "OFFSET",
+        "UNION ALL",
+        "UNION",
+        "WITH",
     ]
     result = sql.strip()
     for kw in keywords:
@@ -445,13 +528,20 @@ async def repair_failed_sql(
     error_message: str,
     table_schema: str,
     table_summary: str,
+    db: Session,
+    chat_model: str | None = None,
 ) -> dict[str, str]:
     sanitized_failed_sql = sanitize_sql_text(failed_sql)
-    # 本地兜底：即便没配 LLM，也先做一次最基础的 SQL 清洗修复。
-    if not _has_llm_key():
+    if not _has_llm_key(db):
         return {
             "sql": sanitized_failed_sql,
             "reason": "未配置LLM Key，仅执行基础SQL清洗（去除代码块/分号）。",
+        }
+    model_ref = resolve_effective_model(chat_model, db)
+    if not model_ref:
+        return {
+            "sql": sanitized_failed_sql,
+            "reason": "无可用对话模型，仅执行基础SQL清洗。",
         }
 
     prompt = f"""你是资深 SQL 修复助手。请根据执行错误修复 SQL。
@@ -468,19 +558,24 @@ error_message: {error_message}
 context: {table_schema}
 summary: {table_summary}
 """
-    fixed = await _chat_json(prompt)
+    fixed = await _chat_json(prompt, model_ref, db)
     candidate = sanitize_sql_text(str(fixed.get("sql") or ""))
     reason = str(fixed.get("reason") or "").strip() or "根据数据库报错自动修复 SQL。"
     return {"sql": candidate, "reason": reason}
 
 
 async def batch_analyze_columns(
-    table_name: str, column_inputs: list[tuple[dict[str, Any], dict[str, Any]]], concurrency: int = 5
+    table_name: str,
+    column_inputs: list[tuple[dict[str, Any], dict[str, Any]]],
+    db: Session,
+    concurrency: int = 5,
+    *,
+    semantic_model_ref: str,
 ) -> list[dict[str, Any]]:
     sem = asyncio.Semaphore(concurrency)
 
     async def worker(col: dict[str, Any], prof: dict[str, Any]) -> dict[str, Any]:
         async with sem:
-            return await analyze_column(table_name, col, prof)
+            return await analyze_column(table_name, col, prof, db, semantic_model_ref=semantic_model_ref)
 
     return await asyncio.gather(*(worker(c, p) for c, p in column_inputs))

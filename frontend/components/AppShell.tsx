@@ -30,7 +30,8 @@ type NavIcon =
   | "chevronLeft"
   | "chevronRight"
   | "brand"
-  | "more";
+  | "more"
+  | "settings";
 
 function isActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
@@ -104,6 +105,16 @@ function Icon({ name, className = "h-4 w-4" }: { name: NavIcon; className?: stri
     return (
       <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
         <path d="M6 4h5a2 2 0 012 2v14a2 2 0 00-2-2H6V4zM13 4h5v14h-5a2 2 0 00-2 2V6a2 2 0 012-2z" {...common} />
+      </svg>
+    );
+  }
+  if (name === "settings") {
+    return (
+      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+        <path
+          d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82 1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
+          {...common}
+        />
       </svg>
     );
   }
@@ -364,7 +375,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </button>
             <Link
               href="/datasources"
-              className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isActive(pathname, "/datasources") ? "border-[#c7d2fe] bg-[#eef2ff] text-[#111827]" : ""}`}
+              className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isActive(pathname, "/datasources") ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
               title="数据源"
               aria-label="数据源"
             >
@@ -372,7 +383,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </Link>
             <Link
               href="/"
-              className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${pathname === "/" ? "border-[#c7d2fe] bg-[#eef2ff] text-[#111827]" : ""}`}
+              className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${pathname === "/" ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
               title="业务域"
               aria-label="业务域"
             >
@@ -380,15 +391,23 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </Link>
             <Link
               href="/knowledge-bases"
-              className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isActive(pathname, "/knowledge-bases") ? "border-[#c7d2fe] bg-[#eef2ff] text-[#111827]" : ""}`}
+              className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isActive(pathname, "/knowledge-bases") ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
               title="知识库"
               aria-label="知识库"
             >
               <Icon name="book" />
             </Link>
             <Link
+              href="/settings"
+              className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isActive(pathname, "/settings") ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
+              title="偏好设置"
+              aria-label="偏好设置"
+            >
+              <Icon name="settings" />
+            </Link>
+            <Link
               href="/copilot"
-              className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isCopilot ? "border-[#c7d2fe] bg-[#eef2ff] text-[#111827]" : ""}`}
+              className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isCopilot ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
               title="助手"
               aria-label="打开 DataLens 助手"
             >
@@ -432,6 +451,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
                   <Icon name="book" />
                 </span>
                 <span>知识库</span>
+              </Link>
+              <Link href="/settings" className={`app-nav-item rounded-lg ${isActive(pathname, "/settings") ? "is-active" : ""}`}>
+                <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
+                  <Icon name="settings" />
+                </span>
+                <span>偏好设置</span>
               </Link>
             </div>
           )}
@@ -620,13 +645,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <h2 id="session-search-title" className="sr-only">
               搜索聊天会话
             </h2>
-            <div className="app-toolbar rounded-lg border border-[#e5e7eb] bg-white px-3 py-2">
+            <div className="app-toolbar rounded-lg border border-app-border bg-app-card px-3 py-2">
               <span className="app-text-secondary">
                 <Icon name="search" className="h-4 w-4" />
               </span>
               <input
                 ref={sessionSearchInputRef}
-                className="app-text-primary app-toolbar-input bg-transparent text-sm outline-none placeholder:text-[#9ca3af]"
+                className="app-text-primary app-toolbar-input bg-transparent text-sm outline-none placeholder:text-app-muted"
                 placeholder="搜索聊天（标题或内容）"
                 value={sessionSearch}
                 onChange={(e) => setSessionSearch(e.target.value)}
@@ -643,7 +668,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                   {searchResults.map((session) => (
                     <button
                       key={`search-${session.id}`}
-                      className="app-list-item w-full rounded-lg border border-transparent px-2 py-2 text-left transition hover:border-[var(--app-card-border)] hover:bg-[#f9fafb]"
+                      className="app-list-item w-full rounded-lg border border-transparent px-2 py-2 text-left transition hover:border-app-border hover:bg-app-hover"
                       onClick={() => {
                         setSearchMode(false);
                         setSessionSearch("");

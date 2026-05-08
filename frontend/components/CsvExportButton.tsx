@@ -36,7 +36,7 @@ export default function CsvExportButton({ result, filename = "query_result.csv" 
 
   return (
     <button
-      className="rounded-md border border-[#e5e7eb] bg-white px-2.5 py-1 text-xs text-[#6b7280] transition hover:bg-[#f9fafb] hover:text-[#111827]"
+      className="rounded-md border border-app-border bg-app-card px-2.5 py-1 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
       onClick={handleExport}
       aria-label="导出 CSV"
     >

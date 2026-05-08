@@ -138,7 +138,7 @@ export default function KnowledgeBasesPage() {
 
       {isCreateOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/35 p-4 backdrop-blur-[2px]"
+          className="app-modal-backdrop"
           role="presentation"
           onClick={() => setIsCreateOpen(false)}
         >

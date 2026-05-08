@@ -10,6 +10,7 @@ from routers.connect import router as connect_router
 from routers.copilot import router as copilot_router
 from routers.datasources import router as datasources_router
 from routers.knowledge_bases import router as knowledge_bases_router
+from routers.llm_settings import router as llm_settings_router
 from routers.tables import router as tables_router
 
 settings = get_settings()
@@ -45,3 +46,4 @@ app.include_router(copilot_router)
 app.include_router(datasources_router)
 app.include_router(business_domains_router)
 app.include_router(knowledge_bases_router)
+app.include_router(llm_settings_router)

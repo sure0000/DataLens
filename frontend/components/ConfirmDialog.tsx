@@ -48,11 +48,7 @@ export default function ConfirmDialog({
   if (!open) return null;
 
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-[#111827]/35 p-4 backdrop-blur-[2px]"
-      role="presentation"
-      onClick={onCancel}
-    >
+    <div className="app-modal-backdrop app-modal-backdrop--front" role="presentation" onClick={onCancel}>
       <div
         className="app-modal-surface app-chatgpt-dialog w-full max-w-[420px] rounded-2xl p-5 sm:p-6"
         role="dialog"

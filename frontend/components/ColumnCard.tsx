@@ -23,7 +23,7 @@ const SEMANTIC_TYPE_STYLE: Record<string, string> = {
   metric: "bg-[#dbeafe] text-[#1d4ed8]",
   dimension: "bg-[#dcfce7] text-[#15803d]",
   time: "bg-[#fef9c3] text-[#854d0e]",
-  id: "bg-[#f3f4f6] text-[#374151]",
+  id: "bg-app-hover text-app-ink",
 };
 
 const RISK_STYLE = {
@@ -36,7 +36,7 @@ export default function ColumnCard({ col, isLast = false }: { col: Column; isLas
   const quality = col.quality_metrics || {};
   const riskLevel = quality.risk_level || "low";
   const risk = RISK_STYLE[riskLevel];
-  const typeStyle = SEMANTIC_TYPE_STYLE[col.semantic_type] ?? "bg-[#f3f4f6] text-[#374151]";
+  const typeStyle = SEMANTIC_TYPE_STYLE[col.semantic_type] ?? "bg-app-hover text-app-ink";
   const ratio = (value?: number) => `${((value || 0) * 100).toFixed(1)}%`;
 
   const metrics: { label: string; value: string }[] = [
@@ -49,13 +49,13 @@ export default function ColumnCard({ col, isLast = false }: { col: Column; isLas
   }
 
   return (
-    <div className={`px-4 py-3.5 ${isLast ? "" : "border-b border-[#f3f4f6]"}`}>
+    <div className={`px-4 py-3.5 ${isLast ? "" : "border-b border-app-subtle"}`}>
       {/* Row: name + badges | description */}
       <div className="flex flex-wrap items-start gap-x-4 gap-y-1 sm:flex-nowrap">
         {/* Left: name + type badges */}
         <div className="flex min-w-[160px] max-w-[220px] shrink-0 flex-col gap-1.5">
           <div className="flex flex-wrap items-center gap-1.5">
-            <span className="break-all font-mono text-sm font-semibold text-[#111827]">
+            <span className="break-all font-mono text-sm font-semibold text-app-primary">
               {col.column_name}
             </span>
             {!col.is_usable && (
@@ -65,7 +65,7 @@ export default function ColumnCard({ col, isLast = false }: { col: Column; isLas
             )}
           </div>
           <div className="flex flex-wrap gap-1">
-            <span className="rounded bg-[#f3f4f6] px-1.5 py-0.5 font-mono text-[11px] text-[#6b7280]">
+            <span className="rounded bg-app-hover px-1.5 py-0.5 font-mono text-[11px] text-app-secondary">
               {col.data_type}
             </span>
             {col.semantic_type && (
@@ -79,9 +79,9 @@ export default function ColumnCard({ col, isLast = false }: { col: Column; isLas
         {/* Right: description + metrics */}
         <div className="min-w-0 flex-1">
           {col.semantic_desc ? (
-            <p className="break-words text-sm leading-6 text-[#374151]">{col.semantic_desc}</p>
+            <p className="break-words text-sm leading-6 text-app-ink">{col.semantic_desc}</p>
           ) : (
-            <p className="text-sm text-[#9ca3af]">暂无语义描述</p>
+            <p className="text-sm text-app-muted">暂无语义描述</p>
           )}
 
           {/* Metrics row */}
@@ -94,22 +94,22 @@ export default function ColumnCard({ col, isLast = false }: { col: Column; isLas
 
             {/* Numeric metrics */}
             {metrics.map((m) => (
-              <span key={m.label} className="text-xs text-[#9ca3af]">
+              <span key={m.label} className="text-xs text-app-muted">
                 {m.label}
-                <span className="ml-1 text-[#6b7280]">{m.value}</span>
+                <span className="ml-1 text-app-secondary">{m.value}</span>
               </span>
             ))}
 
             {/* null / distinct */}
-            <span className="text-xs text-[#9ca3af]">
+            <span className="text-xs text-app-muted">
               null率
-              <span className="ml-1 text-[#6b7280]">
+              <span className="ml-1 text-app-secondary">
                 {((col.null_ratio ?? 0) * 100).toFixed(1)}%
               </span>
             </span>
-            <span className="text-xs text-[#9ca3af]">
+            <span className="text-xs text-app-muted">
               distinct
-              <span className="ml-1 text-[#6b7280]">{col.distinct_count ?? 0}</span>
+              <span className="ml-1 text-app-secondary">{col.distinct_count ?? 0}</span>
             </span>
           </div>
 
@@ -119,10 +119,10 @@ export default function ColumnCard({ col, isLast = false }: { col: Column; isLas
               {(col.top_values ?? []).slice(0, 6).map((t, i) => (
                 <span
                   key={i}
-                  className="rounded border border-[#e5e7eb] bg-[#f9fafb] px-2 py-0.5 font-mono text-[11px] text-[#6b7280]"
+                  className="rounded border border-app-border bg-app-hover px-2 py-0.5 font-mono text-[11px] text-app-secondary"
                 >
                   {String(t.value)}
-                  <span className="ml-1 text-[#9ca3af]">×{t.count}</span>
+                  <span className="ml-1 text-app-muted">×{t.count}</span>
                 </span>
               ))}
             </div>

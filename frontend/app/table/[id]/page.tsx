@@ -139,7 +139,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
     if (first) setActiveTab(first);
   }, [detail, activeTab]);
 
-  if (!detail) return <main className="app-page text-[#6b7280]">加载中...</main>;
+  if (!detail) return <main className="app-page text-app-secondary">加载中...</main>;
 
   const normalizedKeyword = keyword.trim().toLowerCase();
   const filteredColumns = detail.columns
@@ -182,13 +182,13 @@ export default function TableDetail({ params }: { params: { id: string } }) {
             {detail.table.domain_names.length > 0 ? (
               <span className="flex flex-wrap gap-1">
                 {detail.table.domain_names.map((d) => (
-                  <span key={d} className="rounded-full border border-[#c7d2fe] bg-[#eef2ff] px-2 py-0.5 text-xs font-medium text-[#4338ca]">
+                  <span key={d} className="rounded-full border border-app-activeBorder bg-app-activeBg px-2 py-0.5 text-xs font-medium text-app-link">
                     {d}
                   </span>
                 ))}
               </span>
             ) : (
-              <span className="text-xs text-[#9ca3af]">暂未关联业务域</span>
+              <span className="text-xs text-app-muted">暂未关联业务域</span>
             )}
           </span>
         }
@@ -209,32 +209,32 @@ export default function TableDetail({ params }: { params: { id: string } }) {
         <p className="app-text-muted mt-1 text-xs">
           关联知识库后，Copilot 在本表上下文中会对这些库做语义检索；固定条目将全文注入上下文。可与会话所选业务域下的知识库叠加。
         </p>
-        <div className="mt-3 rounded-lg border border-[#e5e7eb] bg-[#fafafa] p-3">
+        <div className="mt-3 rounded-lg border border-app-border bg-app-hover p-3">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs font-medium text-[#374151]">知识库</p>
+            <p className="text-xs font-medium text-app-ink">知识库</p>
             <button type="button" className="app-button-secondary text-xs" onClick={openKbModal}>
               添加知识库
             </button>
           </div>
           {!linkKbIds.length ? (
-            <p className="mt-2 text-xs text-[#9ca3af]">未选择知识库</p>
+            <p className="mt-2 text-xs text-app-muted">未选择知识库</p>
           ) : (
-            <p className="mt-2 text-xs text-[#4b5563]">
+            <p className="mt-2 text-xs text-app-secondary">
               已选择 {linkKbIds.length} 个：{linkKbIds.map((id) => allKbs.find((kb) => kb.id === id)?.name || `#${id}`).join("、")}
             </p>
           )}
         </div>
-        <div className="mt-3 rounded-lg border border-[#e5e7eb] bg-[#fafafa] p-3">
+        <div className="mt-3 rounded-lg border border-app-border bg-app-hover p-3">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs font-medium text-[#374151]">知识库条目</p>
+            <p className="text-xs font-medium text-app-ink">知识库条目</p>
             <button type="button" className="app-button-secondary text-xs" onClick={openEntryModal}>
               添加条目
             </button>
           </div>
           {!linkEntryIds.length ? (
-            <p className="mt-2 text-xs text-[#9ca3af]">未选择条目</p>
+            <p className="mt-2 text-xs text-app-muted">未选择条目</p>
           ) : (
-            <p className="mt-2 text-xs text-[#4b5563]">
+            <p className="mt-2 text-xs text-app-secondary">
               已选择 {linkEntryIds.length} 条：
               {linkEntryIds
                 .map((id) => detail.knowledge_entries?.find((e) => e.id === id)?.title || `#${id}`)
@@ -246,7 +246,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
 
       {kbModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/35 p-4 backdrop-blur-[2px]"
+          className="app-modal-backdrop"
           role="presentation"
           onClick={() => setKbModalOpen(false)}
         >
@@ -258,12 +258,12 @@ export default function TableDetail({ params }: { params: { id: string } }) {
               </button>
             </div>
             {!allKbs.length ? (
-              <p className="text-sm text-[#9ca3af]">暂无知识库</p>
+              <p className="text-sm text-app-muted">暂无知识库</p>
             ) : (
               <ul className="max-h-[56vh] space-y-2 overflow-y-auto">
                 {allKbs.map((kb) => (
                   <li key={kb.id}>
-                    <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-[#e5e7eb] px-3 py-2 text-sm hover:bg-[#f9fafb]">
+                    <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-app-border px-3 py-2 text-sm hover:bg-app-hover">
                       <input
                         type="checkbox"
                         className="mt-0.5"
@@ -290,7 +290,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
 
       {entryModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/35 p-4 backdrop-blur-[2px]"
+          className="app-modal-backdrop"
           role="presentation"
           onClick={() => setEntryModalOpen(false)}
         >
@@ -315,7 +315,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
             <ul className="mt-3 max-h-[48vh] space-y-2 overflow-y-auto">
               {pickerEntries.map((e) => (
                 <li key={e.id}>
-                  <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-[#e5e7eb] px-3 py-2 text-sm hover:bg-[#f9fafb]">
+                  <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-app-border px-3 py-2 text-sm hover:bg-app-hover">
                     <input
                       type="checkbox"
                       className="mt-0.5"
@@ -326,7 +326,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
                   </label>
                 </li>
               ))}
-              {!pickerEntries.length && pickerKbId && <li className="text-sm text-[#9ca3af]">该库暂无条目或加载中</li>}
+              {!pickerEntries.length && pickerKbId && <li className="text-sm text-app-muted">该库暂无条目或加载中</li>}
             </ul>
             <div className="mt-4 flex gap-2">
               <button type="button" className="app-button flex-1" onClick={confirmPickerEntries}>
@@ -344,7 +344,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
       {visibleTabs.length > 0 && (
         <div className="mt-5">
           {/* Tab bar */}
-          <div className="flex gap-1 overflow-x-auto border-b border-[#e5e7eb] pb-px">
+          <div className="flex gap-1 overflow-x-auto border-b border-app-border pb-px">
             {visibleTabs.map((tab) => {
               const isActive = activeTab === tab;
               return (
@@ -353,8 +353,8 @@ export default function TableDetail({ params }: { params: { id: string } }) {
                   onClick={() => setActiveTab(tab)}
                   className={`shrink-0 border-b-2 px-3 py-2 text-xs font-medium transition-colors ${
                     isActive
-                      ? "border-[#111827] text-[#111827]"
-                      : "border-transparent text-[#6b7280] hover:text-[#374151]"
+                      ? "border-app-primary text-app-primary"
+                      : "border-transparent text-app-secondary hover:text-app-ink"
                   }`}
                 >
                   {tab}
@@ -378,17 +378,17 @@ export default function TableDetail({ params }: { params: { id: string } }) {
                   : currentSection?.items ?? [];
 
               if (items.length === 0 && detail.summary.summary) {
-                return <p className="whitespace-pre-wrap break-words text-sm leading-7 text-[#374151]">{detail.summary.summary}</p>;
+                return <p className="whitespace-pre-wrap break-words text-sm leading-7 text-app-ink">{detail.summary.summary}</p>;
               }
 
               return (
-                <ul className="divide-y divide-[#f3f4f6] rounded-xl border border-[#e5e7eb] bg-white">
+                <ul className="divide-y divide-app-subtle rounded-xl border border-app-border bg-app-card">
                   {items.map((item, idx) => (
                     <li key={idx} className="flex items-start gap-3 px-4 py-3">
-                      <span className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-[#f3f4f6] text-[10px] font-semibold text-[#6b7280]">
+                      <span className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-app-hover text-[10px] font-semibold text-app-secondary">
                         {idx + 1}
                       </span>
-                      <span className="break-words text-sm leading-6 text-[#374151]">{item}</span>
+                      <span className="break-words text-sm leading-6 text-app-ink">{item}</span>
                     </li>
                   ))}
                 </ul>
@@ -403,7 +403,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="app-section-title">
             字段列表
-            <span className="ml-2 text-sm font-normal text-[#6b7280]">({filteredColumns.length} / {detail.columns.length})</span>
+            <span className="ml-2 text-sm font-normal text-app-secondary">({filteredColumns.length} / {detail.columns.length})</span>
           </h2>
           <input
             className="app-input w-full max-w-xs"
@@ -413,13 +413,13 @@ export default function TableDetail({ params }: { params: { id: string } }) {
           />
         </div>
         {filteredColumns.length > 0 ? (
-          <div className="overflow-hidden rounded-xl border border-[#e5e7eb] bg-white">
+          <div className="overflow-hidden rounded-xl border border-app-border bg-white">
             {filteredColumns.map((c, i) => (
               <ColumnCard col={c} key={`${c.column_name}-${i}`} isLast={i === filteredColumns.length - 1} />
             ))}
           </div>
         ) : (
-          <p className="mt-2 text-sm text-[#6b7280]">未匹配到字段</p>
+          <p className="mt-2 text-sm text-app-secondary">未匹配到字段</p>
         )}
       </div>
     </main>

@@ -137,7 +137,7 @@ export default function Home() {
       </section>
 
       {isCreateOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/35 p-4 backdrop-blur-[2px]" role="presentation" onClick={() => setIsCreateOpen(false)}>
+        <div className="app-modal-backdrop" role="presentation" onClick={() => setIsCreateOpen(false)}>
           <div
             className="app-card w-full max-w-xl max-h-[85vh] overflow-auto p-5"
             role="dialog"

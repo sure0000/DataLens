@@ -393,7 +393,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
     }
   }
 
-  if (!detail) return <main className="app-page text-[#6b7280]">正在加载业务域详情...</main>;
+  if (!detail) return <main className="app-page text-app-secondary">正在加载业务域详情...</main>;
 
   return (
     <main className="app-page">
@@ -419,7 +419,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
       <section className="app-card mt-4 p-4">
         <h2 className="app-section-title">业务描述</h2>
         <div className="mt-3 space-y-2">
-          <div className="rounded-lg border border-[#e5e7eb] bg-white p-3">
+          <div className="rounded-lg border border-app-border bg-white p-3">
             {detail.description?.content ? (
               <div className="prose prose-sm max-w-none text-sm" dangerouslySetInnerHTML={{ __html: detail.description.content }} />
             ) : (
@@ -439,16 +439,16 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
         <p className="app-text-muted mt-1 text-xs">
           Copilot 会话可选择本业务域后，将自动在这些知识库中做语义检索，并结合表侧关联的知识库与固定条目。
         </p>
-        <div className="mt-3 rounded-lg border border-[#e5e7eb] bg-[#fafafa] p-3">
+        <div className="mt-3 rounded-lg border border-app-border bg-app-hover p-3">
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" className="app-button-secondary text-xs" onClick={openKbPickerModal}>
               添加知识库
             </button>
           </div>
           {!selectedKbIds.length ? (
-            <p className="mt-2 text-xs text-[#9ca3af]">未选择知识库</p>
+            <p className="mt-2 text-xs text-app-muted">未选择知识库</p>
           ) : (
-            <p className="mt-2 text-xs text-[#4b5563]">
+            <p className="mt-2 text-xs text-app-secondary">
               已选择 {selectedKbIds.length} 个：
               {selectedKbIds.map((id) => allKnowledgeBases.find((kb) => kb.id === id)?.name || `#${id}`).join("、")}
             </p>
@@ -458,7 +458,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
 
       {kbModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/35 p-4 backdrop-blur-[2px]"
+          className="app-modal-backdrop"
           role="presentation"
           onClick={() => setKbModalOpen(false)}
         >
@@ -470,12 +470,12 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
               </button>
             </div>
             {!allKnowledgeBases.length ? (
-              <p className="text-sm text-[#9ca3af]">暂无知识库，请先在「知识库」中创建。</p>
+              <p className="text-sm text-app-muted">暂无知识库，请先在「知识库」中创建。</p>
             ) : (
               <ul className="max-h-[56vh] space-y-2 overflow-y-auto">
                 {allKnowledgeBases.map((kb) => (
                   <li key={kb.id}>
-                    <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-[#e5e7eb] px-3 py-2 text-sm hover:bg-[#f9fafb]">
+                    <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-app-border px-3 py-2 text-sm hover:bg-app-hover">
                       <input
                         type="checkbox"
                         className="mt-0.5"
@@ -521,7 +521,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
             </button>
           </div>
         </div>
-        <div className="mt-3 overflow-x-auto rounded-lg border border-[#e5e7eb]">
+        <div className="mt-3 overflow-x-auto rounded-lg border border-app-border">
           <table className="app-table min-w-[640px] md:min-w-[860px]">
             <thead>
               <tr>
@@ -577,7 +577,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
       </section>
 
       {isDescModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/35 p-4 backdrop-blur-[2px]" role="presentation" onClick={() => setIsDescModalOpen(false)}>
+        <div className="app-modal-backdrop" role="presentation" onClick={() => setIsDescModalOpen(false)}>
           <div
             className="app-card w-full max-w-2xl max-h-[88vh] overflow-auto p-4"
             role="dialog"
@@ -606,7 +606,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
             </div>
             <div
               ref={descEditorRef}
-              className="mt-2 min-h-[180px] rounded-lg border border-[#e5e7eb] bg-white p-3 text-sm text-[#111827] outline-none"
+              className="mt-2 min-h-[180px] rounded-lg border border-app-border bg-white p-3 text-sm text-app-primary outline-none"
               contentEditable
               suppressContentEditableWarning
             />
@@ -618,7 +618,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
       )}
 
       {isBatchModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/35 p-4 backdrop-blur-[2px]" role="presentation" onClick={() => setIsBatchModalOpen(false)}>
+        <div className="app-modal-backdrop" role="presentation" onClick={() => setIsBatchModalOpen(false)}>
           <div
             className="app-card w-full max-w-5xl max-h-[88vh] overflow-hidden p-4"
             role="dialog"
@@ -636,7 +636,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
             </div>
 
             <div className="mt-3 grid gap-3">
-              <div className="flex flex-col gap-2 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] p-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-2 rounded-lg border border-app-border bg-app-hover p-3 sm:flex-row sm:items-center sm:justify-between">
                 <input
                   className="app-input sm:max-w-sm"
                   value={batchKeyword}
@@ -670,9 +670,9 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
 
             <div className="mt-3 max-h-[52vh] space-y-3 overflow-auto pr-1">
               {pagedBatchOptions.map((s) => (
-                <div key={s.id} className="rounded-lg border border-[#e5e7eb] bg-white p-3">
-                  <p className="font-medium text-[#111827]">
-                    {s.name} <span className="text-xs text-[#6b7280]">({s.source_type})</span>
+                <div key={s.id} className="rounded-lg border border-app-border bg-white p-3">
+                  <p className="font-medium text-app-primary">
+                    {s.name} <span className="text-xs text-app-secondary">({s.source_type})</span>
                   </p>
                   <div className="mt-2 space-y-2">
                     {s.databases.map((db) => {
@@ -683,7 +683,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
                         return acc + 1;
                       }, 0);
                       return (
-                        <div key={dbKey} className="rounded-lg border border-[#eef2f7] bg-[#f9fafb] p-2.5">
+                        <div key={dbKey} className="rounded-lg border border-app-soft bg-app-hover p-2.5">
                           <label className="flex items-center gap-2 text-sm">
                             <input
                               type="checkbox"
@@ -707,7 +707,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
                             {db.tables.map((t) => {
                               const tableKey = `${dbKey}::${t.name}`;
                               return (
-                                <label key={tableKey} className="flex items-start gap-2 rounded-md border border-[#e5e7eb] bg-white px-2 py-1.5 text-xs text-[#374151]">
+                                <label key={tableKey} className="flex items-start gap-2 rounded-md border border-app-border bg-white px-2 py-1.5 text-xs text-app-ink">
                                   <input
                                     type="checkbox"
                                     checked={!!selectedTables[tableKey]}
@@ -716,7 +716,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
                                   />
                                   <span className="min-w-0">
                                     <span className="block break-all">{t.name}</span>
-                                    {!!t.comment && <span className="mt-0.5 block text-[11px] text-[#9ca3af]">{t.comment}</span>}
+                                    {!!t.comment && <span className="mt-0.5 block text-[11px] text-app-muted">{t.comment}</span>}
                                   </span>
                                 </label>
                               );
@@ -743,10 +743,10 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
               />
             )}
 
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] p-3">
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-app-border bg-app-hover p-3">
               <p className="app-text-secondary-strong text-sm">
-                将添加 <span className="font-semibold text-[#111827]">{batchStats.selectedDatabaseCount}</span> 个整库选择和{" "}
-                <span className="font-semibold text-[#111827]">{batchStats.selectedTableCount}</span> 张单表选择
+                将添加 <span className="font-semibold text-app-primary">{batchStats.selectedDatabaseCount}</span> 个整库选择和{" "}
+                <span className="font-semibold text-app-primary">{batchStats.selectedTableCount}</span> 张单表选择
               </p>
               <div className="flex flex-wrap gap-2">
                 <button className="app-button-secondary" onClick={clearBatchSelections}>

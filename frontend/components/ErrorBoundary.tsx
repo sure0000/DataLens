@@ -27,8 +27,8 @@ export default class ErrorBoundary extends Component<Props, State> {
             </svg>
           </div>
           <div>
-            <p className="text-base font-semibold text-[#111827]">页面出现了错误</p>
-            <p className="mt-1 text-sm text-[#6b7280]">{this.state.message}</p>
+            <p className="text-base font-semibold text-app-primary">页面出现了错误</p>
+            <p className="mt-1 text-sm text-app-secondary">{this.state.message}</p>
           </div>
           <button
             className="app-button-secondary app-button-xs"

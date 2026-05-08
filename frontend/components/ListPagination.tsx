@@ -25,7 +25,7 @@ export default function ListPagination({
   return (
     <nav
       aria-label="分页导航"
-      className="mt-3 flex flex-col gap-2 rounded-lg border border-[#e5e7eb] bg-white p-2.5 text-xs text-[#6b7280] sm:flex-row sm:items-center sm:justify-between"
+      className="mt-3 flex flex-col gap-2 rounded-lg border border-app-border bg-app-card p-2.5 text-xs text-app-secondary sm:flex-row sm:items-center sm:justify-between"
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="app-text-muted">
@@ -55,7 +55,7 @@ export default function ListPagination({
         >
           上一页
         </button>
-        <span aria-live="polite" className="min-w-[56px] text-center text-[#374151]">
+        <span aria-live="polite" className="min-w-[56px] text-center text-app-ink">
           {safePage} / {totalPages}
         </span>
         <button

@@ -1,9 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import { API } from "../../lib/api";
+import { readUserPreferences, writeUserPreferences } from "../../lib/userPreferences";
 import AssistantStructuredAnswer from "../../components/AssistantStructuredAnswer";
 import Breadcrumbs from "../../components/Breadcrumbs";
 import ConfirmDialog from "../../components/ConfirmDialog";
@@ -36,7 +38,30 @@ type AskResponse = {
 
 type StreamStage = "intent_recognizing" | "answer_generating" | "sql_executing";
 
-type AskPayload = { question: string; table_id: number | null; business_domain_id: number | null };
+type LlmCatalog = {
+  auto_id: string;
+  auto_label: string;
+  auto_resolved: string;
+  auto_resolved_label?: string;
+  models: {
+    id: string;
+    label: string;
+    provider: string;
+    kind_label: string;
+    connection_name: string;
+    model_id: string;
+    model_short_label?: string;
+    model_family?: string;
+  }[];
+  has_llm: boolean;
+};
+
+type AskPayload = {
+  question: string;
+  table_id: number | null;
+  business_domain_id: number | null;
+  chat_model?: string | null;
+};
 const PENDING_PROJECT_QUESTION_KEY = "chatbi_pending_project_question_v1";
 const QUICK_QUESTIONS = [
   "近30天订单量和GMV按天趋势如何？",
@@ -67,6 +92,8 @@ function CopilotPageContent() {
   } | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
   const [businessDomains, setBusinessDomains] = useState<{ id: number; name: string }[]>([]);
+  const [llmCatalog, setLlmCatalog] = useState<LlmCatalog | null>(null);
+  const [chatModelSelect, setChatModelSelect] = useState("auto");
   const projectIdFromUrl = searchParams.get("project") || "";
   const sessionIdFromUrl = searchParams.get("session") || "";
   const tableIdFromUrl = searchParams.get("table");
@@ -119,16 +146,42 @@ function CopilotPageContent() {
   }, []);
 
   useEffect(() => {
+    api<LlmCatalog>("/api/llm/catalog")
+      .then((c) => {
+        setLlmCatalog(c);
+        const pref = readUserPreferences().chatModel;
+        const ids = new Set([c.auto_id, ...c.models.map((m) => m.id)]);
+        setChatModelSelect(ids.has(pref) ? pref : c.auto_id);
+      })
+      .catch(() => setLlmCatalog(null));
+  }, []);
+
+  useEffect(() => {
+    const onPrefs = () => {
+      const pref = readUserPreferences().chatModel;
+      setChatModelSelect((prev) => {
+        if (!llmCatalog) return pref;
+        const ids = new Set([llmCatalog.auto_id, ...llmCatalog.models.map((m) => m.id)]);
+        return ids.has(pref) ? pref : llmCatalog.auto_id;
+      });
+    };
+    window.addEventListener("datalens-user-prefs-updated", onPrefs);
+    return () => window.removeEventListener("datalens-user-prefs-updated", onPrefs);
+  }, [llmCatalog]);
+
+  useEffect(() => {
     if (!sessionIdFromUrl) return;
     const state = setActiveSession(sessionIdFromUrl);
     syncState(state);
   }, [sessionIdFromUrl]);
 
   async function streamAsk(content: string, onStageChange?: (stage: StreamStage) => void, askOpts?: Partial<AskPayload>) {
+    const cm = askOpts?.chat_model;
     const body: AskPayload = {
       question: content,
       table_id: askOpts?.table_id ?? null,
-      business_domain_id: askOpts?.business_domain_id ?? null
+      business_domain_id: askOpts?.business_domain_id ?? null,
+      chat_model: cm === "auto" || cm === "" || cm == null ? null : cm
     };
     const resp = await fetch(`${API}/api/ask/stream`, {
       method: "POST",
@@ -194,7 +247,8 @@ function CopilotPageContent() {
       const askPayload: AskPayload = {
         question: content,
         table_id: Number.isFinite(tableParamNum) ? tableParamNum : null,
-        business_domain_id: typeof sessionAfterUser.business_domain_id === "number" ? sessionAfterUser.business_domain_id : null
+        business_domain_id: typeof sessionAfterUser.business_domain_id === "number" ? sessionAfterUser.business_domain_id : null,
+        chat_model: chatModelSelect === "auto" ? null : chatModelSelect
       };
       let res: AskResponse;
       try {
@@ -344,24 +398,24 @@ function CopilotPageContent() {
   }
 
   return (
-    <main className="flex h-screen w-full overflow-hidden bg-[#f7f7f8]">
-      <section className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[#f7f7f8]">
+    <main className="flex h-screen w-full overflow-hidden bg-app-main">
+      <section className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-app-main">
         {projectLandingMode ? (
           <>
-            <section className="min-h-0 flex-1 overflow-y-auto px-4 py-5 text-[#111827]">
+            <section className="min-h-0 flex-1 overflow-y-auto px-4 py-5 text-app-primary sm:px-6">
               <div className="mx-auto w-full max-w-3xl">
-                <div className="mb-5 flex items-center gap-2 text-[32px] font-semibold leading-tight text-[#1f2937]">
-                  <svg className="h-7 w-7 text-[#374151]" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <div className="mb-5 flex items-center gap-2 text-[32px] font-semibold leading-tight text-app-ink">
+                  <svg className="h-7 w-7 text-app-ink" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                     <path d="M4 7.5a2.5 2.5 0 0 1 2.5-2.5h3l1.6 1.8h6.4A2.5 2.5 0 0 1 20 9.3v7.2a2.5 2.5 0 0 1-2.5 2.5h-11A2.5 2.5 0 0 1 4 16.5v-9z" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
                   </svg>
-                  <h1 className="text-[34px] font-semibold tracking-[-0.01em]">
+                  <h1 className="text-[34px] font-semibold tracking-[-0.01em] text-app-primary">
                     {activeProject?.name || (projectIdFromUrl === "__unassigned__" ? "未归类" : "临时问答")}
                   </h1>
                 </div>
 
-                <div className="mb-6 flex items-center gap-2 rounded-full border border-[#e5e7eb] bg-white px-3 py-2">
+                <div className="mb-6 flex items-center gap-2 rounded-full border border-app-border bg-white px-3 py-2">
                   <button
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#4b5563] hover:bg-[#f3f4f6]"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-full text-app-secondary hover:bg-app-hover"
                     onClick={startFromProjectLanding}
                     aria-label="新建聊天"
                   >
@@ -371,7 +425,7 @@ function CopilotPageContent() {
                   </button>
                   <textarea
                     ref={questionInputRef}
-                    className="min-h-[28px] flex-1 resize-none bg-transparent text-[16px] leading-7 text-[#111827] outline-none placeholder:text-[#9ca3af]"
+                    className="min-h-[28px] flex-1 resize-none bg-transparent text-[16px] leading-7 text-app-primary outline-none placeholder:text-app-muted"
                     placeholder={`在${activeProject?.name || "临时问答"}中新聊天`}
                     value={question}
                     onChange={(e) => setQuestion(e.target.value)}
@@ -383,13 +437,13 @@ function CopilotPageContent() {
                     }}
                   />
                   <div className="flex items-center gap-1">
-                    <button className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6b7280] hover:bg-[#f3f4f6]" aria-label="语音">
+                    <button className="inline-flex h-7 w-7 items-center justify-center rounded-full text-app-secondary hover:bg-app-hover" aria-label="语音">
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                         <rect x="9" y="4" width="6" height="10" rx="3" stroke="currentColor" strokeWidth="1.6" />
                         <path d="M6 11a6 6 0 0 0 12 0M12 17v3" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
                       </svg>
                     </button>
-                    <button className="inline-flex h-7 w-7 items-center justify-center rounded-full text-[#6b7280] hover:bg-[#f3f4f6]" aria-label="更多">
+                    <button className="inline-flex h-7 w-7 items-center justify-center rounded-full text-app-secondary hover:bg-app-hover" aria-label="更多">
                       <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                         <circle cx="6" cy="12" r="1.2" fill="currentColor" />
                         <circle cx="12" cy="12" r="1.2" fill="currentColor" />
@@ -400,34 +454,34 @@ function CopilotPageContent() {
                 </div>
 
                 <div className="mb-2 flex items-center gap-2 text-[13px]">
-                  <span className="rounded-full bg-[#eceff3] px-3 py-1 font-medium text-[#111827]">聊天</span>
-                  <span className="px-2 py-1 text-[#6b7280]">来源</span>
+                  <span className="rounded-full bg-app-subtle px-3 py-1 font-medium text-app-primary">聊天</span>
+                  <span className="px-2 py-1 text-app-secondary">来源</span>
                 </div>
 
-                <div className="divide-y divide-[#eceff1] rounded-xl bg-white/55">
+                <div className="divide-y divide-app-subtle rounded-xl bg-white/60">
                   {projectSessions.map((session) => (
                     <button
                       key={session.id}
-                      className="w-full px-3 py-3 text-left transition hover:bg-[#f9fafb]"
+                      className="w-full px-3 py-3 text-left transition hover:bg-app-hover"
                       onClick={() => openSessionFromProject(session.id)}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="min-w-0">
-                          <p className="line-clamp-1 text-[20px] font-semibold text-[#111827]">{session.title}</p>
-                          <p className="mt-0.5 line-clamp-1 text-[14px] text-[#6b7280]">{getSessionPreview(session)}</p>
+                          <p className="line-clamp-1 text-[20px] font-semibold text-app-primary">{session.title}</p>
+                          <p className="mt-0.5 line-clamp-1 text-[14px] text-app-secondary">{getSessionPreview(session)}</p>
                         </div>
-                        <span className="shrink-0 pt-1 text-[14px] text-[#9ca3af]">{new Date(session.updated_at).toLocaleDateString("zh-CN")}</span>
+                        <span className="shrink-0 pt-1 text-[14px] text-app-muted">{new Date(session.updated_at).toLocaleDateString("zh-CN")}</span>
                       </div>
                     </button>
                   ))}
-                  {!projectSessions.length && <p className="px-3 py-10 text-center text-sm text-[#9ca3af]">该项目还没有历史对话</p>}
+                  {!projectSessions.length && <p className="px-3 py-10 text-center text-sm text-app-muted">该项目还没有历史对话</p>}
                 </div>
               </div>
             </section>
           </>
         ) : (
           <>
-            <div className="px-6 py-4">
+            <div className="border-b border-app-subtle px-4 py-3 sm:px-6">
               <Breadcrumbs
                 items={[
                   { label: "首页", href: "/" },
@@ -437,8 +491,8 @@ function CopilotPageContent() {
               />
             </div>
 
-            <section className="min-h-0 flex-1 overflow-y-auto px-4 pb-48 pt-2">
-              <div className="mx-auto w-full max-w-3xl space-y-8">
+            <section className="min-h-0 flex-1 overflow-y-auto px-4 pb-36 pt-3 sm:px-6 sm:pb-40">
+              <div className="mx-auto w-full max-w-3xl space-y-6">
             {displayMessages.map((m) => {
               const queryResult = m.query_result || { ok: false, columns: [], rows: [], error: "历史记录无执行结果" };
               const isGeneralQaMessage =
@@ -451,19 +505,19 @@ function CopilotPageContent() {
                   return (
                     <div key={m.id} className="ml-auto w-full max-w-2xl rounded-2xl bg-white/70 p-3">
                       <textarea
-                        className="min-h-[80px] w-full resize-none rounded-xl border border-[#e5e7eb] bg-white px-3 py-2 text-sm leading-6 text-[#111827] outline-none placeholder:text-[#9ca3af]"
+                        className="min-h-[80px] w-full resize-none rounded-xl border border-app-border bg-white px-3 py-2 text-sm leading-6 text-app-primary outline-none placeholder:text-app-muted"
                         value={editingText}
                         onChange={(e) => setEditingText(e.target.value)}
                       />
                       <div className="mt-2 flex justify-end gap-2">
                         <button
-                          className="inline-flex min-h-[2rem] items-center justify-center rounded-full border border-[#e5e7eb] bg-white px-3 text-xs text-[#6b7280] transition hover:bg-[#f9fafb] hover:text-[#111827]"
+                          className="inline-flex min-h-[2rem] items-center justify-center rounded-full border border-app-border bg-white px-3 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
                           onClick={() => setEditingMessageId("")}
                         >
                           取消
                         </button>
                         <button
-                          className="inline-flex min-h-[2rem] items-center justify-center rounded-full border border-[#111827] bg-[#111827] px-3 text-xs font-medium text-white transition hover:bg-black"
+                          className="inline-flex min-h-[2rem] items-center justify-center rounded-full border border-app-primary bg-app-primary px-3 text-xs font-medium text-white transition hover:bg-[var(--app-primary-hover)]"
                           onClick={saveEditAndResubmit}
                         >
                           重新发送
@@ -475,19 +529,19 @@ function CopilotPageContent() {
                 return (
                   <div key={m.id} className="group flex justify-end">
                     <button
-                      className="mr-1 self-end rounded-md border border-[#e5e7eb] bg-white px-2 py-1 text-xs text-[#6b7280] transition hover:bg-[#f9fafb] hover:text-[#111827]"
+                      className="mr-1 self-end rounded-md border border-app-border bg-white px-2 py-1 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
                       onClick={() => beginEditUserMessage(m)}
                     >
                       编辑
                     </button>
-                    <div className="max-w-2xl break-words rounded-2xl bg-white px-4 py-2.5 text-sm leading-6 text-[#111827]">
+                    <div className="max-w-2xl break-words rounded-2xl bg-white px-4 py-2.5 text-sm leading-relaxed text-app-primary">
                       {m.question}
                     </div>
                   </div>
                 );
               }
               return (
-                <div key={m.id} className="rounded-2xl border border-[#e5e7eb] bg-white p-4">
+                <div key={m.id} className="rounded-2xl border border-app-border bg-white p-4">
                   <div className="min-w-0">
                       {((m.explanation || "").includes("护栏") || (m.answer || "").includes("不能提供")) && (
                         <div className="mb-2 rounded-lg border border-[#fcd34d] bg-[#fffbeb] px-3 py-2 text-xs text-[#92400e]">
@@ -498,8 +552,8 @@ function CopilotPageContent() {
                         <span
                           className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${
                             isGeneralQaMessage
-                              ? "border-[#d1d5db] bg-[#f3f4f6] text-[#4b5563]"
-                              : "border-[#cbd5e1] bg-[#eef2ff] text-[#475569]"
+                              ? "border-app-border bg-app-hover text-app-secondary"
+                              : "border-app-activeBorder bg-app-activeBg text-app-chipText"
                           }`}
                         >
                           {isGeneralQaMessage ? "通用问答" : "SQL 分析"}
@@ -512,22 +566,22 @@ function CopilotPageContent() {
                     />
                   </div>
                   {!isGeneralQaMessage && (
-                    <div className="mt-3 space-y-2 border-t border-[#eef2f7] pt-3">
-                      <details className="rounded-lg bg-[#f8fafc] px-3 py-2" open>
-                        <summary className="cursor-pointer text-xs text-[#6b7280]">SQL</summary>
+                    <div className="mt-3 space-y-2 border-t border-app-soft pt-3">
+                      <details className="rounded-lg bg-app-chip px-3 py-2" open>
+                        <summary className="cursor-pointer text-xs text-app-secondary">SQL</summary>
                         <SqlBlock sql={m.sql || ""} />
                       </details>
-                      <details className="rounded-lg bg-[#f8fafc] px-3 py-2" open>
-                        <summary className="cursor-pointer text-xs text-[#6b7280]">执行结果</summary>
+                      <details className="rounded-lg bg-app-chip px-3 py-2" open>
+                        <summary className="cursor-pointer text-xs text-app-secondary">执行结果</summary>
                         {!queryResult.ok && <p className="mt-2 text-sm text-rose-500">{queryResult.error || "查询执行失败"}</p>}
                         {!!queryResult.ok && (
                           <>
-                          <div className="mt-2 overflow-auto rounded-lg border border-[#e5e7eb]">
-                            <table className="min-w-[560px] border-collapse text-xs text-[#374151] md:min-w-[620px]">
+                          <div className="mt-2 overflow-auto rounded-lg border border-app-border">
+                            <table className="min-w-[560px] border-collapse text-xs text-app-ink md:min-w-[620px]">
                               <thead>
                                 <tr>
                                   {queryResult.columns.map((c) => (
-                                    <th key={c} scope="col" className="border-b border-[#e5e7eb] bg-[#f9fafb] px-3 py-2 text-left font-medium text-[#6b7280]">
+                                    <th key={c} scope="col" className="border-b border-app-border bg-app-hover px-3 py-2 text-left font-medium text-app-secondary">
                                       {c}
                                     </th>
                                   ))}
@@ -535,9 +589,9 @@ function CopilotPageContent() {
                               </thead>
                               <tbody>
                                 {queryResult.rows.slice(0, 20).map((row, idx) => (
-                                  <tr key={idx} className="odd:bg-white even:bg-[#fafafa]">
+                                  <tr key={idx} className="odd:bg-white even:bg-app-hover">
                                     {queryResult.columns.map((c) => (
-                                      <td key={`${idx}-${c}`} className="border-b border-[#f1f5f9] px-3 py-2 align-top text-[#111827]">
+                                      <td key={`${idx}-${c}`} className="border-b border-app-subtle px-3 py-2 align-top text-app-primary">
                                         {String(row[c] ?? "")}
                                       </td>
                                     ))}
@@ -545,7 +599,7 @@ function CopilotPageContent() {
                                 ))}
                                 {!queryResult.rows.length && (
                                   <tr>
-                                    <td className="px-3 py-3 text-[#9ca3af]" colSpan={Math.max(1, queryResult.columns.length)}>
+                                    <td className="px-3 py-3 text-app-muted" colSpan={Math.max(1, queryResult.columns.length)}>
                                       查询成功但无返回数据
                                     </td>
                                   </tr>
@@ -561,16 +615,16 @@ function CopilotPageContent() {
                       </details>
                     </div>
                   )}
-                  <div className="mt-3 flex flex-wrap gap-2 border-t border-[#eef2f7] pt-3">
+                  <div className="mt-3 flex flex-wrap gap-2 border-t border-app-soft pt-3">
                     <button
-                      className="rounded-md border border-[#e5e7eb] bg-white px-2.5 py-1 text-xs text-[#6b7280] transition hover:bg-[#f9fafb] hover:text-[#111827]"
+                      className="rounded-md border border-app-border bg-white px-2.5 py-1 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
                       onClick={() => copyMessage(m)}
                     >
                       复制
                     </button>
                     {!isGeneralQaMessage && (
                       <button
-                        className="rounded-md border border-[#e5e7eb] bg-white px-2.5 py-1 text-xs text-[#6b7280] transition hover:bg-[#f9fafb] hover:text-[#111827]"
+                        className="rounded-md border border-app-border bg-white px-2.5 py-1 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
                         onClick={() => retryFromAssistant(m.id)}
                       >
                         重试 SQL
@@ -578,7 +632,7 @@ function CopilotPageContent() {
                     )}
                     {isGeneralQaMessage && (
                       <button
-                        className="rounded-md border border-[#e5e7eb] bg-white px-2.5 py-1 text-xs text-[#6b7280] transition hover:bg-[#f9fafb] hover:text-[#111827]"
+                        className="rounded-md border border-app-border bg-white px-2.5 py-1 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
                         onClick={() => continueFollowUp(m.id)}
                       >
                         继续追问
@@ -586,7 +640,7 @@ function CopilotPageContent() {
                     )}
                     {isGeneralQaMessage && !!m.explanation && (
                       <button
-                        className="rounded-md border border-[#e5e7eb] bg-white px-2.5 py-1 text-xs text-[#6b7280] transition hover:bg-[#f9fafb] hover:text-[#111827]"
+                        className="rounded-md border border-app-border bg-white px-2.5 py-1 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
                         onClick={() => toggleExplanation(m.id)}
                       >
                         {expandedExplanationMessageIds.includes(m.id) ? "收起解释" : "展开解释"}
@@ -599,14 +653,14 @@ function CopilotPageContent() {
 
             {loading && (
               <div className="flex items-start">
-                <div className="rounded-2xl border border-[#e5e7eb] bg-white px-4 py-3 text-sm text-[#4b5563]">
-                  <p className="text-sm font-medium text-[#374151]">{stageLabelMap[streamStage]}...</p>
+                <div className="rounded-2xl border border-app-border bg-white px-4 py-3 text-sm text-app-secondary">
+                  <p className="text-sm font-medium text-app-ink">{stageLabelMap[streamStage]}...</p>
                   <div className="mt-2 flex gap-2">
                     {stageOrder.map((stage) => {
                       const activeIdx = stageOrder.indexOf(streamStage);
                       const idx = stageOrder.indexOf(stage);
                       const done = idx <= activeIdx;
-                      return <span key={stage} className={`h-1.5 w-14 rounded-full ${done ? "bg-[#6b7280]" : "bg-[#d1d5db]"}`} />;
+                      return <span key={stage} className={`h-1.5 w-14 rounded-full ${done ? "bg-app-secondary" : "bg-app-border"}`} />;
                     })}
                   </div>
                 </div>
@@ -615,13 +669,13 @@ function CopilotPageContent() {
 
             {!displayMessages.length && (
               <div className="mx-auto mt-16 max-w-xl text-center">
-                <p className="text-[1.75rem] font-semibold text-[#111827]">今天想分析什么数据？</p>
-                <p className="mt-2 text-sm text-[#6b7280]">输入业务问题即可，我会生成 SQL、执行并解释关键结论。</p>
+                <p className="text-[1.75rem] font-semibold text-app-primary">今天想分析什么数据？</p>
+                <p className="mt-2 text-sm text-app-secondary">输入业务问题即可，我会生成 SQL、执行并解释关键结论。</p>
                 <div className="mt-4 flex flex-wrap justify-center gap-2">
                   {QUICK_QUESTIONS.map((item) => (
                     <button
                       key={item}
-                      className="inline-flex min-h-[2rem] items-center justify-center rounded-full border border-[#e5e7eb] bg-white px-3 text-xs text-[#6b7280] transition hover:bg-[#f9fafb] hover:text-[#111827]"
+                      className="inline-flex min-h-[2rem] items-center justify-center rounded-full border border-app-border bg-white px-3 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
                       onClick={() => {
                         setQuestion(item);
                         questionInputRef.current?.focus();
@@ -637,16 +691,81 @@ function CopilotPageContent() {
           </div>
             </section>
 
-            <section className="pointer-events-none absolute inset-x-0 bottom-0 z-10 px-3 pb-5">
+            <section className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-app-main via-app-main to-transparent px-4 pb-4 pt-8 sm:px-6 sm:pb-5">
               <div className="mx-auto w-full max-w-3xl">
                 <div className="pointer-events-auto">
-                <div className="rounded-[1.7rem] border border-[#e5e7eb] bg-white p-2">
+                <div className="rounded-[1.7rem] border border-app-border bg-white p-2 shadow-[0_2px_12px_rgba(15,23,42,0.06)]">
                   {activeSession && (
-                    <div className="flex flex-wrap items-center gap-2 border-b border-[#f1f5f9] px-2 pb-2 pt-1">
-                      <label className="flex flex-wrap items-center gap-2 text-xs text-[#6b7280]">
+                    <div className="flex flex-col gap-2 px-2 pb-2 pt-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-x-3 sm:gap-y-2">
+                      <label className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs text-app-secondary sm:flex-initial">
+                        <span className="shrink-0">对话模型</span>
+                        <select
+                          className="max-w-[min(100%,260px)] rounded-lg border border-app-border bg-app-hover px-2 py-1.5 text-xs text-app-primary outline-none focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1"
+                          value={chatModelSelect}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setChatModelSelect(v);
+                            writeUserPreferences({ chatModel: v });
+                          }}
+                          disabled={!llmCatalog?.has_llm}
+                        >
+                          {llmCatalog?.has_llm ? (
+                            <>
+                              <option value={llmCatalog.auto_id}>
+                                {llmCatalog.auto_label}
+                                {llmCatalog.auto_resolved_label || llmCatalog.auto_resolved
+                                  ? `（→ ${llmCatalog.auto_resolved_label || llmCatalog.auto_resolved}）`
+                                  : ""}
+                              </option>
+                              {(() => {
+                                const dsV4 = llmCatalog.models.filter((m) => m.provider === "deepseek" && m.model_family === "v4");
+                                const dsChat = llmCatalog.models.filter((m) => m.provider === "deepseek" && m.model_family === "chat");
+                                const oa = llmCatalog.models.filter((m) => m.provider === "openai");
+                                return (
+                                  <>
+                                    {dsV4.length > 0 ? (
+                                      <optgroup label="DeepSeek · V4">
+                                        {dsV4.map((m) => (
+                                          <option key={m.id} value={m.id}>
+                                            {m.label}
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    ) : null}
+                                    {dsChat.length > 0 ? (
+                                      <optgroup label="DeepSeek · Chat / Reasoner（兼容别名）">
+                                        {dsChat.map((m) => (
+                                          <option key={m.id} value={m.id}>
+                                            {m.label}
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    ) : null}
+                                    {oa.length > 0 ? (
+                                      <optgroup label="OpenAI 兼容">
+                                        {oa.map((m) => (
+                                          <option key={m.id} value={m.id}>
+                                            {m.label}
+                                          </option>
+                                        ))}
+                                      </optgroup>
+                                    ) : null}
+                                  </>
+                                );
+                              })()}
+                            </>
+                          ) : (
+                            <option value="auto">未配置 LLM</option>
+                          )}
+                        </select>
+                      </label>
+                      <Link href="/settings" className="shrink-0 text-[11px] text-app-link hover:underline">
+                        偏好设置
+                      </Link>
+                      <label className="flex min-w-0 flex-1 flex-wrap items-center gap-2 text-xs text-app-secondary sm:flex-initial">
                         <span className="shrink-0">会话业务域</span>
                         <select
-                          className="max-w-[min(100%,280px)] rounded-lg border border-[#e5e7eb] bg-[#fafafa] px-2 py-1.5 text-xs text-[#111827] outline-none"
+                          className="max-w-[min(100%,280px)] rounded-lg border border-app-border bg-app-hover px-2 py-1.5 text-xs text-app-primary outline-none focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1"
                           value={activeSession.business_domain_id ?? ""}
                           onChange={(e) => {
                             const raw = e.target.value;
@@ -663,15 +782,19 @@ function CopilotPageContent() {
                           ))}
                         </select>
                       </label>
-                      <span className="text-[11px] text-[#9ca3af]">关联后可拉取该域下配置的知识库语义检索</span>
                       {tableIdFromUrl && Number.isFinite(Number(tableIdFromUrl)) && (
-                        <span className="text-[11px] text-[#4f46e5]">URL 已指定数据表 ID {tableIdFromUrl}，请求将带上表级知识库与固定条目</span>
+                        <span className="w-full text-[11px] leading-snug text-app-link sm:w-auto">
+                          URL 已指定数据表 ID {tableIdFromUrl}，请求将带上表级知识库与固定条目
+                        </span>
                       )}
+                      <p className="w-full text-[11px] leading-snug text-app-muted sm:order-last sm:basis-full">
+                        关联业务域后可拉取该域下配置的知识库语义检索。
+                      </p>
                     </div>
                   )}
                   <textarea
                     ref={questionInputRef}
-                    className="min-h-[86px] w-full resize-none bg-transparent px-2 py-2 text-sm leading-6 text-[#111827] outline-none placeholder:text-[#9ca3af]"
+                    className="min-h-[86px] w-full resize-none rounded-xl bg-transparent px-2 py-2 text-sm leading-relaxed text-app-primary outline-none placeholder:text-app-muted focus-visible:ring-2 focus-visible:ring-slate-200 focus-visible:ring-offset-0"
                     placeholder="例如：近30天各渠道订单转化率趋势，并标注异常波动日期"
                     value={question}
                     maxLength={2000}
@@ -684,11 +807,15 @@ function CopilotPageContent() {
                     }}
                   />
                   <div className="flex items-center justify-end gap-2 px-1 pb-1">
-                    <p className="mr-auto self-center text-xs text-[#9ca3af]">Enter 发送，Shift+Enter 换行</p>
+                    <p className="mr-auto self-center text-xs text-app-muted">Enter 发送，Shift+Enter 换行</p>
                     {question.length > 1800 && (
                       <p className="self-center text-xs text-amber-500">{question.length}/2000</p>
                     )}
-                    <button className={`inline-flex min-h-[2.1rem] items-center justify-center rounded-full border border-[#111827] bg-[#111827] px-4 text-sm font-medium text-white transition hover:bg-black disabled:cursor-not-allowed disabled:opacity-60 ${loading ? "is-loading" : ""}`} onClick={() => submit()} disabled={loading || !question.trim()}>
+                    <button
+                      className={`inline-flex min-h-[2.25rem] items-center justify-center rounded-full border border-app-primary bg-app-primary px-4 text-sm font-medium text-white transition hover:bg-[var(--app-primary-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-primary focus-visible:ring-offset-2 focus-visible:ring-offset-app-card disabled:cursor-not-allowed disabled:opacity-60 ${loading ? "is-loading" : ""}`}
+                      onClick={() => submit()}
+                      disabled={loading || !question.trim()}
+                    >
                       {loading ? "生成中..." : "发送"}
                     </button>
                   </div>
@@ -716,7 +843,7 @@ function CopilotPageContent() {
 
 export default function CopilotPage() {
   return (
-    <Suspense fallback={<main className="app-page text-[#6b7280]">加载中...</main>}>
+    <Suspense fallback={<main className="app-page text-app-secondary">加载中...</main>}>
       <CopilotPageContent />
     </Suspense>
   );

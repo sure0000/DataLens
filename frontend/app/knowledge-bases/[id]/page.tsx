@@ -205,13 +205,13 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   }, [entries, entryKeyword]);
 
   if (!Number.isFinite(kbId)) {
-    return <main className="app-page text-[#6b7280]">无效的知识库 ID</main>;
+    return <main className="app-page text-app-secondary">无效的知识库 ID</main>;
   }
 
   if (!loading && !kb) {
     return (
       <main className="app-page">
-        <p className="text-[#6b7280]">知识库不存在或已删除。</p>
+        <p className="text-app-secondary">知识库不存在或已删除。</p>
         <Link className="app-link mt-2 inline-block" href="/knowledge-bases">
           返回列表
         </Link>
@@ -271,8 +271,8 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
             {hits.length > 0 && (
               <ul className="mt-4 space-y-2">
                 {hits.map((h) => (
-                  <li key={`${h.entry_id}-${h.snippet.slice(0, 20)}`} className="rounded-lg border border-[#e5e7eb] bg-[#f9fafb] p-3 text-sm">
-                    <p className="font-semibold text-[#111827]">{h.title}</p>
+                  <li key={`${h.entry_id}-${h.snippet.slice(0, 20)}`} className="rounded-lg border border-app-border bg-app-hover p-3 text-sm">
+                    <p className="font-semibold text-app-primary">{h.title}</p>
                     <p className="app-text-secondary mt-1 line-clamp-4 whitespace-pre-wrap break-words">{h.snippet}</p>
                     <button
                       type="button"
@@ -311,7 +311,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
             {filteredEntries.map((e) => (
               <div key={e.id} id={`entry-${e.id}`} className="app-card app-list-item p-4">
                 <div className="app-list-item-main min-w-0">
-                  <p className="text-base font-semibold text-[#111827]">{e.title}</p>
+                  <p className="text-base font-semibold text-app-primary">{e.title}</p>
                   <p className="app-text-muted mt-1 text-xs">
                     更新：{e.updated_at ? new Date(e.updated_at).toLocaleString() : "-"}
                   </p>
@@ -333,7 +333,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
 
       {isKbEditOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/35 p-4 backdrop-blur-[2px]"
+          className="app-modal-backdrop"
           role="presentation"
           onClick={() => setIsKbEditOpen(false)}
         >
@@ -366,7 +366,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
 
       {isEntryModalOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/35 p-4 backdrop-blur-[2px]"
+          className="app-modal-backdrop"
           role="presentation"
           onClick={() => setIsEntryModalOpen(false)}
         >

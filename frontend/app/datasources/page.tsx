@@ -403,7 +403,7 @@ export default function DataSourcesPage() {
       </div>
 
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-[#111827]/35 p-4 backdrop-blur-[2px]" role="presentation" onClick={resetAndCloseModal}>
+        <div className="app-modal-backdrop" role="presentation" onClick={resetAndCloseModal}>
           <div
             className="app-card w-full max-w-2xl max-h-[88vh] overflow-auto p-5"
             role="dialog"
@@ -457,7 +457,7 @@ export default function DataSourcesPage() {
                 {!editingId && (
                   <div className="app-form-label">
                     <span>类型</span>
-                    <div className="flex items-center gap-2 rounded-lg border border-[#e5e7eb] bg-[#f9fafb] px-3 py-2 text-sm text-[#374151]">
+                    <div className="flex items-center gap-2 rounded-lg border border-app-border bg-app-hover px-3 py-2 text-sm text-app-ink">
                       {typeLabel(form.source_type)}
                       <span className="app-text-muted text-xs">（已在上一步选择）</span>
                     </div>

@@ -15,6 +15,8 @@ class Settings(BaseSettings):
     )
     deepseek_api_key: str | None = Field(default=None, alias="DEEPSEEK_API_KEY")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    # 可选；兼容 OpenAI 代理或自建网关（偏好设置中的 URL 优先生效）
+    openai_base_url: str | None = Field(default=None, alias="OPENAI_BASE_URL")
     backend_port: int = Field(default=8000, alias="BACKEND_PORT")
     cors_origins: str = Field(default="http://localhost:3000", alias="CORS_ORIGINS")
     db_pool_size: int = Field(default=5, ge=1, le=50, alias="DB_POOL_SIZE")
