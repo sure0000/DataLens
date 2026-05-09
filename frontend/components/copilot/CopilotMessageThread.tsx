@@ -1,8 +1,9 @@
 "use client";
 
 import { memo } from "react";
-import { formatPipelineTraceForBodyMarkdown } from "../../lib/copilotTraceMarkdown";
+import { stripAutoRepairExplanationNote } from "../../lib/copilotTraceMarkdown";
 import { filterCopilotTraceSteps, type ChatMessage } from "../../lib/chatSessions";
+import CopilotExecutionTrace from "../CopilotExecutionTrace";
 import SqlBlock from "../SqlBlock";
 import CsvExportButton from "../CsvExportButton";
 import ChatGptStyleBody from "./ChatGptStyleBody";
@@ -98,23 +99,20 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
           );
         }
 
-        const narrative =
+        const narrativeRaw =
           (m.answer || "").trim() && (m.explanation || "").trim()
             ? `${(m.answer || "").trim()}\n\n${(m.explanation || "").trim()}`
             : (m.answer || "").trim() || (m.explanation || "").trim();
+        const narrative = stripAutoRepairExplanationNote(narrativeRaw.trim());
 
-        const traceMd =
+        const traceSteps =
           m.pipeline_trace && m.pipeline_trace.length > 0
-            ? formatPipelineTraceForBodyMarkdown(
-                filterCopilotTraceSteps(m.pipeline_trace),
-                isGeneralQaMessage ? "执行过程" : "推理过程"
-              )
-            : "";
+            ? filterCopilotTraceSteps(m.pipeline_trace)
+            : [];
+        const traceTitle = isGeneralQaMessage ? "执行检查点" : "推理检查点";
         const narrativeTrim = (narrative || "").trim();
-        const mainBody =
-          traceMd && narrativeTrim
-            ? `${traceMd}\n\n${narrativeTrim}`
-            : traceMd || narrativeTrim || "（无返回）";
+        const showNarrative = narrativeTrim.length > 0;
+        const showEmptyFallback = traceSteps.length === 0 && !showNarrative;
 
         return (
           <div key={m.id} className="min-w-0 max-w-full">
@@ -136,7 +134,15 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
                     {isGeneralQaMessage ? "通用问答" : "SQL 分析"}
                   </span>
                 </div>
-                <ChatGptStyleBody text={mainBody} />
+                <div className="min-w-0 space-y-3">
+                  {traceSteps.length > 0 ? (
+                    <CopilotExecutionTrace steps={traceSteps} title={traceTitle} variant="framed" />
+                  ) : null}
+                  {showNarrative ? <ChatGptStyleBody text={narrativeTrim} /> : null}
+                  {showEmptyFallback ? (
+                    <p className="text-[15px] leading-7 text-app-secondary">（无返回）</p>
+                  ) : null}
+                </div>
                 {!isGeneralQaMessage && (
                   <div className="mt-3 space-y-2 border-t border-app-soft pt-3">
                     <details className="rounded-lg bg-app-chip px-3 py-2" open>

@@ -5,11 +5,58 @@ export type QueryResult = {
   error?: string;
 };
 
+/** 管线 trace 中可点击跳转的实体（由后端 matches 定位原文子串） */
+export type TraceEntityLinkKind = "table" | "datasource" | "database" | "business_domain" | "knowledge_base";
+
+export type TraceEntityLink = {
+  kind: TraceEntityLinkKind;
+  id?: number;
+  datasource_id?: number;
+  database_name?: string;
+  matches: string[];
+};
+
+const TRACE_ENTITY_LINK_KINDS: TraceEntityLinkKind[] = [
+  "table",
+  "datasource",
+  "database",
+  "business_domain",
+  "knowledge_base"
+];
+
+function normalizeTraceEntityLinks(raw: unknown): TraceEntityLink[] | undefined {
+  if (!Array.isArray(raw) || !raw.length) return undefined;
+  const out: TraceEntityLink[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const o = item as Record<string, unknown>;
+    const kind = o.kind;
+    if (typeof kind !== "string" || !TRACE_ENTITY_LINK_KINDS.includes(kind as TraceEntityLinkKind)) continue;
+    const matchesRaw = o.matches;
+    if (!Array.isArray(matchesRaw)) continue;
+    const matches = matchesRaw.filter((m): m is string => typeof m === "string" && m.trim().length > 0);
+    if (!matches.length) continue;
+    const id = typeof o.id === "number" ? o.id : undefined;
+    const datasource_id = typeof o.datasource_id === "number" ? o.datasource_id : undefined;
+    const database_name = typeof o.database_name === "string" ? o.database_name : undefined;
+    out.push({
+      kind: kind as TraceEntityLinkKind,
+      id,
+      datasource_id,
+      database_name,
+      matches
+    });
+  }
+  return out.length ? out : undefined;
+}
+
 /** 后端 pipeline_trace / SSE trace：从用户输入到 SQL 的步骤说明 */
 export type PipelineTraceStep = {
   id: string;
   label: string;
   detail?: string;
+  /** 可选：与 detail 文案对应的站内详情链接 */
+  links?: TraceEntityLink[];
 };
 
 /** 对话展示用：隐藏内部 SQL 修复步骤，以及「SQL 执行失败」类 trace（错误已在正文 / 执行结果区呈现） */
@@ -107,10 +154,12 @@ function normalizePipelineTrace(raw: unknown): PipelineTraceStep[] | undefined {
     const id = typeof o.id === "string" ? o.id : "";
     const label = typeof o.label === "string" ? o.label : "";
     if (!id || !label) continue;
+    const links = normalizeTraceEntityLinks(o.links);
     out.push({
       id,
       label,
-      detail: typeof o.detail === "string" ? o.detail : undefined
+      detail: typeof o.detail === "string" ? o.detail : undefined,
+      ...(links?.length ? { links } : {})
     });
   }
   return out.length ? out : undefined;

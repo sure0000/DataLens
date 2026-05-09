@@ -40,6 +40,31 @@ def source_type_to_sqlglot_dialect(source_type: str) -> str:
     return "mysql"
 
 
+def format_sql_for_display(sql: str, *, dialect: str) -> str:
+    """
+    将 SQL 格式化为多行可读形式（用于推理链路展示与返回给前端的 sql 字段）。
+    解析失败时返回去首尾空白后的原文，不抛异常。
+    """
+    raw = (sql or "").strip()
+    if not raw:
+        return ""
+    read_d = (dialect or "mysql").strip() or "mysql"
+    try:
+        statements = sqlglot.parse(raw, read=read_d)
+    except Exception:  # noqa: BLE001
+        return raw
+    if not statements:
+        return raw
+    parts: list[str] = []
+    for stmt in statements:
+        if stmt is None:
+            continue
+        txt = stmt.sql(dialect=read_d, pretty=True)
+        if txt.strip():
+            parts.append(txt.strip())
+    return "\n\n".join(parts) if parts else raw
+
+
 def validate_readonly_sql_ast(sql: str, *, dialect: str) -> tuple[bool, str]:
     """
     Parse SQL with sqlglot and reject non-read-only or multi-statement batches.
@@ -78,3 +103,42 @@ def validate_readonly_sql_ast(sql: str, *, dialect: str) -> tuple[bool, str]:
         return False, f"JOIN 数量过多（>{_MAX_JOINS}），请拆分查询以降低风险"
 
     return True, ""
+
+
+def extract_table_refs_from_sql(sql: str, *, dialect: str) -> list[tuple[str | None, str | None, str]]:
+    """
+    从 SELECT / WITH 语句中收集 FROM/JOIN 等处的物理表引用（catalog, db/schema, name）。
+    忽略 WITH 子句内定义的 CTE 名，避免把 CTE 当作真实表。
+    解析失败时返回空列表。
+    """
+    raw = (sql or "").strip()
+    if not raw:
+        return []
+    try:
+        statements = sqlglot.parse(raw, read=dialect)
+    except Exception:  # noqa: BLE001
+        return []
+    if not statements:
+        return []
+    root = statements[0]
+    cte_names: set[str] = set()
+    with_ = root.args.get("with_")
+    if with_ and hasattr(with_, "expressions"):
+        for cte in with_.expressions:
+            alias = getattr(cte, "alias", None)
+            if alias:
+                cte_names.add(str(alias))
+
+    out: list[tuple[str | None, str | None, str]] = []
+    for t in root.find_all(exp.Table):
+        name = (t.name or "").strip() if hasattr(t, "name") else ""
+        if not name or name in cte_names:
+            continue
+        cat = str(t.catalog).strip() if t.catalog else None
+        db_part = str(t.db).strip() if t.db else None
+        if cat == "":
+            cat = None
+        if db_part == "":
+            db_part = None
+        out.append((cat, db_part, name))
+    return out

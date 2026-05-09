@@ -1,9 +1,10 @@
 "use client";
 
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { formatPipelineTraceForBodyMarkdown } from "../../lib/copilotTraceMarkdown";
+import { stripAutoRepairExplanationNote } from "../../lib/copilotTraceMarkdown";
 import { filterCopilotTraceSteps, type PipelineTraceStep } from "../../lib/chatSessions";
 import { streamAsk, type AskPayload, type AskResponse, type StreamStage } from "../../lib/copilotStream";
+import CopilotExecutionTrace from "../CopilotExecutionTrace";
 import ChatGptStyleBody from "./ChatGptStyleBody";
 
 export type ActiveAsk = {
@@ -45,17 +46,15 @@ export const CopilotStreamBubble = memo(function CopilotStreamBubble() {
 
   if (!ctx?.busy) return null;
 
-  const combined =
+  const combinedRaw =
     ctx.streamPreview.answer.trim() && ctx.streamPreview.explanation.trim()
       ? `${ctx.streamPreview.answer.trim()}\n\n${ctx.streamPreview.explanation.trim()}`
       : ctx.streamPreview.answer.trim() || ctx.streamPreview.explanation.trim();
+  const combined = stripAutoRepairExplanationNote(combinedRaw.trim());
 
   const traceSteps = filterCopilotTraceSteps(ctx.livePipelineTrace);
-  const traceMd = traceSteps.length ? formatPipelineTraceForBodyMarkdown(traceSteps) : "";
-  const bodyParts: string[] = [];
-  if (traceMd) bodyParts.push(traceMd);
-  if (combined.trim()) bodyParts.push(combined.trim());
-  const fullBody = bodyParts.join("\n\n");
+  const hasTrace = traceSteps.length > 0;
+  const hasNarrative = combined.trim().length > 0;
 
   return (
     <div ref={rootRef} className="flex min-w-0 max-w-full justify-start">
@@ -81,20 +80,27 @@ export const CopilotStreamBubble = memo(function CopilotStreamBubble() {
           </div>
         </div>
 
-        <div className="min-w-0 text-app-primary" aria-live="polite">
-          {fullBody ? (
+        <div className="min-w-0 space-y-3 text-app-primary" aria-live="polite">
+          {hasTrace ? (
+            <CopilotExecutionTrace
+              steps={traceSteps}
+              title="步骤检查点"
+              variant="framed"
+              compact
+              streaming
+            />
+          ) : null}
+          {hasNarrative ? (
             <>
-              <ChatGptStyleBody text={fullBody} />
-              {combined.trim() ? (
-                <span
-                  className="mt-1 inline-block h-[1.05em] w-0.5 translate-y-px rounded-sm bg-app-primary/80 motion-safe:animate-pulse"
-                  aria-hidden
-                />
-              ) : null}
+              <ChatGptStyleBody text={combined.trim()} />
+              <span
+                className="mt-1 inline-block h-[1.05em] w-0.5 translate-y-px rounded-sm bg-app-primary/80 motion-safe:animate-pulse"
+                aria-hidden
+              />
             </>
-          ) : (
+          ) : !hasTrace ? (
             <p className="text-[15px] leading-7 text-app-secondary">正在连接分析管线并准备上下文…</p>
-          )}
+          ) : null}
         </div>
       </div>
     </div>
