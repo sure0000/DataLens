@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import ColumnCard from "../../../components/ColumnCard";
 import { api } from "../../../lib/api";
@@ -38,17 +39,14 @@ export default function TableDetail({ params }: { params: { id: string } }) {
   const [keyword, setKeyword] = useState("");
   const [activeTab, setActiveTab] = useState("");
   const [allKbs, setAllKbs] = useState<{ id: number; name: string }[]>([]);
-  const [linkKbIds, setLinkKbIds] = useState<number[]>([]);
-  const [linkEntryIds, setLinkEntryIds] = useState<number[]>([]);
   const [savingLinks, setSavingLinks] = useState(false);
-  const [kbModalOpen, setKbModalOpen] = useState(false);
-  const [kbPickerPick, setKbPickerPick] = useState<Record<number, boolean>>({});
-  const [entryModalOpen, setEntryModalOpen] = useState(false);
-  const [pickerKbId, setPickerKbId] = useState("");
-  const [pickerEntries, setPickerEntries] = useState<{ id: number; title: string }[]>([]);
-  const [pickerPick, setPickerPick] = useState<Record<number, boolean>>({});
-  const linkEntryIdsRef = useRef(linkEntryIds);
-  linkEntryIdsRef.current = linkEntryIds;
+  const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [linkModalTab, setLinkModalTab] = useState<"kb" | "entry">("kb");
+  const [modalKbPick, setModalKbPick] = useState<Record<number, boolean>>({});
+  const [modalEntryKbId, setModalEntryKbId] = useState("");
+  const [modalEntryRows, setModalEntryRows] = useState<{ id: number; title: string }[]>([]);
+  const [modalEntryPick, setModalEntryPick] = useState<Record<number, boolean>>({});
+  const modalEntryDraftRef = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     api<{ knowledge_bases: { id: number; name: string }[] }>("/api/knowledge-bases")
@@ -57,72 +55,84 @@ export default function TableDetail({ params }: { params: { id: string } }) {
   }, []);
 
   useEffect(() => {
-    api<Detail>(`/api/table/${params.id}`).then((d) => {
-      setDetail(d);
-      setLinkKbIds(d.knowledge_bases?.map((k) => k.id) ?? []);
-      setLinkEntryIds(d.knowledge_entries?.map((e) => e.id) ?? []);
-    });
+    api<Detail>(`/api/table/${params.id}`).then((d) => setDetail(d));
   }, [params.id]);
 
   useEffect(() => {
-    if (!entryModalOpen || !pickerKbId) return;
-    const kbNum = Number(pickerKbId);
+    if (!linkModalOpen || linkModalTab !== "entry" || !modalEntryKbId) return;
+    const kbNum = Number(modalEntryKbId);
     if (!Number.isFinite(kbNum)) return;
     api<{ entries: { id: number; title: string }[] }>(`/api/knowledge-bases/${kbNum}`).then((res) => {
       const entries = res.entries || [];
-      setPickerEntries(entries);
+      setModalEntryRows(entries);
+      const draft = modalEntryDraftRef.current;
       const next: Record<number, boolean> = {};
       entries.forEach((e) => {
-        next[e.id] = linkEntryIdsRef.current.includes(e.id);
+        next[e.id] = draft.has(e.id);
       });
-      setPickerPick(next);
+      setModalEntryPick(next);
     });
-  }, [entryModalOpen, pickerKbId]);
+  }, [linkModalOpen, linkModalTab, modalEntryKbId]);
 
-  function openKbModal() {
-    const next: Record<number, boolean> = {};
+  function openLinkModal() {
+    if (!detail) return;
+    const kbPick: Record<number, boolean> = {};
     allKbs.forEach((kb) => {
-      next[kb.id] = linkKbIds.includes(kb.id);
+      kbPick[kb.id] = !!(detail.knowledge_bases || []).some((k) => k.id === kb.id);
     });
-    setKbPickerPick(next);
-    setKbModalOpen(true);
+    setModalKbPick(kbPick);
+    modalEntryDraftRef.current = new Set((detail.knowledge_entries || []).map((e) => e.id));
+    setModalEntryKbId(allKbs[0] ? String(allKbs[0].id) : "");
+    setModalEntryRows([]);
+    setModalEntryPick({});
+    setLinkModalTab("kb");
+    setLinkModalOpen(true);
   }
 
-  function confirmKbPicker() {
-    const picked = allKbs.filter((kb) => kbPickerPick[kb.id]).map((kb) => kb.id);
-    setLinkKbIds(picked);
-    setKbModalOpen(false);
+  function toggleModalEntry(entryId: number) {
+    const draft = modalEntryDraftRef.current;
+    if (draft.has(entryId)) draft.delete(entryId);
+    else draft.add(entryId);
+    setModalEntryPick((prev) => ({ ...prev, [entryId]: draft.has(entryId) }));
   }
 
-  function openEntryModal() {
-    setPickerKbId(allKbs[0]?.id != null ? String(allKbs[0].id) : "");
-    setPickerEntries([]);
-    setPickerPick({});
-    setEntryModalOpen(true);
-  }
-
-  function confirmPickerEntries() {
-    const pickerSet = new Set(pickerEntries.map((e) => e.id));
-    const rest = linkEntryIds.filter((id) => !pickerSet.has(id));
-    const picked = pickerEntries.filter((e) => pickerPick[e.id]).map((e) => e.id);
-    setLinkEntryIds([...rest, ...picked]);
-    setEntryModalOpen(false);
-  }
-
-  async function saveTableKnowledgeLinks() {
+  async function persistKnowledgeLinks(kbIds: number[], entryIds: number[]) {
     setSavingLinks(true);
     try {
       await api(`/api/table/${params.id}/knowledge-links`, {
         method: "PUT",
-        body: JSON.stringify({ knowledge_base_ids: linkKbIds, knowledge_entry_ids: linkEntryIds })
+        body: JSON.stringify({ knowledge_base_ids: kbIds, knowledge_entry_ids: entryIds })
       });
       const d = await api<Detail>(`/api/table/${params.id}`);
       setDetail(d);
-      setLinkKbIds(d.knowledge_bases?.map((k) => k.id) ?? []);
-      setLinkEntryIds(d.knowledge_entries?.map((e) => e.id) ?? []);
     } finally {
       setSavingLinks(false);
     }
+  }
+
+  async function saveLinkModal() {
+    const kbIds = allKbs.filter((kb) => modalKbPick[kb.id]).map((kb) => kb.id);
+    const entryIds = Array.from(modalEntryDraftRef.current);
+    await persistKnowledgeLinks(kbIds, entryIds);
+    setLinkModalOpen(false);
+  }
+
+  async function removeKbAssociation(kbId: number) {
+    if (!detail) return;
+    const kbIds = (detail.knowledge_bases || []).filter((k) => k.id !== kbId).map((k) => k.id);
+    const entryIds = (detail.knowledge_entries || []).map((e) => e.id);
+    await persistKnowledgeLinks(kbIds, entryIds);
+  }
+
+  async function removeEntryAssociation(entryId: number) {
+    if (!detail) return;
+    const kbIds = (detail.knowledge_bases || []).map((k) => k.id);
+    const entryIds = (detail.knowledge_entries || []).filter((e) => e.id !== entryId).map((e) => e.id);
+    await persistKnowledgeLinks(kbIds, entryIds);
+  }
+
+  function kbDisplayName(kbId: number) {
+    return allKbs.find((k) => k.id === kbId)?.name || detail?.knowledge_bases?.find((k) => k.id === kbId)?.name || `#${kbId}`;
   }
 
   // Set default tab once data loads
@@ -200,139 +210,178 @@ export default function TableDetail({ params }: { params: { id: string } }) {
       />
 
       <section className="app-card mt-5 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 className="app-section-title">关联知识库与条目</h2>
-          <button type="button" className={`app-button ${savingLinks ? "is-loading" : ""}`} onClick={saveTableKnowledgeLinks} disabled={savingLinks}>
-            {savingLinks ? "保存中…" : "保存"}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="app-section-title">关联知识</h2>
+          <button type="button" className="app-button shrink-0" onClick={openLinkModal}>
+            添加知识
           </button>
         </div>
         <p className="app-text-muted mt-1 text-xs">
-          关联知识库后，Copilot 在本表上下文中会对这些库做语义检索；固定条目将全文注入上下文。可与会话所选业务域下的知识库叠加。
+          关联整库后，Copilot 在本表上下文中对该库做语义检索；关联条目则全文注入。可与会话所选业务域下的知识库叠加。
         </p>
-        <div className="mt-3 rounded-lg border border-app-border bg-app-hover p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs font-medium text-app-ink">知识库</p>
-            <button type="button" className="app-button-secondary text-xs" onClick={openKbModal}>
-              添加知识库
-            </button>
-          </div>
-          {!linkKbIds.length ? (
-            <p className="mt-2 text-xs text-app-muted">未选择知识库</p>
-          ) : (
-            <p className="mt-2 text-xs text-app-secondary">
-              已选择 {linkKbIds.length} 个：{linkKbIds.map((id) => allKbs.find((kb) => kb.id === id)?.name || `#${id}`).join("、")}
-            </p>
-          )}
-        </div>
-        <div className="mt-3 rounded-lg border border-app-border bg-app-hover p-3">
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs font-medium text-app-ink">知识库条目</p>
-            <button type="button" className="app-button-secondary text-xs" onClick={openEntryModal}>
-              添加条目
-            </button>
-          </div>
-          {!linkEntryIds.length ? (
-            <p className="mt-2 text-xs text-app-muted">未选择条目</p>
-          ) : (
-            <p className="mt-2 text-xs text-app-secondary">
-              已选择 {linkEntryIds.length} 条：
-              {linkEntryIds
-                .map((id) => detail.knowledge_entries?.find((e) => e.id === id)?.title || `#${id}`)
-                .join("、")}
-            </p>
-          )}
-        </div>
+        {!(detail.knowledge_bases?.length || detail.knowledge_entries?.length) ? (
+          <p className="mt-4 rounded-lg border border-dashed border-app-border bg-app-hover px-4 py-6 text-center text-sm text-app-muted">
+            尚未关联知识。点击「添加知识」选择知识库或具体条目。
+          </p>
+        ) : (
+          <ul className="mt-4 divide-y divide-app-subtle rounded-xl border border-app-border bg-white">
+            {(detail.knowledge_bases || []).map((kb) => (
+              <li key={`kb-${kb.id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-app-activeBorder bg-app-activeBg px-2 py-0.5 text-[11px] font-medium text-app-chipText">
+                      知识库
+                    </span>
+                    <span className="font-medium text-app-ink">{kb.name}</span>
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <Link className="app-button-secondary text-xs no-underline" href={`/knowledge-bases/${kb.id}`}>
+                    查看知识库
+                  </Link>
+                  <button
+                    type="button"
+                    className="app-control-button text-xs text-app-secondary hover:text-rose-600"
+                    disabled={savingLinks}
+                    onClick={() => removeKbAssociation(kb.id)}
+                  >
+                    移除
+                  </button>
+                </div>
+              </li>
+            ))}
+            {(detail.knowledge_entries || []).map((en) => (
+              <li key={`ent-${en.id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-900 dark:border-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-100">
+                      条目
+                    </span>
+                    <span className="font-medium text-app-ink">{en.title}</span>
+                    <span className="text-xs text-app-muted">（{kbDisplayName(en.knowledge_base_id)}）</span>
+                  </div>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <Link
+                    className="app-button-secondary text-xs no-underline"
+                    href={`/knowledge-bases/${en.knowledge_base_id}#entry-${en.id}`}
+                  >
+                    查看条目
+                  </Link>
+                  <button
+                    type="button"
+                    className="app-control-button text-xs text-app-secondary hover:text-rose-600"
+                    disabled={savingLinks}
+                    onClick={() => removeEntryAssociation(en.id)}
+                  >
+                    移除
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
-      {kbModalOpen && (
-        <div
-          className="app-modal-backdrop"
-          role="presentation"
-          onClick={() => setKbModalOpen(false)}
-        >
-          <div className="app-card max-h-[85vh] w-full max-w-lg overflow-auto p-5" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="app-section-title">选择知识库</h2>
-              <button type="button" className="app-control-button" onClick={() => setKbModalOpen(false)}>
+      {linkModalOpen && (
+        <div className="app-modal-backdrop" role="presentation" onClick={() => !savingLinks && setLinkModalOpen(false)}>
+          <div
+            className="app-card max-h-[88vh] w-full max-w-lg overflow-auto p-5"
+            role="dialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-4 flex items-center justify-between gap-2">
+              <h2 className="app-section-title">添加知识</h2>
+              <button type="button" className="app-control-button shrink-0" onClick={() => !savingLinks && setLinkModalOpen(false)}>
                 关闭
               </button>
             </div>
-            {!allKbs.length ? (
-              <p className="text-sm text-app-muted">暂无知识库</p>
-            ) : (
-              <ul className="max-h-[56vh] space-y-2 overflow-y-auto">
-                {allKbs.map((kb) => (
-                  <li key={kb.id}>
-                    <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-app-border px-3 py-2 text-sm hover:bg-app-hover">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5"
-                        checked={!!kbPickerPick[kb.id]}
-                        onChange={() => setKbPickerPick((p) => ({ ...p, [kb.id]: !p[kb.id] }))}
-                      />
-                      <span>{kb.name}</span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
-            )}
-            <div className="mt-4 flex gap-2">
-              <button type="button" className="app-button flex-1" onClick={confirmKbPicker}>
-                确定
+            <div className="mb-4 flex rounded-lg border border-app-border p-0.5">
+              <button
+                type="button"
+                className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-colors ${
+                  linkModalTab === "kb" ? "bg-app-primary text-white" : "text-app-secondary hover:text-app-ink"
+                }`}
+                onClick={() => setLinkModalTab("kb")}
+              >
+                关联整库
               </button>
-              <button type="button" className="app-button-secondary flex-1" onClick={() => setKbModalOpen(false)}>
-                取消
+              <button
+                type="button"
+                className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-colors ${
+                  linkModalTab === "entry" ? "bg-app-primary text-white" : "text-app-secondary hover:text-app-ink"
+                }`}
+                onClick={() => setLinkModalTab("entry")}
+              >
+                关联条目
               </button>
             </div>
-          </div>
-        </div>
-      )}
 
-      {entryModalOpen && (
-        <div
-          className="app-modal-backdrop"
-          role="presentation"
-          onClick={() => setEntryModalOpen(false)}
-        >
-          <div className="app-card max-h-[85vh] w-full max-w-lg overflow-auto p-5" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="app-section-title">选择知识条目</h2>
-              <button type="button" className="app-control-button" onClick={() => setEntryModalOpen(false)}>
-                关闭
+            {linkModalTab === "kb" ? (
+              !allKbs.length ? (
+                <p className="text-sm text-app-muted">暂无知识库，请先在「知识库」中创建。</p>
+              ) : (
+                <ul className="max-h-[50vh] space-y-2 overflow-y-auto">
+                  {allKbs.map((kb) => (
+                    <li key={kb.id}>
+                      <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-app-border px-3 py-2.5 text-sm hover:bg-app-hover">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={!!modalKbPick[kb.id]}
+                          onChange={() => setModalKbPick((p) => ({ ...p, [kb.id]: !p[kb.id] }))}
+                        />
+                        <span>{kb.name}</span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              )
+            ) : (
+              <>
+                <label className="app-form-label">
+                  <span className="text-xs">选择知识库以列出条目</span>
+                  <select
+                    className="app-input"
+                    value={modalEntryKbId}
+                    onChange={(e) => setModalEntryKbId(e.target.value)}
+                    disabled={!allKbs.length}
+                  >
+                    {!allKbs.length && <option value="">暂无知识库</option>}
+                    {allKbs.map((kb) => (
+                      <option key={kb.id} value={kb.id}>
+                        {kb.name}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <ul className="mt-3 max-h-[44vh] space-y-2 overflow-y-auto">
+                  {modalEntryRows.map((e) => (
+                    <li key={e.id}>
+                      <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-app-border px-3 py-2.5 text-sm hover:bg-app-hover">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={!!modalEntryPick[e.id]}
+                          onChange={() => toggleModalEntry(e.id)}
+                        />
+                        <span>{e.title}</span>
+                      </label>
+                    </li>
+                  ))}
+                  {!modalEntryRows.length && modalEntryKbId && (
+                    <li className="py-4 text-center text-sm text-app-muted">该库暂无条目或加载中…</li>
+                  )}
+                </ul>
+              </>
+            )}
+
+            <div className="mt-5 flex gap-2 border-t border-app-subtle pt-4">
+              <button type="button" className={`app-button flex-1 ${savingLinks ? "is-loading" : ""}`} disabled={savingLinks} onClick={saveLinkModal}>
+                {savingLinks ? "保存中…" : "保存"}
               </button>
-            </div>
-            <label className="app-form-label">
-              <span>知识库</span>
-              <select className="app-input" value={pickerKbId} onChange={(e) => setPickerKbId(e.target.value)} disabled={!allKbs.length}>
-                {!allKbs.length && <option value="">暂无知识库</option>}
-                {allKbs.map((kb) => (
-                  <option key={kb.id} value={kb.id}>
-                    {kb.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <ul className="mt-3 max-h-[48vh] space-y-2 overflow-y-auto">
-              {pickerEntries.map((e) => (
-                <li key={e.id}>
-                  <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-app-border px-3 py-2 text-sm hover:bg-app-hover">
-                    <input
-                      type="checkbox"
-                      className="mt-0.5"
-                      checked={!!pickerPick[e.id]}
-                      onChange={() => setPickerPick((p) => ({ ...p, [e.id]: !p[e.id] }))}
-                    />
-                    <span>{e.title}</span>
-                  </label>
-                </li>
-              ))}
-              {!pickerEntries.length && pickerKbId && <li className="text-sm text-app-muted">该库暂无条目或加载中</li>}
-            </ul>
-            <div className="mt-4 flex gap-2">
-              <button type="button" className="app-button flex-1" onClick={confirmPickerEntries}>
-                确定
-              </button>
-              <button type="button" className="app-button-secondary flex-1" onClick={() => setEntryModalOpen(false)}>
+              <button type="button" className="app-button-secondary flex-1" disabled={savingLinks} onClick={() => setLinkModalOpen(false)}>
                 取消
               </button>
             </div>

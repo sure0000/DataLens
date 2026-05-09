@@ -72,6 +72,19 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     load();
   }, [kbId]);
 
+  /** 从表详情等页带 #entry-{id} 跳转时滚动到对应条目卡片 */
+  useEffect(() => {
+    if (typeof window === "undefined" || !entries.length) return;
+    const raw = window.location.hash.replace(/^#/, "");
+    if (!raw.startsWith("entry-")) return;
+    const el = document.getElementById(raw);
+    if (el) {
+      requestAnimationFrame(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+  }, [entries]);
+
   useEffect(() => {
     const open = isKbEditOpen || isEntryModalOpen;
     if (!open) return;

@@ -341,14 +341,14 @@ export default function DataSourcesPage() {
         title="数据源管理"
         subtitle="统一维护连接配置：关系型（MySQL / MariaDB / PostgreSQL / Greenplum / SQL Server / SQLite）与分析型（ClickHouse / Doris / StarRocks / Trino / Hive）。"
         actions={
-          <div className="app-toolbar">
+          <div className="app-toolbar !flex-nowrap w-full min-w-0 md:w-auto">
             <input
-              className="app-input app-toolbar-input"
+              className="app-input app-toolbar-input min-w-0 max-w-full"
               placeholder="搜索名称/描述/地址"
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
             />
-            <button className="app-button app-toolbar-action" onClick={openCreateModal}>
+            <button type="button" className="app-button app-toolbar-action shrink-0" onClick={openCreateModal}>
               新增数据源
             </button>
           </div>
