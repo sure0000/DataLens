@@ -276,12 +276,16 @@ def _collect_knowledge_context_text(
             pinned_ids.append(eid)
 
     sections: list[str] = []
-    max_total = 16000
+    # 过小会导致「条目明明很长模型却只看到前几段」，过大则挤占 Schema/摘要；设为约 120k 字级更贴近常见 128k 上下文模型的可用余量。
+    max_total_chars = 120000
     pinned_set = set(pinned_ids)
 
     if pinned_ids:
         entries = list(db.execute(select(KnowledgeEntry).where(KnowledgeEntry.id.in_(pinned_ids))).scalars().all())
         entry_by_id = {e.id: e for e in entries}
+        reserve_for_semantics = min(52000, max(16000, max_total_chars // 3))
+        pin_budget = max(12000, max_total_chars - reserve_for_semantics - 900)
+        per_pin_cap = min(96000, max(6144, pin_budget // len(pinned_ids)))
         pin_lines = ["[表关联知识条目 — 固定全文]"]
         for eid in pinned_ids:
             e = entry_by_id.get(eid)
@@ -289,10 +293,16 @@ def _collect_knowledge_context_text(
                 continue
             kb = db.get(KnowledgeBase, e.knowledge_base_id)
             kb_name = kb.name if kb else "?"
-            body = (e.body or "").strip()
-            if len(body) > 6000:
-                body = body[:6000] + "\n…（正文已截断）"
-            pin_lines.append(f"## {e.title}（知识库：{kb_name}，entry_id={e.id}）\n{body}")
+            summary = ((e.summary or "").strip()).replace("\r\n", "\n")
+            body = ((e.body or "").strip()).replace("\r\n", "\n")
+            preamble = ""
+            if summary:
+                preamble = f"简述：{summary}\n\n"
+            room = max(512, per_pin_cap - len(preamble) - len(e.title))
+            plain_body = body
+            if len(plain_body) > room:
+                plain_body = plain_body[: max(256, room)] + "\n…（以上为模型上下文中的截断；知识库条目内仍可查看完整正文。）"
+            pin_lines.append(f"## {e.title}（知识库：{kb_name}，entry_id={e.id}）\n{preamble}{plain_body}")
         sections.append("\n".join(pin_lines))
 
     if kb_ids and question.strip():
@@ -306,16 +316,22 @@ def _collect_knowledge_context_text(
                 merged_hits.setdefault(eid, hit)
         for hit in list(merged_hits.values())[:20]:
             title = str(hit.get("title") or "")
+            summary_hit = str(hit.get("summary") or "").strip().replace("\r\n", "\n")
             snippet = str(hit.get("snippet") or "").strip().replace("\r\n", "\n")
-            if len(snippet) > 800:
-                snippet = snippet[:800] + "…"
-            sem_lines.append(f"- {title} (entry_id={hit['entry_id']})\n  {snippet}")
+            if len(snippet) > 1200:
+                snippet = snippet[:1200] + "…"
+            block = f"- {title} (entry_id={hit['entry_id']})"
+            if summary_hit:
+                sh = summary_hit if len(summary_hit) <= 480 else summary_hit[:480] + "…"
+                block += f"\n  简述：{sh}"
+            block += f"\n  {snippet}"
+            sem_lines.append(block)
         if len(sem_lines) > 1:
             sections.append("\n".join(sem_lines))
 
     text = "\n\n".join(sections).strip()
-    if len(text) > max_total:
-        return f"{text[:max_total]}\n…（知识上下文已截断）"
+    if len(text) > max_total_chars:
+        return f"{text[:max_total_chars]}\n…（知识上下文总长度超限，尾部已省略；可把关键内容拆为多条条目或收窄检索范围）"
     return text
 
 

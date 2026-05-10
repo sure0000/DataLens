@@ -4,12 +4,15 @@ import logging
 
 from config import get_settings
 from database import init_db
+from services.git_schedule import start_git_sync_scheduler, stop_git_sync_scheduler
 from routers.analyze import router as analyze_router
 from routers.business_domains import router as business_domains_router
 from routers.connect import router as connect_router
 from routers.copilot import router as copilot_router
 from routers.datasources import router as datasources_router
 from routers.knowledge_bases import router as knowledge_bases_router
+from routers.knowledge_git_sources import router as knowledge_git_sources_router
+from routers.diagnostics import router as diagnostics_router
 from routers.llm_settings import router as llm_settings_router
 from routers.tables import router as tables_router
 
@@ -32,6 +35,18 @@ def on_startup() -> None:
     except Exception as exc:  # noqa: BLE001
         # Allow service startup even when local DB is unavailable.
         logger.warning("Database init skipped: %s", exc)
+    try:
+        start_git_sync_scheduler()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Git 同步调度器未启动: %s", exc)
+
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+    try:
+        stop_git_sync_scheduler()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("停止 Git 同步调度器时出错: %s", exc)
 
 
 @app.get("/health")
@@ -46,4 +61,6 @@ app.include_router(copilot_router)
 app.include_router(datasources_router)
 app.include_router(business_domains_router)
 app.include_router(knowledge_bases_router)
+app.include_router(knowledge_git_sources_router)
+app.include_router(diagnostics_router)
 app.include_router(llm_settings_router)

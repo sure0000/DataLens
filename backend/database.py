@@ -36,3 +36,48 @@ def init_db() -> None:
         conn.execute(text("ALTER TABLE IF EXISTS tables ADD COLUMN IF NOT EXISTS datasource_id INT;"))
         conn.execute(text("ALTER TABLE IF EXISTS columns ADD COLUMN IF NOT EXISTS quality_metrics JSONB;"))
         conn.execute(text("ALTER TABLE IF EXISTS business_domain_selections ADD COLUMN IF NOT EXISTS table_name TEXT;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_entries ADD COLUMN IF NOT EXISTS source_meta JSONB;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_entries ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT '';"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_entries ADD COLUMN IF NOT EXISTS source_url TEXT;"))
+        conn.execute(
+            text(
+                "UPDATE knowledge_entries SET summary = trim(substring(regexp_replace(trim(body), '[\\n\\r\\t]+', ' ', 'g') from 1 for 420)) "
+                "WHERE trim(coalesce(summary, '')) = '' AND body IS NOT NULL AND trim(body) <> '';"
+            )
+        )
+        conn.execute(
+            text(
+                "UPDATE knowledge_entries SET source_url = trim((source_meta->>'ref')) "
+                "WHERE source_url IS NULL AND source_meta IS NOT NULL "
+                "AND trim(coalesce(source_meta->>'kind','')) IN ('web','notion','confluence','obsidian') "
+                "AND trim(coalesce(source_meta->>'ref','')) ~ '^https?://';"
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS knowledge_git_sources (
+                    id SERIAL PRIMARY KEY,
+                    knowledge_base_id INT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    provider TEXT NOT NULL,
+                    api_base TEXT,
+                    owner TEXT NOT NULL,
+                    repo TEXT NOT NULL,
+                    branch TEXT NOT NULL DEFAULT 'main',
+                    path_prefix TEXT NOT NULL DEFAULT '',
+                    token TEXT NOT NULL,
+                    include_globs TEXT NOT NULL DEFAULT '*.md,*.sql,*.py,*.ts,*.tsx,*.java,*.go,*.rs,*.yml,*.yaml,*.json',
+                    max_file_kb INT NOT NULL DEFAULT 512,
+                    max_files INT NOT NULL DEFAULT 200,
+                    cron_expression TEXT,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    last_sync_at TIMESTAMP,
+                    last_sync_status TEXT,
+                    last_error TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+                    updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+                );
+                """
+            )
+        )

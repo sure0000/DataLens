@@ -87,17 +87,18 @@ export default function KnowledgeBasesPage() {
         breadcrumbs={[{ label: "首页", href: "/" }, { label: "知识库" }]}
         title="知识库"
         subtitle="按主题维护 Markdown 条目，支持向量语义检索，便于协作者编辑与大模型/RAG 引用。"
+        actionsBelowSubtitle
         actions={
-          <div className="app-toolbar">
-            <button className="app-button app-toolbar-action" onClick={() => setIsCreateOpen(true)}>
-              新增知识库
-            </button>
+          <div className="app-toolbar !flex-nowrap w-full min-w-0 md:w-auto">
             <input
-              className="app-input app-toolbar-input"
-              placeholder="搜索名称/描述"
+              className="app-input app-toolbar-input min-w-0 w-full max-w-[13.5rem] sm:max-w-[15rem]"
+              placeholder="搜索知识库名称/描述"
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
             />
+            <button type="button" className="app-button app-toolbar-action shrink-0" onClick={() => setIsCreateOpen(true)}>
+              新增知识库
+            </button>
           </div>
         }
       />

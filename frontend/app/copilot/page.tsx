@@ -159,6 +159,20 @@ function CopilotPageContent() {
     };
   }, [updateEvent]);
 
+  /** 表详情「去 Copilot」常用 /copilot?table=…，未带 session 时会沿用上次打开的对话骨架。与侧栏「新聊天」对齐：聚焦未归类空槽并写入 session + project + table。 */
+  useLayoutEffect(() => {
+    if (!tableIdFromUrl) return;
+    const tid = Number(tableIdFromUrl);
+    if (!Number.isFinite(tid)) return;
+    if (sessionIdFromUrl) return;
+    const state = focusOrCreateUnassignedSession();
+    if (!state.activeSessionId) return;
+    syncState(state);
+    router.replace(
+      `/copilot?project=__unassigned__&session=${encodeURIComponent(state.activeSessionId)}&table=${encodeURIComponent(String(tid))}`
+    );
+  }, [tableIdFromUrl, sessionIdFromUrl, router]);
+
   useEffect(() => {
     api<{ domains: { id: number; name: string }[] }>("/api/business-domains")
       .then((r) => setBusinessDomains(r.domains || []))

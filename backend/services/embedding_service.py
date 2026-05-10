@@ -89,21 +89,76 @@ async def search_similar_async(
     return _search_similar_with_vector(db, qv, top_k, table_id, ref_type=ref_type)
 
 
-def _knowledge_embed_text(title: str, body: str) -> str:
-    raw = f"{title.strip()}\n\n{body.strip()}".strip()
-    return raw[:12000] if len(raw) > 12000 else raw
+# 单块不宜过大：嵌入模型上下文与召回粒度；重叠避免句段被硬生生切断。
+_EMBED_CHUNK_CHARS = 1700
+_EMBED_CHUNK_OVERLAP = 220
+_EMBED_BATCH = 36
 
 
-def replace_knowledge_entry_embedding(db: Session, entry_id: int, title: str, body: str) -> None:
+def _chunk_plain_body(body: str, max_chars: int, overlap: int) -> list[str]:
+    b = body.strip()
+    if not b:
+        return []
+    if len(b) <= max_chars:
+        return [b]
+    chunks: list[str] = []
+    stride = max(64, max_chars - overlap)
+    i = 0
+    while i < len(b):
+        end = min(i + max_chars, len(b))
+        piece = b[i:end].strip()
+        if piece:
+            chunks.append(piece)
+        if end >= len(b):
+            break
+        i += stride
+    return chunks
+
+
+def _knowledge_embed_chunks(title: str, body: str, summary: str | None = None) -> list[str]:
+    """
+    将单条条目拆成多块文本入库向量表；条目表 body 仍为完整正文，仅检索层分块。
+    每块都带标题/简述前缀，便于嵌入空间对齐与用户问题匹配。
+    """
+    t = (title or "").strip()
+    s = (summary or "").strip()
+    b_raw = body or ""
+
+    head_lines = [f"【知识条目】{t}" if t else "【知识条目】"]
+    if s:
+        head_lines.append(f"简述：{s}")
+    head = "\n".join(head_lines).strip()
+
+    body_chunks = _chunk_plain_body(b_raw, _EMBED_CHUNK_CHARS, _EMBED_CHUNK_OVERLAP)
+
+    # 正文为空时也至少索引标题+简述，语义检索仍可命中条目
+    if not body_chunks:
+        one = head
+        return [one] if one.strip() else []
+
+    merged: list[str] = []
+    n = len(body_chunks)
+    for i, bc in enumerate(body_chunks):
+        loc = ""
+        if n > 1:
+            loc = f"\n【正文分块 {i + 1}/{n}】\n"
+        merged.append(head + loc + bc)
+    return merged
+
+
+def replace_knowledge_entry_embedding(db: Session, entry_id: int, title: str, body: str, summary: str | None = None) -> None:
     db.execute(
         delete(Embedding).where(Embedding.ref_type == KNOWLEDGE_EMBEDDING_REF, Embedding.ref_id == entry_id)
     )
     db.flush()
-    content = _knowledge_embed_text(title, body)
-    if not content:
+    chunks = _knowledge_embed_chunks(title, body, summary)
+    if not chunks:
         return
-    vec = _embed([content])[0]
-    db.add(Embedding(ref_type=KNOWLEDGE_EMBEDDING_REF, ref_id=entry_id, content=content, embedding=vec))
+    for start in range(0, len(chunks), _EMBED_BATCH):
+        batch = chunks[start : start + _EMBED_BATCH]
+        vecs = _embed(batch)
+        for txt, vec in zip(batch, vecs):
+            db.add(Embedding(ref_type=KNOWLEDGE_EMBEDDING_REF, ref_id=entry_id, content=txt, embedding=vec))
 
 
 def delete_embeddings_for_knowledge_entries(db: Session, entry_ids: list[int]) -> None:
@@ -120,7 +175,10 @@ def delete_embeddings_for_knowledge_entries(db: Session, entry_ids: list[int]) -
 def search_knowledge_semantic(
     db: Session, knowledge_base_id: int, query: str, top_k: int = 8
 ) -> list[dict[str, Any]]:
+    """按向量相似的「块」检索，但返回时按条目去重，保留每个条目最先命中的那块（得分最高）。"""
     qv = _embed([query])[0]
+    # 同一条可有多个向量块；多取候选再按 entry 去冗，避免出现 top_k 全来自同一段话不同切片或重复条目占位。
+    probe = min(max(top_k * 40, top_k), 320)
     stmt = (
         select(Embedding, KnowledgeEntry)
         .join(KnowledgeEntry, KnowledgeEntry.id == Embedding.ref_id)
@@ -129,17 +187,24 @@ def search_knowledge_semantic(
             KnowledgeEntry.knowledge_base_id == knowledge_base_id,
         )
         .order_by(Embedding.embedding.cosine_distance(cast(qv, Vector(1536))))
-        .limit(top_k)
+        .limit(probe)
     )
     rows = db.execute(stmt).all()
     out: list[dict[str, Any]] = []
+    seen_ent: set[int] = set()
     for emb, entry in rows:
+        if entry.id in seen_ent:
+            continue
+        seen_ent.add(entry.id)
         out.append(
             {
                 "entry_id": entry.id,
                 "title": entry.title,
-                "snippet": (emb.content or "")[:500],
+                "summary": (entry.summary or "").strip(),
+                "snippet": (emb.content or "").strip().replace("\r\n", "\n")[:1200],
                 "score_hint": "cosine_distance_ordered",
             }
         )
+        if len(out) >= top_k:
+            break
     return out

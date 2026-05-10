@@ -32,11 +32,55 @@ const RISK_STYLE = {
   low: { dot: "bg-emerald-400", text: "text-emerald-600" },
 };
 
+/** 规范化物理库类型名，用于判断是否与 semantic_type 重复 */
+function squashPhysicalType(s: string): string {
+  return (s || "")
+    .toLowerCase()
+    .replace(/\(\s*\d+\s*(?:,\s*\d+\s*)?\)/g, "")
+    .replace(/\s+without\s+time\s+zone\b/gi, "")
+    .replace(/\s+with\s+time\s+zone\b/gi, "")
+    .replace(/\s+/g, " ")
+    .replace(/character varying/gi, "varchar")
+    .replace(/\binteger\b/gi, "int")
+    .replace(/\bint4\b/gi, "int")
+    .replace(/\bint8\b/gi, "bigint")
+    .replace(/\bint2\b/gi, "smallint")
+    .trim();
+}
+
+/** LLM 有时把物理类型误写入 type 字段，与左侧 data_type 标签重复（语义四类不算重复） */
+function isRedundantSemanticTypeLabel(semantic: string, dataType: string): boolean {
+  const semLower = (semantic || "").trim().toLowerCase();
+  if (new Set(["metric", "dimension", "time", "id"]).has(semLower)) return false;
+  const a = squashPhysicalType(semantic);
+  const b = squashPhysicalType(dataType);
+  return !!a && !!b && a === b;
+}
+
+/** 去掉描述开头对物理类型的重复表述（左侧已有 data_type 标签） */
+function trimDuplicateTypePreamble(desc: string, physicalType: string): string {
+  const d = (desc || "").trim();
+  const pt = (physicalType || "").trim();
+  if (!d || !pt) return desc;
+  const esc = pt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  let next = d
+    .replace(new RegExp(`^${esc}\\s*[，,。.；;：:]?\\s*`), "")
+    .replace(new RegExp(`^(数据)?类型[是为]?[:：]?\\s*${esc}\\s*[，,。.；;：]?\\s*`, "i"), "")
+    .replace(
+      new RegExp(`^(该字段|本字段|此字段)?(的)?(数据)?类型[是为]?[:：]?\\s*${esc}\\s*[，,。.；;：]?\\s*`, "i"),
+      ""
+    )
+    .trim();
+  return next || desc;
+}
+
 export default function ColumnCard({ col, isLast = false }: { col: Column; isLast?: boolean }) {
   const quality = col.quality_metrics || {};
   const riskLevel = quality.risk_level || "low";
   const risk = RISK_STYLE[riskLevel];
+  const showSemanticBadge = !!(col.semantic_type && !isRedundantSemanticTypeLabel(col.semantic_type, col.data_type));
   const typeStyle = SEMANTIC_TYPE_STYLE[col.semantic_type] ?? "bg-app-hover text-app-ink";
+  const displayDesc = trimDuplicateTypePreamble(col.semantic_desc || "", col.data_type || "");
   const ratio = (value?: number) => `${((value || 0) * 100).toFixed(1)}%`;
 
   const metrics: { label: string; value: string }[] = [
@@ -68,7 +112,7 @@ export default function ColumnCard({ col, isLast = false }: { col: Column; isLas
             <span className="rounded bg-app-hover px-1.5 py-0.5 font-mono text-[11px] text-app-secondary">
               {col.data_type}
             </span>
-            {col.semantic_type && (
+            {showSemanticBadge && (
               <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${typeStyle}`}>
                 {col.semantic_type}
               </span>
@@ -78,8 +122,8 @@ export default function ColumnCard({ col, isLast = false }: { col: Column; isLas
 
         {/* Right: description + metrics */}
         <div className="min-w-0 flex-1">
-          {col.semantic_desc ? (
-            <p className="break-words text-sm leading-6 text-app-ink">{col.semantic_desc}</p>
+          {displayDesc ? (
+            <p className="break-words text-sm leading-6 text-app-ink">{displayDesc}</p>
           ) : (
             <p className="text-sm text-app-muted">暂无语义描述</p>
           )}

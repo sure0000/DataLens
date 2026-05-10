@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Eye, EyeOff } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../../lib/api";
 import ConfirmDialog from "../../components/ConfirmDialog";
@@ -8,7 +9,6 @@ import EmptyState from "../../components/EmptyState";
 import ListPagination from "../../components/ListPagination";
 import LoadingSkeletonList from "../../components/LoadingSkeletonList";
 import PageHeader from "../../components/PageHeader";
-import Toast from "../../components/Toast";
 
 type DataSource = {
   id: number;
@@ -155,6 +155,7 @@ export default function DataSourcesPage() {
   } | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  const [showDatasourcePassword, setShowDatasourcePassword] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -293,6 +294,7 @@ export default function DataSourcesPage() {
       username: d.username,
       password: d.password
     });
+    setShowDatasourcePassword(Boolean((d.password || "").trim()));
     setTestResult("");
     setModalStep("form");
     setIsModalOpen(true);
@@ -301,6 +303,7 @@ export default function DataSourcesPage() {
   function openCreateModal() {
     setEditingId(null);
     setForm({ ...emptyForm });
+    setShowDatasourcePassword(false);
     setTestResult("");
     setModalStep("type");
     setIsModalOpen(true);
@@ -308,12 +311,14 @@ export default function DataSourcesPage() {
 
   function chooseType(sourceType: string) {
     setForm(getDefaultFormByType(sourceType));
+    setShowDatasourcePassword(false);
     setModalStep("form");
   }
 
   function resetAndCloseModal() {
     setForm({ ...emptyForm });
     setEditingId(null);
+    setShowDatasourcePassword(false);
     setTestResult("");
     setModalStep("type");
     setIsModalOpen(false);
@@ -340,10 +345,11 @@ export default function DataSourcesPage() {
         breadcrumbs={[{ label: "首页", href: "/" }, { label: "数据源" }]}
         title="数据源管理"
         subtitle="统一维护连接配置：关系型（MySQL / MariaDB / PostgreSQL / Greenplum / SQL Server / SQLite）与分析型（ClickHouse / Doris / StarRocks / Trino / Hive）。"
+        actionsBelowSubtitle
         actions={
           <div className="app-toolbar !flex-nowrap w-full min-w-0 md:w-auto">
             <input
-              className="app-input app-toolbar-input min-w-0 max-w-full"
+              className="app-input app-toolbar-input min-w-0 w-full max-w-[13.5rem] sm:max-w-[15rem]"
               placeholder="搜索名称/描述/地址"
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
@@ -355,7 +361,22 @@ export default function DataSourcesPage() {
         }
       />
 
-      <Toast message={testResult} tone={testResult.startsWith("连接失败") ? "error" : "info"} onClose={() => setTestResult("")} />
+      {!!testResult && !isModalOpen && (
+        <div
+          className={`app-surface-panel mt-6 flex max-w-full items-start gap-3 rounded-xl border px-4 py-3 text-sm backdrop-blur ${
+            testResult.startsWith("连接失败")
+              ? "border-rose-300/60 bg-rose-50 text-rose-700"
+              : "border-sky-300/60 bg-sky-50 text-sky-700"
+          }`}
+          role="status"
+          aria-live="polite"
+        >
+          <p className="min-w-0 flex-1 break-words">{testResult}</p>
+          <button type="button" className="app-control-button shrink-0" onClick={() => setTestResult("")} aria-label="关闭连接测试结果">
+            关闭
+          </button>
+        </div>
+      )}
 
       <div className="mt-6 space-y-3">
         {loading && <LoadingSkeletonList count={3} />}
@@ -557,13 +578,28 @@ export default function DataSourcesPage() {
                 </label>
                 <label className="app-form-label sm:col-span-2">
                   <span>Password</span>
-                  <input
-                    className="app-input"
-                    placeholder="输入连接密码"
-                    type="password"
-                    value={form.password}
-                    onChange={(e) => setForm({ ...form, password: e.target.value })}
-                  />
+                  <div className="relative">
+                    <input
+                      className="app-input w-full pr-11 font-mono text-sm"
+                      placeholder="输入连接密码"
+                      type={showDatasourcePassword ? "text" : "password"}
+                      autoComplete="off"
+                      value={form.password}
+                      onChange={(e) => setForm({ ...form, password: e.target.value })}
+                    />
+                    <button
+                      type="button"
+                      className="app-control-button absolute right-1.5 top-1/2 h-9 w-9 min-h-0 shrink-0 -translate-y-1/2 rounded-lg border border-transparent p-0 text-app-muted hover:text-app-secondary"
+                      aria-label={showDatasourcePassword ? "隐藏密码" : "显示密码"}
+                      aria-pressed={showDatasourcePassword}
+                      onClick={() => setShowDatasourcePassword((v) => !v)}
+                    >
+                      {showDatasourcePassword ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
+                    </button>
+                  </div>
+                  {editingId ? (
+                    <span className="app-text-muted text-xs">已从服务端回填，可点击眼睛图标切换显示。</span>
+                  ) : null}
                 </label>
                 <button className="app-button sm:col-span-2" onClick={testCurrent}>
                   测试当前连接

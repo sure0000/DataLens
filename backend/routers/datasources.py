@@ -78,6 +78,7 @@ def _datasource_to_dict(r: DataSource) -> dict:
         "port": r.port,
         "database": r.database,
         "username": r.username,
+        "password": r.password,
     }
 
 

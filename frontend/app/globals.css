@@ -503,6 +503,18 @@ canvas {
   }
 }
 
+/* Toolbar 跟在副标题下方时占满整行（覆盖 .app-toolbar 在 md 下的 width:auto） */
+.app-page-header-toolbar-row .app-toolbar {
+  width: 100%;
+  max-width: 100%;
+}
+
+@media (min-width: 768px) {
+  .app-page-header-toolbar-row .app-toolbar {
+    justify-content: flex-start;
+  }
+}
+
 .app-toolbar {
   display: flex;
   flex-wrap: wrap;

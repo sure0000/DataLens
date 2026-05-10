@@ -140,15 +140,51 @@ class KnowledgeBase(Base):
 
 
 class KnowledgeEntry(Base):
-    """单条可检索知识：标题 + Markdown 正文，供人工维护与向量检索（RAG）。"""
+    """单条可检索知识：标题 + 简述（列表）；正文详见 body，Copilot/RAG 使用全文。"""
 
     __tablename__ = "knowledge_entries"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
+    summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
     body: Mapped[str] = mapped_column(Text, nullable=False, default="")
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 来源：手动 | 链接 | 文件 | notion/confluence/obsidian 等
+    source_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class KnowledgeGitSource(Base):
+    """知识库绑定的 GitHub / GitLab 仓库：用于定期或手动同步源码/文档为知识条目。"""
+
+    __tablename__ = "knowledge_git_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    provider: Mapped[str] = mapped_column(Text, nullable=False)  # github | gitlab
+    api_base: Mapped[str | None] = mapped_column(Text, nullable=True)
+    owner: Mapped[str] = mapped_column(Text, nullable=False)
+    repo: Mapped[str] = mapped_column(Text, nullable=False)
+    # 空字符串表示每次同步使用远端 default_branch（不固定分支名）
+    branch: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    path_prefix: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    token: Mapped[str] = mapped_column(Text, nullable=False)
+    include_globs: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        default="*.md,*.sql,*.py,*.ts,*.tsx,*.java,*.go,*.rs,*.yml,*.yaml,*.json",
+    )
+    max_file_kb: Mapped[int] = mapped_column(Integer, default=512)
+    max_files: Mapped[int] = mapped_column(Integer, default=200)
+    cron_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_sync_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

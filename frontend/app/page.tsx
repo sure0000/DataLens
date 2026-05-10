@@ -87,17 +87,18 @@ export default function Home() {
         breadcrumbs={[{ label: "首页" }, { label: "业务域" }]}
         title="业务域"
         subtitle="在这里维护业务域定义，并关联数据表范围与业务描述。"
+        actionsBelowSubtitle
         actions={
-          <div className="app-toolbar">
-            <button className="app-button app-toolbar-action" onClick={() => setIsCreateOpen(true)}>
-              新增业务域
-            </button>
+          <div className="app-toolbar !flex-nowrap w-full min-w-0 md:w-auto">
             <input
-              className="app-input app-toolbar-input"
+              className="app-input app-toolbar-input min-w-0 w-full max-w-[13.5rem] sm:max-w-[15rem]"
               placeholder="搜索业务域名称/描述"
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
             />
+            <button type="button" className="app-button app-toolbar-action shrink-0" onClick={() => setIsCreateOpen(true)}>
+              新增业务域
+            </button>
           </div>
         }
       />

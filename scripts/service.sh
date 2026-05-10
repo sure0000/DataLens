@@ -31,6 +31,19 @@ log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
 }
 
+# 优先使用项目虚拟环境里的 Python（与 README / 日常开发一致）
+PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+if [[ ! -x "$PYTHON_BIN" ]]; then
+  PYTHON_BIN="$(command -v python3 || true)"
+fi
+if [[ -z "$PYTHON_BIN" ]]; then
+  log "错误: 未找到可执行的 Python（请先: python3 -m venv .venv && .venv/bin/pip install -r backend/requirements.txt）"
+  exit 1
+fi
+if [[ "$PYTHON_BIN" != "$ROOT_DIR/.venv/bin/python" ]]; then
+  log "警告: 未使用 .venv，当前 Python 为: ${PYTHON_BIN} (若缺依赖请先创建虚拟环境并 pip install -r backend/requirements.txt)"
+fi
+
 is_pid_running() {
   local pid="$1"
   if [[ -z "$pid" ]]; then
@@ -59,7 +72,8 @@ remove_pid_file_if_stale() {
 
 port_pids() {
   local port="$1"
-  lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true
+  # 每行一个 PID，去重（reload 时父/子进程可能同时出现在 LISTEN）
+  lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | tr ' ' '\n' | awk 'NF' | sort -u || true
 }
 
 stop_pid() {
@@ -94,13 +108,19 @@ start_backend() {
     done <<<"$occupied"
   fi
 
-  log "启动后端服务: http://localhost:$BACKEND_PORT"
+  log "启动后端服务: http://localhost:${BACKEND_PORT} (Python: ${PYTHON_BIN})"
   (
     cd "$BACKEND_DIR"
-    nohup python3 -m uvicorn main:app --reload --host 0.0.0.0 --port "$BACKEND_PORT" >>"$BACKEND_LOG_FILE" 2>&1 &
+    nohup "$PYTHON_BIN" -m uvicorn main:app --reload --host 0.0.0.0 --port "$BACKEND_PORT" >>"$BACKEND_LOG_FILE" 2>&1 &
     echo $! >"$BACKEND_PID_FILE"
   )
-  sleep 1
+  sleep 2
+  # nohup 的 $! 多为 uvicorn 父进程；以端口上实际 LISTEN 的 PID 为准，便于 stop/restart 杀干净
+  local listen_pid
+  listen_pid="$(port_pids "$BACKEND_PORT" | head -n1 || true)"
+  if [[ -n "$listen_pid" ]]; then
+    echo "$listen_pid" >"$BACKEND_PID_FILE"
+  fi
   pid="$(read_pid_file "$BACKEND_PID_FILE" || true)"
   if [[ -n "${pid:-}" ]] && is_pid_running "$pid"; then
     log "后端启动成功 (pid=$pid, log=$BACKEND_LOG_FILE)"
@@ -131,10 +151,16 @@ start_frontend() {
   log "启动前端服务: http://localhost:$FRONTEND_PORT"
   (
     cd "$FRONTEND_DIR"
-    nohup npx next dev -p "$FRONTEND_PORT" >>"$FRONTEND_LOG_FILE" 2>&1 &
+    # 直接启动 next，避免 nohup 记录到 npx 壳进程 PID（stop 时杀不掉仍在监听的 node）
+    nohup npx --yes next dev -H 0.0.0.0 -p "$FRONTEND_PORT" >>"$FRONTEND_LOG_FILE" 2>&1 &
     echo $! >"$FRONTEND_PID_FILE"
   )
-  sleep 1
+  sleep 3
+  local listen_pid
+  listen_pid="$(port_pids "$FRONTEND_PORT" | head -n1 || true)"
+  if [[ -n "$listen_pid" ]]; then
+    echo "$listen_pid" >"$FRONTEND_PID_FILE"
+  fi
   pid="$(read_pid_file "$FRONTEND_PID_FILE" || true)"
   if [[ -n "${pid:-}" ]] && is_pid_running "$pid"; then
     log "前端启动成功 (pid=$pid, log=$FRONTEND_LOG_FILE)"
