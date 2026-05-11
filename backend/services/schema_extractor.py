@@ -106,6 +106,16 @@ def sqlite_conn(conn_info: dict[str, Any]) -> Iterable[sqlite3.Connection]:
 
 
 @contextmanager
+def _sqlite_cursor(conn: sqlite3.Connection) -> Iterable[sqlite3.Cursor]:
+    """sqlite3.Cursor 在部分 Python 版本下不支持用作 context manager，统一用 try/finally 关闭。"""
+    cur = conn.cursor()
+    try:
+        yield cur
+    finally:
+        cur.close()
+
+
+@contextmanager
 def hive_conn(conn_info: dict[str, Any]) -> Iterable[Any]:
     from pyhive import hive
 
@@ -293,7 +303,7 @@ def get_tables_meta_for_database(conn_info: dict[str, Any], database_name: str) 
             return [{"name": row["TABLE_NAME"], "comment": (row["comment"] or "").strip()} for row in cursor.fetchall()]
 
     if st == "sqlite":
-        with sqlite_conn(conn_info) as conn, conn.cursor() as cursor:
+        with sqlite_conn(conn_info) as conn, _sqlite_cursor(conn) as cursor:
             cursor.execute(
                 """
                 SELECT name FROM sqlite_master
@@ -439,7 +449,7 @@ def get_ddl(conn_info: dict[str, Any], table_name: str) -> str:
             return f"CREATE TABLE [{safe_tbl}] (\n  " + ",\n  ".join(parts) + "\n);"
 
     if st == "sqlite":
-        with sqlite_conn(conn_info) as conn, conn.cursor() as cursor:
+        with sqlite_conn(conn_info) as conn, _sqlite_cursor(conn) as cursor:
             cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table_name,))
             row = cursor.fetchone()
             return row["sql"] or "" if row else ""
@@ -478,9 +488,10 @@ def get_columns(conn_info: dict[str, Any], table_name: str) -> list[dict[str, An
         with mysql_conn(conn_info) as conn, conn.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT COLUMN_NAME, DATA_TYPE, COLUMN_COMMENT
+                SELECT COLUMN_NAME, DATA_TYPE, COLUMN_TYPE, COLUMN_COMMENT
                 FROM information_schema.COLUMNS
                 WHERE TABLE_SCHEMA=%s AND TABLE_NAME=%s
+                ORDER BY ORDINAL_POSITION
                 """,
                 (conn_info["database"], table_name),
             )
@@ -488,6 +499,7 @@ def get_columns(conn_info: dict[str, Any], table_name: str) -> list[dict[str, An
                 {
                     "column_name": row["COLUMN_NAME"],
                     "data_type": row["DATA_TYPE"],
+                    "column_type": row.get("COLUMN_TYPE") or "",
                     "comment": row["COLUMN_COMMENT"] or "",
                 }
                 for row in cursor.fetchall()
@@ -533,7 +545,7 @@ def get_columns(conn_info: dict[str, Any], table_name: str) -> list[dict[str, An
 
     if st == "sqlite":
         _validate_identifier(table_name)
-        with sqlite_conn(conn_info) as conn, conn.cursor() as cursor:
+        with sqlite_conn(conn_info) as conn, _sqlite_cursor(conn) as cursor:
             cursor.execute("SELECT name, type FROM pragma_table_info(?)", (table_name,))
             return [{"column_name": row["name"], "data_type": row["type"] or "", "comment": ""} for row in cursor.fetchall()]
 
@@ -600,7 +612,7 @@ def get_sample(conn_info: dict[str, Any], table_name: str, limit: int = 1000) ->
 
     if st == "sqlite":
         _validate_identifier(table_name)
-        with sqlite_conn(conn_info) as conn, conn.cursor() as cursor:
+        with sqlite_conn(conn_info) as conn, _sqlite_cursor(conn) as cursor:
             cursor.execute(f'SELECT * FROM "{table_name}" LIMIT ?', (limit,))
             return [{k: row[k] for k in row.keys()} for row in cursor.fetchall()]
 
@@ -657,7 +669,7 @@ def get_row_count(conn_info: dict[str, Any], table_name: str) -> int:
             return int(cursor.fetchone()["c"])
 
     if st == "sqlite":
-        with sqlite_conn(conn_info) as conn, conn.cursor() as cursor:
+        with sqlite_conn(conn_info) as conn, _sqlite_cursor(conn) as cursor:
             cursor.execute(f'SELECT COUNT(*) AS c FROM "{table_name.replace(chr(34), chr(34)+chr(34))}"')
             return int(cursor.fetchone()["c"])
 
@@ -732,7 +744,7 @@ def execute_readonly_sql(conn_info: dict[str, Any], sql: str, limit: int = 200) 
             return {"ok": True, "columns": columns, "rows": [dict(r) for r in rows]}
 
     if st == "sqlite":
-        with sqlite_conn(conn_info) as conn, conn.cursor() as cursor:
+        with sqlite_conn(conn_info) as conn, _sqlite_cursor(conn) as cursor:
             if can_wrap:
                 cursor.execute(f"SELECT * FROM ({sql_clean}) LIMIT {limit}")
             else:

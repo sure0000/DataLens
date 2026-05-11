@@ -420,10 +420,10 @@ function CopilotPageContent() {
   const activeSession = useMemo(() => sessions.find((s) => s.id === activeSessionId) || null, [sessions, activeSessionId]);
   const selectedBusinessDomainTitle = useMemo(() => {
     if (!activeSession?.business_domain_id) {
-      return "关联业务域后可拉取该域下配置的知识库语义检索。";
+      return "选择业务域后：将该域挂载的全部数据表元数据纳入问数上下文，并启用域内知识库语义检索。";
     }
     const d = businessDomains.find((x) => x.id === activeSession.business_domain_id);
-    return (d?.name || "").trim() || "关联业务域后可拉取该域下配置的知识库语义检索。";
+    return (d?.name || "").trim() || "选择业务域后：将该域挂载的全部数据表元数据纳入问数上下文，并启用域内知识库语义检索。";
   }, [activeSession, businessDomains]);
 
   const businessDomainDisplayFull = useMemo(() => {

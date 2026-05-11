@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api } from "../../../lib/api";
+import { api, ApiError, formatApiError } from "../../../lib/api";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 import EmptyState from "../../../components/EmptyState";
 import ListPagination from "../../../components/ListPagination";
@@ -37,7 +37,9 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
   const [detail, setDetail] = useState<DomainDetail | null>(null);
   const [options, setOptions] = useState<OptionSource[]>([]);
   const [message, setMessage] = useState("");
+  const [messageTone, setMessageTone] = useState<"success" | "error">("success");
   const [loading, setLoading] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [isDescModalOpen, setIsDescModalOpen] = useState(false);
   const [descDraft, setDescDraft] = useState("");
@@ -68,18 +70,32 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
 
   async function loadDetail() {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await api<DomainDetail>(`/api/business-domains/${params.id}`);
       setDetail(res);
       setSelectedKbIds((res.knowledge_bases || []).map((k) => k.id));
+    } catch (e: unknown) {
+      setDetail(null);
+      setLoadError(
+        e instanceof ApiError
+          ? formatApiError(e)
+          : e instanceof Error
+            ? e.message
+            : "加载业务域失败：请确认后端已启动且接口可访问。"
+      );
     } finally {
       setLoading(false);
     }
   }
 
   async function loadOptions() {
-    const res = await api<{ datasources: OptionSource[] }>("/api/business-domains/options");
-    setOptions(res.datasources);
+    try {
+      const res = await api<{ datasources: OptionSource[] }>("/api/business-domains/options");
+      setOptions(res.datasources);
+    } catch {
+      setOptions([]);
+    }
   }
 
   useEffect(() => {
@@ -132,6 +148,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
           method: "PUT",
           body: JSON.stringify({ content })
         });
+        setMessageTone("success");
         setMessage("描述已更新");
         setIsDescModalOpen(false);
         setDescDraft("");
@@ -191,6 +208,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
           method: "POST",
           body: JSON.stringify(Array.from(selectionsMap.values()))
         });
+        setMessageTone("success");
         setMessage("数据表已批量添加");
         setIsBatchModalOpen(false);
         clearBatchSelections();
@@ -362,8 +380,12 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
         method: "PUT",
         body: JSON.stringify({ knowledge_base_ids: selectedKbIds })
       });
+      setMessageTone("success");
       setMessage("已保存关联知识库");
       loadDetail();
+    } catch (e: unknown) {
+      setMessageTone("error");
+      setMessage(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "保存失败");
     } finally {
       setSavingKb(false);
     }
@@ -388,12 +410,37 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
     try {
       await confirmState.action();
       setConfirmState(null);
+    } catch (e: unknown) {
+      setMessageTone("error");
+      setMessage(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "操作失败");
     } finally {
       setConfirmLoading(false);
     }
   }
 
-  if (!detail) return <main className="app-page text-app-secondary">正在加载业务域详情...</main>;
+  if (!detail) {
+    if (loading) {
+      return <main className="app-page text-app-secondary">正在加载业务域详情...</main>;
+    }
+    if (loadError) {
+      return (
+        <main className="app-page space-y-4">
+          <PageHeader breadcrumbs={[{ label: "首页", href: "/" }, { label: "业务域", href: "/" }]} title="加载失败" />
+          <div className="app-card border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+            <p className="font-medium">无法加载该业务域</p>
+            <p className="mt-2 break-words">{loadError}</p>
+            <button type="button" className="app-button-secondary mt-4" onClick={() => void loadDetail()}>
+              重试
+            </button>
+            <Link className="app-link ml-3 text-sm" href="/">
+              返回首页
+            </Link>
+          </div>
+        </main>
+      );
+    }
+    return <main className="app-page text-app-secondary">正在加载业务域详情...</main>;
+  }
 
   return (
     <main className="app-page">
@@ -413,7 +460,15 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
         }
       />
 
-      <Toast message={message} tone="success" onClose={() => setMessage("")} />
+      <Toast
+        message={message}
+        tone={messageTone}
+        duration={messageTone === "error" ? 8000 : 4000}
+        onClose={() => {
+          setMessage("");
+          setMessageTone("success");
+        }}
+      />
       {loading && <LoadingSkeletonList count={2} />}
 
       <section className="app-card mt-4 p-4">

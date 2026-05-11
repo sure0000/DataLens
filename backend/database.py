@@ -6,12 +6,15 @@ from sqlalchemy.orm import Session, declarative_base, sessionmaker
 from config import get_settings
 
 settings = get_settings()
+# 避免本机未启动 Postgres 时 init_db 长时间挂死，导致 uvicorn 一直停在 application startup
+_pg_connect_args: dict = {"connect_timeout": 12}
 engine = create_engine(
     settings.database_url,
     pool_pre_ping=True,
     pool_size=settings.db_pool_size,
     max_overflow=settings.db_max_overflow,
     pool_recycle=settings.db_pool_recycle,
+    connect_args=_pg_connect_args,
 )
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 Base = declarative_base()

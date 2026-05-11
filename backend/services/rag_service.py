@@ -6,9 +6,11 @@ import asyncio
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from config import get_settings
 from models import (
     BusinessDomain,
     BusinessDomainKnowledgeBase,
+    BusinessDomainSelection,
     ColumnMeta,
     DataSource,
     KnowledgeBase,
@@ -154,17 +156,135 @@ def _latest_table_summaries(db: Session) -> dict[int, TableSummary]:
     return {row.table_id: row for row in rows}
 
 
-def _build_priority_context(db: Session, table_id: int | None) -> tuple[str, str, str, int | None]:
-    latest_summaries = _latest_table_summaries(db)
-    preferred_table = db.get(TableMeta, table_id) if table_id else None
-    preferred_datasource_id = preferred_table.datasource_id if preferred_table else None
+def _tables_from_business_domain(db: Session, domain_id: int) -> list[TableMeta]:
+    """
+    根据业务域挂载（BusinessDomainSelection）解析全部已登记 TableMeta。
+    - table_name 为空：表示整库纳入，返回该数据源+库下所有已分析入库的表。
+    - table_name 非空：仅匹配该物理表（大小写不敏感回退）。
+    """
+    selections = db.execute(
+        select(BusinessDomainSelection).where(BusinessDomainSelection.domain_id == domain_id)
+    ).scalars().all()
+    by_id: dict[int, TableMeta] = {}
+    for sel in selections:
+        ds_id = sel.datasource_id
+        db_name = (sel.database_name or "").strip()
+        if not db_name:
+            continue
+        raw_tn = sel.table_name
+        tn = (raw_tn or "").strip() if raw_tn is not None else ""
+        if not tn:
+            rows = db.execute(
+                select(TableMeta).where(TableMeta.datasource_id == ds_id, TableMeta.database_name == db_name)
+            ).scalars().all()
+            if not rows:
+                rows = db.execute(
+                    select(TableMeta).where(
+                        TableMeta.datasource_id == ds_id,
+                        func.lower(TableMeta.database_name) == db_name.lower(),
+                    )
+                ).scalars().all()
+        else:
+            rows = db.execute(
+                select(TableMeta).where(
+                    TableMeta.datasource_id == ds_id,
+                    TableMeta.database_name == db_name,
+                    TableMeta.table_name == tn,
+                )
+            ).scalars().all()
+            if not rows:
+                rows = db.execute(
+                    select(TableMeta).where(
+                        TableMeta.datasource_id == ds_id,
+                        func.lower(TableMeta.database_name) == db_name.lower(),
+                        func.lower(TableMeta.table_name) == tn.lower(),
+                    )
+                ).scalars().all()
+        for t in rows:
+            by_id[t.id] = t
+    return sorted(by_id.values(), key=lambda t: (t.datasource_id or 0, (t.database_name or ""), (t.table_name or "")))
 
+
+def _kb_ids_for_business_domain(db: Session, business_domain_id: int) -> list[int]:
+    rows = db.execute(
+        select(BusinessDomainKnowledgeBase.knowledge_base_id).where(
+            BusinessDomainKnowledgeBase.domain_id == business_domain_id
+        )
+    ).scalars().all()
+    out: list[int] = []
+    seen: set[int] = set()
+    for kid in rows:
+        i = int(kid)
+        if i not in seen:
+            seen.add(i)
+            out.append(i)
+    return out
+
+
+def _candidate_table_ids_from_domain_knowledge(
+    db: Session,
+    question: str,
+    business_domain_id: int,
+    domain_tables: list[TableMeta],
+    *,
+    top_k_per_kb: int = 8,
+) -> list[int]:
+    """
+    先按业务域关联知识库做语义检索，再结合「条目↔表」关联与正文表名提及，得到候选 table_id（有序去重）。
+    仅返回仍属于 domain_tables 范围内的 id。
+    """
+    allowed = {t.id for t in domain_tables}
+    if not allowed or not (question or "").strip():
+        return []
+
+    kb_ids = _kb_ids_for_business_domain(db, business_domain_id)
+    if not kb_ids:
+        return []
+
+    merged_hits: dict[int, dict[str, Any]] = {}
+    for kb_id in kb_ids:
+        for hit in search_knowledge_semantic(db, kb_id, question.strip(), top_k=top_k_per_kb):
+            eid = int(hit["entry_id"])
+            merged_hits.setdefault(eid, hit)
+
+    candidate: list[int] = []
+    seen_tid: set[int] = set()
+
+    for eid in merged_hits:
+        for tid in db.execute(
+            select(TableKnowledgeEntry.table_id).where(TableKnowledgeEntry.knowledge_entry_id == eid)
+        ).scalars().all():
+            tid = int(tid)
+            if tid in allowed and tid not in seen_tid:
+                seen_tid.add(tid)
+                candidate.append(tid)
+
+    for hit in merged_hits.values():
+        blob = f"{hit.get('title') or ''} {hit.get('summary') or ''} {hit.get('snippet') or ''}"
+        for t in domain_tables:
+            if t.id in seen_tid:
+                continue
+            tn = (t.table_name or "").strip()
+            if not tn:
+                continue
+            fq = f"{t.database_name}.{t.table_name}"
+            if fq in blob or tn in blob:
+                if t.id in allowed:
+                    seen_tid.add(t.id)
+                    candidate.append(t.id)
+
+    return candidate
+
+
+def _all_tables_for_copilot_fallback(
+    db: Session, preferred_datasource_id: int | None, max_tables: int
+) -> list[TableMeta]:
+    """未指定业务域时：按登记时间优先列出已分析表，数量受配置上限约束。"""
     table_rows = db.execute(select(TableMeta).order_by(TableMeta.created_at.desc())).scalars().all()
     if preferred_datasource_id is not None:
         table_rows = [t for t in table_rows if t.datasource_id == preferred_datasource_id] + [
             t for t in table_rows if t.datasource_id != preferred_datasource_id
         ]
-
     seen_tables: set[tuple[int | None, str, str]] = set()
     selected_tables: list[TableMeta] = []
     for t in table_rows:
@@ -173,8 +293,86 @@ def _build_priority_context(db: Session, table_id: int | None) -> tuple[str, str
             continue
         seen_tables.add(key)
         selected_tables.append(t)
-        if len(selected_tables) >= 10:
+        if len(selected_tables) >= max_tables:
             break
+    return selected_tables
+
+
+def _build_priority_context(
+    db: Session,
+    table_id: int | None,
+    business_domain_id: int | None = None,
+    question: str | None = None,
+) -> tuple[str, str, str, int | None, str]:
+    settings = get_settings()
+    max_unscoped = settings.copilot_max_tables_without_domain
+
+    latest_summaries = _latest_table_summaries(db)
+    preferred_table = db.get(TableMeta, table_id) if table_id else None
+    preferred_datasource_id = preferred_table.datasource_id if preferred_table else None
+
+    domain_header = ""
+    table_scope_note = ""
+    selected_tables: list[TableMeta] = []
+
+    if table_id and preferred_table:
+        selected_tables = [preferred_table]
+        table_scope_note = (
+            f"表定位：会话锁定单表 table_id={preferred_table.id}（{preferred_table.database_name}.{preferred_table.table_name}）。"
+        )
+
+    if not selected_tables and business_domain_id:
+        domain_rows = _tables_from_business_domain(db, business_domain_id)
+        dom = db.get(BusinessDomain, business_domain_id)
+        dom_label = (dom.name.strip() if dom and (dom.name or "").strip() else f"id={business_domain_id}")
+        if domain_rows:
+            q = (question or "").strip()
+            cand_ids = (
+                _candidate_table_ids_from_domain_knowledge(db, q, business_domain_id, domain_rows) if q else []
+            )
+            allowed_ids = {t.id for t in domain_rows}
+            narrowed_metas: list[TableMeta] = []
+            for tid in cand_ids:
+                if tid not in allowed_ids:
+                    continue
+                tm = db.get(TableMeta, tid)
+                if tm is not None:
+                    narrowed_metas.append(tm)
+            if narrowed_metas:
+                selected_tables = narrowed_metas
+                preview = "、".join(f"{t.database_name}.{t.table_name}" for t in narrowed_metas[:10])
+                if len(narrowed_metas) > 10:
+                    preview += "…"
+                domain_header = (
+                    f"[业务域候选表 — 知识检索筛选] 会话绑定业务域「{dom_label}」（domain_id={business_domain_id}）。"
+                    "已在业务域关联知识库中按用户问题做语义检索，并结合条目与表的显式关联及知识正文中的表名提及，"
+                    f"得到下列 {len(narrowed_metas)} 张候选表的元数据与列语义；请先结合上方业务域知识理解业务，再于候选集合中确认最终使用的表并生成只读 SQL。\n\n"
+                )
+                table_scope_note = f"表定位（业务域）：知识检索筛得 {len(narrowed_metas)} 张候选表：{preview}。"
+            else:
+                selected_tables = domain_rows
+                domain_header = (
+                    f"[业务域候选表 — 知识检索未筛中] 会话绑定业务域「{dom_label}」（domain_id={business_domain_id}）。"
+                    "业务域知识检索未从条目关联或正文中锚定到具体表，已加载本域挂载的全部"
+                    f" {len(domain_rows)} 张已登记表元数据；请结合业务域知识后再确认表与 SQL。\n\n"
+                )
+                table_scope_note = (
+                    f"表定位（业务域）：知识条目未锚定到单表，已加载域内全部 {len(domain_rows)} 张挂载表元数据。"
+                )
+        else:
+            selected_tables = _all_tables_for_copilot_fallback(db, preferred_datasource_id, max_unscoped)
+            domain_header = (
+                f"[提示] 业务域「{dom_label}」（domain_id={business_domain_id}）下暂无已解析的挂载表，或域不存在；"
+                f"已退化为全局最近登记的数据表（至多 {max_unscoped} 张）。\n\n"
+            )
+
+    if not selected_tables:
+        selected_tables = _all_tables_for_copilot_fallback(db, preferred_datasource_id, max_unscoped)
+        if not business_domain_id and len(selected_tables) >= max_unscoped:
+            domain_header = (
+                f"[提示] 未指定业务域；全局已登记表较多，当前上下文仅含最近 {max_unscoped} 张表。"
+                "建议在 Copilot 中选择业务域以加载该域内全部挂载表。\n\n"
+            )
 
     datasource_ids = [t.datasource_id for t in selected_tables if t.datasource_id is not None]
     datasource_ids_unique = list(dict.fromkeys(datasource_ids))
@@ -183,8 +381,6 @@ def _build_priority_context(db: Session, table_id: int | None) -> tuple[str, str
         if datasource_ids_unique
         else []
     )
-    ds_map = {d.id: d for d in datasources}
-
     context_lines = ["[优先上下文-数据源采集信息]"]
     if preferred_table:
         context_lines.append(
@@ -221,11 +417,21 @@ def _build_priority_context(db: Session, table_id: int | None) -> tuple[str, str
     )
     schema_lines = []
     for c in cols:
+        qm = c.quality_metrics if isinstance(c.quality_metrics, dict) else {}
+        em = qm.get("enum") if isinstance(qm, dict) else None
+        enum_tail = ""
+        if isinstance(em, dict):
+            vals = em.get("values")
+            if isinstance(vals, list) and vals:
+                joined = ",".join(str(v) for v in vals[:32])
+                if len(vals) > 32:
+                    joined += ",…"
+                enum_tail = f" | enum_values={joined}"
         schema_lines.append(
-            f"{c.table_id}.{c.column_name} | {c.data_type or ''} | semantic={c.semantic_type or ''} | desc={c.semantic_desc or ''}"
+            f"{c.table_id}.{c.column_name} | {c.data_type or ''} | semantic={c.semantic_type or ''} | desc={c.semantic_desc or ''}{enum_tail}"
         )
 
-    context_text = "\n".join(context_lines)
+    context_text = domain_header + "\n".join(context_lines)
     analysis_text = "\n".join(analysis_lines)
     schema_text = "\n".join(schema_lines)
     summary_text = "；".join(merged_summary_parts[:6])
@@ -235,7 +441,7 @@ def _build_priority_context(db: Session, table_id: int | None) -> tuple[str, str
         resolved_table_id = preferred_table.id
     if resolved_table_id is None and selected_tables:
         resolved_table_id = selected_tables[0].id
-    return context_text + "\n" + analysis_text, schema_text, summary_text, resolved_table_id
+    return context_text + "\n" + analysis_text, schema_text, summary_text, resolved_table_id, table_scope_note
 
 
 def _collect_knowledge_context_text(
@@ -373,9 +579,15 @@ async def answer(
     if len(q_preview) > 900:
         q_preview = q_preview[:900] + "…"
     refs = await search_similar_async(db, question, top_k=5, table_id=table_id, ref_type="query")
-    await trace_live("live_prep", "准备上下文", "已完成相似问法检索，正在加载表结构与业务知识…")
+    await trace_live(
+        "live_prep",
+        "准备上下文",
+        "已完成相似问法检索；若已选业务域，将先按域内知识库语义检索筛候选表再加载表元数据，并汇总业务知识上下文…",
+    )
     await asyncio.sleep(0)
-    priority_context, schema, summary_text, preferred_table_id = _build_priority_context(db, table_id)
+    priority_context, schema, summary_text, preferred_table_id, table_scope_note = _build_priority_context(
+        db, table_id, business_domain_id, question=question
+    )
     await asyncio.sleep(0)
     knowledge_text = _collect_knowledge_context_text(db, question, business_domain_id, table_id)
     await asyncio.sleep(0)
@@ -438,6 +650,8 @@ async def answer(
             f"列语义 Schema 约 {len(schema)} 字。",
         ]
     )
+    if table_scope_note:
+        reasoning_2_lines.append(table_scope_note)
     reasoning_2_detail = "\n".join(reasoning_2_lines)
 
     if intent != "sql_query":

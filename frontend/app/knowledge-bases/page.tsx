@@ -7,7 +7,7 @@ import ListPagination from "../../components/ListPagination";
 import LoadingSkeletonList from "../../components/LoadingSkeletonList";
 import PageHeader from "../../components/PageHeader";
 import Toast from "../../components/Toast";
-import { api } from "../../lib/api";
+import { api, ApiError, formatApiError } from "../../lib/api";
 
 type KnowledgeBase = { id: number; name: string; description: string; created_at: string };
 
@@ -16,6 +16,7 @@ export default function KnowledgeBasesPage() {
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
+  const [toastTone, setToastTone] = useState<"success" | "error">("success");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -28,6 +29,15 @@ export default function KnowledgeBasesPage() {
     try {
       const res = await api<{ knowledge_bases: KnowledgeBase[] }>("/api/knowledge-bases");
       setList(res.knowledge_bases);
+    } catch (e: unknown) {
+      setToastTone("error");
+      setMessage(
+        e instanceof ApiError
+          ? formatApiError(e)
+          : e instanceof Error
+            ? e.message
+            : "加载知识库失败：请确认后端已启动且 NEXT_PUBLIC_API_URL 正确。"
+      );
     } finally {
       setLoading(false);
     }
@@ -52,6 +62,7 @@ export default function KnowledgeBasesPage() {
 
   async function createKb() {
     if (!newName.trim()) {
+      setToastTone("error");
       setMessage("请先填写知识库名称");
       return;
     }
@@ -64,8 +75,12 @@ export default function KnowledgeBasesPage() {
       setIsCreateOpen(false);
       setNewName("");
       setNewDesc("");
+      setToastTone("success");
       setMessage("知识库创建成功");
       load();
+    } catch (e: unknown) {
+      setToastTone("error");
+      setMessage(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "创建失败");
     } finally {
       setSaving(false);
     }
@@ -102,7 +117,15 @@ export default function KnowledgeBasesPage() {
           </div>
         }
       />
-      <Toast message={message} tone="success" onClose={() => setMessage("")} />
+      <Toast
+        message={message}
+        tone={toastTone}
+        duration={toastTone === "error" ? 8000 : 4000}
+        onClose={() => {
+          setMessage("");
+          setToastTone("success");
+        }}
+      />
 
       <section className="mt-6 space-y-3">
         <h2 className="app-section-title">已创建知识库</h2>

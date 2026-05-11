@@ -2,8 +2,8 @@
 
 import Link from "next/link";
 import { Eye, EyeOff } from "lucide-react";
-import { useEffect, useState } from "react";
-import { api } from "../../lib/api";
+import { useEffect, useState, type CSSProperties } from "react";
+import { api, ApiError, formatApiError } from "../../lib/api";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import EmptyState from "../../components/EmptyState";
 import ListPagination from "../../components/ListPagination";
@@ -19,7 +19,7 @@ type DataSource = {
   port: number;
   database: string;
   username: string;
-  password: string;
+  connection_password: string;
 };
 
 const emptyForm = {
@@ -30,7 +30,7 @@ const emptyForm = {
   port: 3306,
   database: "ecommerce",
   username: "root",
-  password: ""
+  connection_password: ""
 };
 
 const TYPE_LABEL: Record<string, string> = {
@@ -103,7 +103,7 @@ function getDefaultFormByType(sourceType: string) {
         port: 0,
         database: "/path/to/database.sqlite",
         username: "-",
-        password: ""
+        connection_password: ""
       };
     case "mariadb":
       return { ...base, name: "MariaDB", port: 3306 };
@@ -118,7 +118,7 @@ function getDefaultFormByType(sourceType: string) {
         port: 8080,
         database: "tpch.tiny",
         username: "trino",
-        password: ""
+        connection_password: ""
       };
     case "hive":
       return {
@@ -127,7 +127,7 @@ function getDefaultFormByType(sourceType: string) {
         port: 10000,
         database: "default",
         username: "hive",
-        password: ""
+        connection_password: ""
       };
     default:
       return { ...base, source_type: "mysql", port: 3306 };
@@ -141,6 +141,7 @@ export default function DataSourcesPage() {
   const [submitting, setSubmitting] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [testResult, setTestResult] = useState<string>("");
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalStep, setModalStep] = useState<"type" | "form">("type");
   const [keyword, setKeyword] = useState("");
@@ -159,9 +160,19 @@ export default function DataSourcesPage() {
 
   async function load() {
     setLoading(true);
+    setLoadError(null);
     try {
       const res = await api<{ datasources: DataSource[] }>("/api/datasources");
       setDatasources(res.datasources);
+    } catch (e: unknown) {
+      setLoadError(
+        e instanceof ApiError
+          ? formatApiError(e)
+          : e instanceof Error
+            ? e.message
+            : "无法连接后端，请确认服务已启动且 NEXT_PUBLIC_API_URL 指向正确地址。"
+      );
+      setDatasources([]);
     } finally {
       setLoading(false);
     }
@@ -206,6 +217,10 @@ export default function DataSourcesPage() {
       await api("/api/datasources", { method: "POST", body: JSON.stringify(form) });
       resetAndCloseModal();
       load();
+    } catch (e: unknown) {
+      setTestResult(
+        `保存失败：${e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "未知错误"}`
+      );
     } finally {
       setSubmitting(false);
     }
@@ -282,8 +297,13 @@ export default function DataSourcesPage() {
     }
   }
 
-  function beginEdit(d: DataSource) {
+  async function beginEdit(d: DataSource) {
     setEditingId(d.id);
+    setTestResult("");
+    setModalStep("form");
+    setIsModalOpen(true);
+    // 编辑时默认明文展示密码，避免部分浏览器对受控 password 输入框不渲染已回填值；仍可用眼睛图标隐藏。
+    setShowDatasourcePassword(true);
     setForm({
       name: d.name,
       source_type: d.source_type,
@@ -292,12 +312,25 @@ export default function DataSourcesPage() {
       port: d.port,
       database: d.database,
       username: d.username,
-      password: d.password
+      connection_password: d.connection_password ?? ""
     });
-    setShowDatasourcePassword(Boolean((d.password || "").trim()));
-    setTestResult("");
-    setModalStep("form");
-    setIsModalOpen(true);
+    // 单独拉取详情，确保密码等字段与库内一致（列表接口若被缓存或字段滞后时仍可回填）
+    try {
+      const res = await api<{ datasource: DataSource }>(`/api/datasources/${d.id}`);
+      const s = res.datasource;
+      setForm({
+        name: s.name,
+        source_type: s.source_type,
+        description: s.description ?? "",
+        host: s.host,
+        port: s.port,
+        database: s.database,
+        username: s.username,
+        connection_password: s.connection_password ?? ""
+      });
+    } catch {
+      /* 保留列表行数据 */
+    }
   }
 
   function openCreateModal() {
@@ -360,6 +393,18 @@ export default function DataSourcesPage() {
           </div>
         }
       />
+
+      {loadError && (
+        <div
+          className="app-surface-panel mt-4 flex flex-wrap items-start gap-3 rounded-xl border border-rose-300/60 bg-rose-50 px-4 py-3 text-sm text-rose-800"
+          role="alert"
+        >
+          <p className="min-w-0 flex-1 break-words">{loadError}</p>
+          <button type="button" className="app-button-secondary app-button-xs shrink-0" onClick={() => void load()}>
+            重试
+          </button>
+        </div>
+      )}
 
       {!!testResult && !isModalOpen && (
         <div
@@ -579,18 +624,28 @@ export default function DataSourcesPage() {
                 <label className="app-form-label sm:col-span-2">
                   <span>Password</span>
                   <div className="relative">
+                    {/* 不用 type=password：Chrome 等对脚本回填的受控密码框常表现为完全空白（无圆点无明文）。改用 text + WebKit 圆点遮罩。 */}
                     <input
-                      className="app-input w-full pr-11 font-mono text-sm"
+                      key={editingId ? `ds-pw-edit-${editingId}` : "ds-pw-create"}
+                      className="app-input w-full pr-11 text-sm text-[#111827]"
                       placeholder="输入连接密码"
-                      type={showDatasourcePassword ? "text" : "password"}
+                      type="text"
+                      spellCheck={false}
+                      name="datalens-datasource-password"
                       autoComplete="off"
-                      value={form.password}
-                      onChange={(e) => setForm({ ...form, password: e.target.value })}
+                      value={String(form.connection_password ?? "")}
+                      onChange={(e) => setForm({ ...form, connection_password: e.target.value })}
+                      style={
+                        {
+                          WebkitTextSecurity:
+                            !showDatasourcePassword && String(form.connection_password ?? "").length > 0 ? "disc" : "none"
+                        } as CSSProperties
+                      }
                     />
                     <button
                       type="button"
                       className="app-control-button absolute right-1.5 top-1/2 h-9 w-9 min-h-0 shrink-0 -translate-y-1/2 rounded-lg border border-transparent p-0 text-app-muted hover:text-app-secondary"
-                      aria-label={showDatasourcePassword ? "隐藏密码" : "显示密码"}
+                      aria-label={showDatasourcePassword ? "以圆点隐藏" : "显示为明文"}
                       aria-pressed={showDatasourcePassword}
                       onClick={() => setShowDatasourcePassword((v) => !v)}
                     >
@@ -598,8 +653,14 @@ export default function DataSourcesPage() {
                     </button>
                   </div>
                   {editingId ? (
-                    <span className="app-text-muted text-xs">已从服务端回填，可点击眼睛图标切换显示。</span>
-                  ) : null}
+                    <span className="app-text-muted text-xs">
+                      编辑时默认明文；点击眼睛可切换为圆点隐藏（Chrome/Safari）。若仍为空，表示库中未保存密码或曾被空保存覆盖；填写新密码并更新即可（留空更新不会清空已存密码）。
+                    </span>
+                  ) : (
+                    <span className="app-text-muted text-xs">
+                      新增时可留空；点击眼睛可在「圆点 / 明文」间切换（非 type=password，避免浏览器不显示已填值）。
+                    </span>
+                  )}
                 </label>
                 <button className="app-button sm:col-span-2" onClick={testCurrent}>
                   测试当前连接

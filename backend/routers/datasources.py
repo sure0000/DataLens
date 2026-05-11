@@ -20,6 +20,8 @@ router = APIRouter(prefix="/api", tags=["datasources"])
 
 
 class DataSourceBody(BaseModel):
+    """请求体使用 connection_password，避免部分客户端对 JSON 键名 password 做脱敏导致误判为空。"""
+
     name: str
     source_type: str
     description: str | None = None
@@ -27,7 +29,7 @@ class DataSourceBody(BaseModel):
     port: int
     database: str
     username: str
-    password: str
+    connection_password: str
 
     @field_validator("source_type")
     @classmethod
@@ -68,6 +70,12 @@ def _extract_business_description(summary_text: str) -> str:
     return text.split("\n")[0].strip()
 
 
+def _body_to_row_kwargs(body: DataSourceBody) -> dict:
+    d = body.model_dump()
+    d["password"] = d.pop("connection_password")
+    return d
+
+
 def _datasource_to_dict(r: DataSource) -> dict:
     return {
         "id": r.id,
@@ -78,7 +86,7 @@ def _datasource_to_dict(r: DataSource) -> dict:
         "port": r.port,
         "database": r.database,
         "username": r.username,
-        "password": r.password,
+        "connection_password": r.password or "",
     }
 
 
@@ -98,7 +106,7 @@ def get_datasource(datasource_id: int, db: Session = Depends(get_db)) -> dict:
 
 @router.post("/datasources")
 def create_datasource(body: DataSourceBody, db: Session = Depends(get_db)) -> dict:
-    row = DataSource(**body.model_dump())
+    row = DataSource(**_body_to_row_kwargs(body))
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -110,8 +118,12 @@ def update_datasource(datasource_id: int, body: DataSourceBody, db: Session = De
     row = db.get(DataSource, datasource_id)
     if not row:
         raise HTTPException(status_code=404, detail="datasource not found")
-    for key, value in body.model_dump().items():
+    data = body.model_dump()
+    new_pw = (data.pop("connection_password") or "").strip()
+    for key, value in data.items():
         setattr(row, key, value)
+    if new_pw:
+        row.password = new_pw
     db.commit()
     return {"success": True}
 
@@ -129,7 +141,7 @@ def delete_datasource(datasource_id: int, db: Session = Depends(get_db)) -> dict
 @router.post("/datasources/test")
 def test_datasource_connection(body: DataSourceBody) -> dict:
     try:
-        tables = get_tables(body.model_dump())
+        tables = get_tables(_body_to_row_kwargs(body))
         return {"success": True, "tables_count": len(tables), "sample_tables": tables[:5]}
     except Exception as exc:  # noqa: BLE001
         return {"success": False, "error": str(exc)}

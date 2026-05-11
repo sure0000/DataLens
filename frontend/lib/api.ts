@@ -53,10 +53,21 @@ export function formatApiError(e: ApiError): string {
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(`${API}${path}`, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) }
-  });
+  let resp: Response;
+  try {
+    resp = await fetch(`${API}${path}`, {
+      ...init,
+      headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) }
+    });
+  } catch (e: unknown) {
+    const hint = e instanceof Error ? e.message : String(e);
+    throw new ApiError(
+      0,
+      JSON.stringify({
+        detail: `无法连接 API（${API}）：${hint}。请确认后端已启动，且浏览器能访问该地址（勿混用本机与局域网访问方式）。`
+      })
+    );
+  }
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);
     const body = (text || "").trim() || resp.statusText || `HTTP ${resp.status}`;
@@ -67,7 +78,18 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 
 /** POST multipart（不要设置 Content-Type，由浏览器写入 boundary） */
 export async function apiForm<T>(path: string, form: FormData): Promise<T> {
-  const resp = await fetch(`${API}${path}`, { method: "POST", body: form });
+  let resp: Response;
+  try {
+    resp = await fetch(`${API}${path}`, { method: "POST", body: form });
+  } catch (e: unknown) {
+    const hint = e instanceof Error ? e.message : String(e);
+    throw new ApiError(
+      0,
+      JSON.stringify({
+        detail: `无法连接 API（${API}）：${hint}。请确认后端已启动且地址配置正确。`
+      })
+    );
+  }
   if (!resp.ok) {
     const text = await resp.text().catch(() => resp.statusText);
     const body = (text || "").trim() || resp.statusText || `HTTP ${resp.status}`;

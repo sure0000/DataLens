@@ -21,7 +21,7 @@ from services.embedding_service import embed_and_store
 from services.llm_models import has_any_llm_key, resolve_effective_model
 from services.llm_service import analyze_table, batch_analyze_columns
 from services.runtime_llm_config import get_semantic_llm_model_stored
-from services.profiler import profile_column
+from services.profiler import merge_enum_semantic_output, profile_column
 from services.schema_extractor import get_columns, get_ddl, get_row_count, get_sample, get_tables_meta_for_database
 
 router = APIRouter(prefix="/api", tags=["analyze"])
@@ -151,7 +151,9 @@ async def _run_analyze(table_id: int, table_name: str, conn_info: dict) -> None:
         t.row_count = row_count
         t.ddl = ddl
 
-        profiles = [profile_column(sample, c["column_name"], row_count, c.get("data_type")) for c in cols]
+        profiles = [
+            profile_column(sample, c["column_name"], row_count, c.get("data_type"), c.get("column_type")) for c in cols
+        ]
         semantic_model_ref = (
             resolve_effective_model(get_semantic_llm_model_stored(db), db) if has_any_llm_key(db) else ""
         )
@@ -161,6 +163,7 @@ async def _run_analyze(table_id: int, table_name: str, conn_info: dict) -> None:
             db,
             semantic_model_ref=semantic_model_ref,
         )
+        semantic = [merge_enum_semantic_output(s, p) for s, p in zip(semantic, profiles, strict=False)]
         rows_for_summary = []
         for c, p, s in zip(cols, profiles, semantic, strict=False):
             col = ColumnMeta(
@@ -184,6 +187,7 @@ async def _run_analyze(table_id: int, table_name: str, conn_info: dict) -> None:
                     "data_type": c["data_type"],
                     "semantic_desc": s.get("desc"),
                     "semantic_type": s.get("type"),
+                    "enum": (p.get("quality_metrics") or {}).get("enum"),
                 }
             )
             db.add(col)
