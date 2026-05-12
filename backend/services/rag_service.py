@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 from config import get_settings
 from models import (
     BusinessDomain,
+    BusinessDomainDescription,
     BusinessDomainKnowledgeBase,
     BusinessDomainSelection,
     ColumnMeta,
@@ -419,6 +420,7 @@ def _build_priority_context(
     for c in cols:
         qm = c.quality_metrics if isinstance(c.quality_metrics, dict) else {}
         em = qm.get("enum") if isinstance(qm, dict) else None
+        agg_hint = qm.get("aggregation_hint", "") if isinstance(qm, dict) else ""
         enum_tail = ""
         if isinstance(em, dict):
             vals = em.get("values")
@@ -427,8 +429,9 @@ def _build_priority_context(
                 if len(vals) > 32:
                     joined += ",…"
                 enum_tail = f" | enum_values={joined}"
+        agg_tail = f" | aggregation={agg_hint}" if agg_hint else ""
         schema_lines.append(
-            f"{c.table_id}.{c.column_name} | {c.data_type or ''} | semantic={c.semantic_type or ''} | desc={c.semantic_desc or ''}{enum_tail}"
+            f"{c.table_id}.{c.column_name} | {c.data_type or ''} | semantic={c.semantic_type or ''} | desc={c.semantic_desc or ''}{enum_tail}{agg_tail}"
         )
 
     context_text = domain_header + "\n".join(context_lines)
@@ -590,6 +593,29 @@ async def answer(
     )
     await asyncio.sleep(0)
     knowledge_text = _collect_knowledge_context_text(db, question, business_domain_id, table_id)
+
+    # Prepend domain description as top-level context when a business domain is selected
+    if business_domain_id:
+        dom = db.get(BusinessDomain, business_domain_id)
+        if dom:
+            dom_desc_row = (
+                db.execute(
+                    select(BusinessDomainDescription)
+                    .where(BusinessDomainDescription.domain_id == business_domain_id)
+                    .order_by(BusinessDomainDescription.created_at.desc())
+                )
+                .scalars()
+                .first()
+            )
+            dom_desc = (dom_desc_row.content or "").strip() if dom_desc_row else ""
+            dom_block = f"## DOMAIN CONTEXT — 当前业务域「{dom.name}」"
+            if dom_desc:
+                dom_block += f"\n{dom_desc}"
+            dom_block += "\n（以上为该业务域的全局语义约束与分析惯例，生成 SQL 和解释时必须优先遵守）"
+            if knowledge_text.strip():
+                knowledge_text = dom_block + "\n\n" + knowledge_text
+            else:
+                knowledge_text = dom_block
     await asyncio.sleep(0)
     ref_n = len(refs) if isinstance(refs, list) else 0
     await trace_live("live_intent", "意图识别", "正在调用大模型判断是否需要生成 SQL…")

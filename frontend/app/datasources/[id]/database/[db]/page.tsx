@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "../../../../../lib/api";
+import EmptyState from "../../../../../components/EmptyState";
 import ListPagination from "../../../../../components/ListPagination";
 import PageHeader from "../../../../../components/PageHeader";
 
@@ -17,6 +18,19 @@ type DatabaseCatalog = {
   datasource: { id: number; name: string };
   database: { name: string; description?: string };
   tables: TableNode[];
+};
+
+const STATUS_STYLE: Record<string, string> = {
+  done: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  analyzing: "bg-sky-50 text-sky-700 border-sky-200",
+  error: "bg-rose-50 text-rose-700 border-rose-200",
+  pending: "bg-app-hover text-app-secondary border-app-border",
+};
+const STATUS_LABEL: Record<string, string> = {
+  done: "完成",
+  analyzing: "分析中",
+  error: "失败",
+  pending: "待分析",
 };
 
 export default function DatabaseDetailPage({ params }: { params: { id: string; db: string } }) {
@@ -83,78 +97,75 @@ export default function DatabaseDetailPage({ params }: { params: { id: string; d
           { label: catalog.database.name }
         ]}
         title={catalog.database.name}
-        meta={<span className="break-words">备注：{catalog.database.description || "无备注"}</span>}
+        subtitle={catalog.database.description || `${catalog.tables.length} 张数据表`}
+        actions={
+          <div className="app-toolbar !flex-nowrap w-full min-w-0 md:w-auto">
+            <input
+              className="app-input app-toolbar-input min-w-0 w-full max-w-[13.5rem] sm:max-w-[15rem]"
+              placeholder="搜索表名 / AI分析"
+              value={keyword}
+              onChange={(e) => setKeyword(e.target.value)}
+            />
+            <button className="app-button app-toolbar-action shrink-0" onClick={analyzeDatabase}>
+              分析全部
+            </button>
+          </div>
+        }
       />
-
-      <div className="mt-4">
-        <div className="app-toolbar">
-          <button className="app-button app-toolbar-action" onClick={analyzeDatabase}>
-            分析该数据库
-          </button>
-          <input
-            className="app-input app-toolbar-input"
-            placeholder="搜索表名/备注/AI分析/状态"
-            value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
-          />
-        </div>
-      </div>
       {!!message && <p className="mt-2 text-sm text-emerald-600">{message}</p>}
 
-      <div className="app-card mt-6 overflow-x-auto">
-        <table className="app-table min-w-[680px] md:min-w-[900px]">
-          <thead>
-            <tr>
-              <th>数据表</th>
-              <th>备注</th>
-              <th>AI分析</th>
-              <th>分析状态</th>
-              <th>最新分析时间</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody>
-            {pagedTables.map((t) => (
-              <tr key={t.name}>
-                <td>
-                  {t.table_id ? (
-                    <a className="app-link font-medium" href={`/table/${t.table_id}`}>
-                      {t.name}
-                    </a>
-                  ) : (
-                    <p className="font-medium">{t.name}</p>
-                  )}
-                </td>
-                <td className="max-w-[260px] text-app-ink">{t.comment || "-"}</td>
-                <td className="max-w-[300px] text-app-ink">{t.ai_analysis || "-"}</td>
-                <td>{t.status}</td>
-                <td className="text-app-ink">{t.latest_analyzed_at ? new Date(t.latest_analyzed_at).toLocaleString() : "-"}</td>
-                <td>
-                  <button className="app-button" onClick={() => analyzeTable(t.name)}>
-                    分析数据表
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {!filteredTables.length && (
-              <tr>
-                <td className="text-app-secondary" colSpan={6}>
-                  未匹配到数据表
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
+      <div className="mt-5 space-y-2.5">
+        {pagedTables.map((t) => (
+          <div key={t.name} className="app-card app-card-interactive app-list-item px-4 py-3.5">
+            <div className="app-list-item-main">
+              <div className="flex flex-wrap items-center gap-2">
+                {t.table_id ? (
+                  <a className="app-link break-all font-semibold" href={`/table/${t.table_id}`}>
+                    {t.name}
+                  </a>
+                ) : (
+                  <span className="break-all font-semibold text-app-primary">{t.name}</span>
+                )}
+                <span className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-medium ${STATUS_STYLE[t.status] || STATUS_STYLE.pending}`}>
+                  {STATUS_LABEL[t.status] || t.status}
+                </span>
+              </div>
+              {t.ai_analysis ? (
+                <p className="mt-1 line-clamp-2 break-words text-sm text-app-secondary">{t.ai_analysis}</p>
+              ) : t.comment ? (
+                <p className="mt-1 line-clamp-2 break-words text-sm text-app-muted">{t.comment}</p>
+              ) : (
+                <p className="mt-1 text-sm text-app-muted">暂无 AI 分析</p>
+              )}
+              <p className="mt-0.5 text-xs text-app-muted">
+                {t.latest_analyzed_at ? `最近分析：${new Date(t.latest_analyzed_at).toLocaleString()}` : "尚未分析"}
+              </p>
+            </div>
+            <div className="app-list-item-actions">
+              <button className="app-button w-16" onClick={() => analyzeTable(t.name)}>
+                分析
+              </button>
+            </div>
+          </div>
+        ))}
+        {!filteredTables.length && (
+          <EmptyState
+            title="未匹配到数据表"
+            description="请尝试更换搜索关键词，或点击「分析全部」触发批量分析。"
+            actionLabel="分析全部"
+            onAction={analyzeDatabase}
+          />
+        )}
+        {!!filteredTables.length && (
+          <ListPagination
+            page={page}
+            pageSize={pageSize}
+            total={filteredTables.length}
+            onPageChange={setPage}
+            onPageSizeChange={setPageSize}
+          />
+        )}
       </div>
-      {!!filteredTables.length && (
-        <ListPagination
-          page={page}
-          pageSize={pageSize}
-          total={filteredTables.length}
-          onPageChange={setPage}
-          onPageSizeChange={setPageSize}
-        />
-      )}
     </main>
   );
 }

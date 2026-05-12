@@ -254,7 +254,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
     const state = setActiveSession(id);
     setSessions(state.sessions);
     setActiveSessionId(state.activeSessionId);
-    router.push(`/copilot?session=${encodeURIComponent(id)}`);
+    router.replace(`/copilot?session=${encodeURIComponent(id)}`);
   }
 
   function createCopilotProject() {

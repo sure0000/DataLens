@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import base64
 import fnmatch
+import logging
 import re
+import threading
 from datetime import datetime
 from typing import Any
 from urllib.parse import quote
@@ -21,6 +23,30 @@ from services.embedding_service import (
 )
 
 _HTTP_TIMEOUT = 120.0
+
+
+_logger = logging.getLogger(__name__)
+
+
+def _trigger_codebase_analysis(knowledge_base_id: int) -> None:
+    """在后台线程中触发代码库分析（不阻塞同步响应）。"""
+    import asyncio
+
+    def _run():
+        from database import SessionLocal
+
+        db2 = SessionLocal()
+        try:
+            from services.codebase_analyzer import run_codebase_analysis_for_kb
+
+            asyncio.run(run_codebase_analysis_for_kb(db2, knowledge_base_id))
+        except Exception:
+            _logger.warning("Codebase analysis failed after git sync for kb=%s", knowledge_base_id, exc_info=True)
+        finally:
+            db2.close()
+
+    t = threading.Thread(target=_run, daemon=True, name=f"codebase-analysis-kb-{knowledge_base_id}")
+    t.start()
 
 
 def _format_sync_exception(exc: BaseException) -> str:
@@ -442,6 +468,7 @@ def run_git_source_sync(db: Session, source_id: int) -> dict[str, Any]:
             )
         else:
             msg = f"已同步 {created} 个文件为知识条目"
+            _trigger_codebase_analysis(kb_id)
         return {"ok": True, "files": created, "message": msg}
     except Exception as exc:  # noqa: BLE001
         db.rollback()

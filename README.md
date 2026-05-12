@@ -1,4 +1,12 @@
-# DataLens MVP 启动说明
+# DataLens — 数据表智能理解与自然语言分析系统
+
+DataLens 是一个轻量级 ChatBI 系统：连接数据源 → 自动理解表结构和字段含义 → 自然语言生成 SQL → 只读执行预览。
+
+**详细架构、数据流、数据模型、API 文档：** 见 [`docs/DATALENS_OVERVIEW.md`](docs/DATALENS_OVERVIEW.md)。
+
+---
+
+## 环境准备与启动
 
 ## 1. 环境准备
 

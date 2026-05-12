@@ -168,11 +168,32 @@ def profile_column(
             result["min"] = min(numeric)
             result["max"] = max(numeric)
             result["avg"] = mean(numeric)
+            sorted_numeric = sorted(numeric)
+            n = len(sorted_numeric)
             quality_metrics["distribution"] = {
                 "min": result["min"],
                 "max": result["max"],
                 "avg": result["avg"],
+                "p25": sorted_numeric[max(0, int(n * 0.25) - 1)],
+                "p50": sorted_numeric[max(0, int(n * 0.50) - 1)],
+                "p75": sorted_numeric[max(0, int(n * 0.75) - 1)],
             }
+            # Zero ratio
+            zero_count = sum(1 for v in numeric if v == 0)
+            quality_metrics["zero_ratio"] = round(zero_count / len(numeric), 6)
+            # IQR outlier count
+            p25 = sorted_numeric[max(0, int(n * 0.25) - 1)]
+            p75 = sorted_numeric[max(0, int(n * 0.75) - 1)]
+            iqr = p75 - p25
+            if iqr > 0:
+                lo = p25 - 1.5 * iqr
+                hi = p75 + 1.5 * iqr
+                outlier_count = sum(1 for v in numeric if v < lo or v > hi)
+                quality_metrics["outlier_count"] = outlier_count
+                quality_metrics["outlier_ratio"] = round(outlier_count / len(numeric), 6)
+            # Negative ratio
+            neg_count = sum(1 for v in numeric if v < 0)
+            quality_metrics["negative_ratio"] = round(neg_count / len(numeric), 6)
         quality_metrics["type_valid_ratio"] = round((1 - parse_failed / non_null_count), 6) if non_null_count else 1.0
     elif _is_datetime_type(data_type):
         parsed = 0
@@ -200,13 +221,18 @@ def profile_column(
     else:
         text_values = [str(v) for v in non_null_values]
         format_issues = sum(1 for v in text_values if v != v.strip())
-        max_length = max((len(v) for v in text_values), default=0)
+        lengths = [len(v) for v in text_values]
+        max_length = max(lengths, default=0)
+        min_length = min(lengths, default=0)
+        avg_length = round(mean(lengths), 1) if lengths else 0.0
         quality_metrics["format_issue_ratio"] = round((format_issues / non_null_count), 6) if non_null_count else 0.0
         quality_metrics["max_length"] = max_length
+        quality_metrics["min_length"] = min_length
+        quality_metrics["avg_length"] = avg_length
 
     risk_score = 0
     if result["null_ratio"] > 0.2:
-        risk_score += 2
+        risk_score += 4
     elif result["null_ratio"] > 0.05:
         risk_score += 1
     if duplicate_ratio > 0.3:
@@ -214,7 +240,7 @@ def profile_column(
     if top1_ratio > 0.9:
         risk_score += 1
     if quality_metrics.get("type_valid_ratio", 1.0) < 0.95:
-        risk_score += 2
+        risk_score += 1
     quality_metrics["risk_level"] = "high" if risk_score >= 3 else "medium" if risk_score >= 1 else "low"
 
     parsed = parse_mysql_discrete_type_literals(column_type)

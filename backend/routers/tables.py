@@ -153,6 +153,7 @@ def get_table_detail(table_id: int, db: Session = Depends(get_db)) -> dict:
             "id": table.id,
             "table_name": table.table_name,
             "database_name": table.database_name,
+            "datasource_id": table.datasource_id,
             "datasource_name": datasource_name,
             "row_count": table.row_count,
             "status": table.status,

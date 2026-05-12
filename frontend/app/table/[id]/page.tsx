@@ -11,6 +11,7 @@ type Detail = {
     id?: number;
     table_name: string;
     database_name: string;
+    datasource_id?: number | null;
     datasource_name: string;
     row_count: number;
     status: string;
@@ -47,6 +48,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
   const [modalEntryRows, setModalEntryRows] = useState<{ id: number; title: string }[]>([]);
   const [modalEntryPick, setModalEntryPick] = useState<Record<number, boolean>>({});
   const modalEntryDraftRef = useRef<Set<number>>(new Set());
+  const [knowledgeExpanded, setKnowledgeExpanded] = useState(false);
 
   useEffect(() => {
     api<{ knowledge_bases: { id: number; name: string }[] }>("/api/knowledge-bases")
@@ -182,7 +184,13 @@ export default function TableDetail({ params }: { params: { id: string } }) {
         breadcrumbs={[
           { label: "首页", href: "/" },
           { label: "数据源", href: "/datasources" },
-          { label: "数据表详情" },
+          ...(detail.table.datasource_id
+            ? [{ label: detail.table.datasource_name || String(detail.table.datasource_id), href: `/datasources/${detail.table.datasource_id}` }]
+            : []),
+          ...(detail.table.datasource_id && detail.table.database_name
+            ? [{ label: detail.table.database_name, href: `/datasources/${detail.table.datasource_id}/database/${encodeURIComponent(detail.table.database_name)}` }]
+            : []),
+          { label: detail.table.table_name },
         ]}
         title={detail.table.table_name}
         subtitle={`${detail.table.datasource_name || ""}${detail.table.datasource_name ? " / " : ""}${detail.table.database_name}`}
@@ -209,77 +217,75 @@ export default function TableDetail({ params }: { params: { id: string } }) {
         }
       />
 
-      <section className="app-card mt-5 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <h2 className="app-section-title">关联知识</h2>
-          <button type="button" className="app-button shrink-0" onClick={openLinkModal}>
-            添加知识
-          </button>
-        </div>
-        <p className="app-text-muted mt-1 text-xs">
-          关联整库后，Copilot 在本表上下文中对该库做语义检索；关联条目则全文注入。可与会话所选业务域下的知识库叠加。
-        </p>
-        {!(detail.knowledge_bases?.length || detail.knowledge_entries?.length) ? (
-          <p className="mt-4 rounded-lg border border-dashed border-app-border bg-app-hover px-4 py-6 text-center text-sm text-app-muted">
-            尚未关联知识。点击「添加知识」选择知识库或具体条目。
-          </p>
-        ) : (
-          <ul className="mt-4 divide-y divide-app-subtle rounded-xl border border-app-border bg-white">
-            {(detail.knowledge_bases || []).map((kb) => (
-              <li key={`kb-${kb.id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full border border-app-activeBorder bg-app-activeBg px-2 py-0.5 text-[11px] font-medium text-app-chipText">
-                      知识库
-                    </span>
-                    <span className="font-medium text-app-ink">{kb.name}</span>
-                  </div>
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <Link className="app-button-secondary text-xs no-underline" href={`/knowledge-bases/${kb.id}`}>
-                    查看知识库
-                  </Link>
-                  <button
-                    type="button"
-                    className="app-control-button text-xs text-app-secondary hover:text-rose-600"
-                    disabled={savingLinks}
-                    onClick={() => removeKbAssociation(kb.id)}
-                  >
-                    移除
-                  </button>
-                </div>
-              </li>
-            ))}
-            {(detail.knowledge_entries || []).map((en) => (
-              <li key={`ent-${en.id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-900 dark:border-indigo-800 dark:bg-indigo-950/50 dark:text-indigo-100">
-                      条目
-                    </span>
-                    <span className="font-medium text-app-ink">{en.title}</span>
-                    <span className="text-xs text-app-muted">（{kbDisplayName(en.knowledge_base_id)}）</span>
-                  </div>
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <Link
-                    className="app-button-secondary text-xs no-underline"
-                    href={`/knowledge-bases/${en.knowledge_base_id}#entry-${en.id}`}
-                  >
-                    查看条目
-                  </Link>
-                  <button
-                    type="button"
-                    className="app-control-button text-xs text-app-secondary hover:text-rose-600"
-                    disabled={savingLinks}
-                    onClick={() => removeEntryAssociation(en.id)}
-                  >
-                    移除
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
+      <section className="app-card mt-6 p-4">
+        <button
+          type="button"
+          className="flex w-full items-center justify-between gap-3"
+          onClick={() => setKnowledgeExpanded((v) => !v)}
+        >
+          <div className="flex items-center gap-2">
+            <h2 className="app-section-title">关联知识</h2>
+            {!knowledgeExpanded && (
+              <span className="text-xs text-app-muted">
+                {(detail.knowledge_bases?.length || 0) + (detail.knowledge_entries?.length || 0) > 0
+                  ? `${detail.knowledge_bases?.length || 0} 个知识库、${detail.knowledge_entries?.length || 0} 个条目`
+                  : "暂无关联"}
+              </span>
+            )}
+          </div>
+          <svg
+            className={`h-4 w-4 shrink-0 text-app-secondary transition-transform ${knowledgeExpanded ? "rotate-180" : ""}`}
+            viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
+          >
+            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+        {knowledgeExpanded && (
+          <>
+            <p className="app-text-muted mt-2 text-xs">
+              关联整库后，Copilot 在本表上下文中对该库做语义检索；关联条目则全文注入。
+            </p>
+            {!(detail.knowledge_bases?.length || detail.knowledge_entries?.length) ? (
+              <p className="mt-3 rounded-lg border border-dashed border-app-border bg-app-hover px-4 py-5 text-center text-sm text-app-muted">
+                点击「添加知识」选择知识库或具体条目。
+              </p>
+            ) : (
+              <ul className="mt-3 divide-y divide-app-subtle rounded-xl border border-app-border bg-white">
+                {(detail.knowledge_bases || []).map((kb) => (
+                  <li key={`kb-${kb.id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-app-activeBorder bg-app-activeBg px-2 py-0.5 text-[11px] font-medium text-app-chipText">知识库</span>
+                        <span className="font-medium text-app-ink text-sm">{kb.name}</span>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <Link className="app-button-secondary text-xs no-underline" href={`/knowledge-bases/${kb.id}`}>查看</Link>
+                      <button type="button" className="app-control-button text-xs text-app-secondary hover:text-rose-600" disabled={savingLinks} onClick={() => removeKbAssociation(kb.id)}>移除</button>
+                    </div>
+                  </li>
+                ))}
+                {(detail.knowledge_entries || []).map((en) => (
+                  <li key={`ent-${en.id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-900">条目</span>
+                        <span className="font-medium text-app-ink text-sm">{en.title}</span>
+                        <span className="text-xs text-app-muted">（{kbDisplayName(en.knowledge_base_id)}）</span>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <Link className="app-button-secondary text-xs no-underline" href={`/knowledge-bases/${en.knowledge_base_id}#entry-${en.id}`}>查看</Link>
+                      <button type="button" className="app-control-button text-xs text-app-secondary hover:text-rose-600" disabled={savingLinks} onClick={() => removeEntryAssociation(en.id)}>移除</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <button type="button" className="app-button mt-3" onClick={openLinkModal}>
+              添加知识
+            </button>
+          </>
         )}
       </section>
 
@@ -391,7 +397,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
 
       {/* Summary tabs */}
       {visibleTabs.length > 0 && (
-        <div className="mt-5">
+        <div className="mt-8">
           {/* Tab bar */}
           <div className="flex gap-1 overflow-x-auto border-b border-app-border pb-px">
             {visibleTabs.map((tab) => {
@@ -448,7 +454,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
       )}
 
       {/* Columns */}
-      <div className="mt-7">
+      <div className="mt-10">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
           <h2 className="app-section-title">
             字段列表

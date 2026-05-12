@@ -1,6 +1,32 @@
-# 语义层增强与接入方案（备忘 · 暂不执行）
+# 语义层增强与接入方案（备忘 · 持续更新）
 
-> 本文档汇总「语义层可增信息」与「在当前 DataLens 工程中如何通过功能接入」的讨论结论，**仅作保留与规划参考，不要求按本文立即改代码**。
+> 本文档汇总「语义层可增信息」与「在当前 DataLens 工程中如何通过功能接入」的讨论结论。
+> **状态说明：** ✅ 已实现 / 🔲 规划中 / ⏸️ 暂缓
+
+---
+
+## 实现状态总览 (2026-05-12)
+
+| 能力 | 状态 | 说明 |
+|------|------|------|
+| 列语义 (LLM) | ✅ | `ColumnMeta.semantic_desc/type/is_usable` |
+| 表级五段式摘要 (LLM) | ✅ | `TableSummary.summary/use_cases/key_columns/warnings` |
+| 业务域知识注入表理解 | ✅ | `_build_table_business_context()` → `domain_contexts[]` + `domain_knowledge_entries[]`，注入列分析和表摘要 |
+| 知识条目相关性过滤 | ✅ | 按表名+列名关键词匹配排序，优先保留相关条目 |
+| Profiler 数值分位数 | ✅ | P25/P50/P75 输出到 quality_metrics.distribution |
+| Profiler 风险加权 | ✅ | 空值率权重提升，区分危害等级 |
+| 低质量列跳过 LLM | ✅ | 空值率 >95% 或单值列跳过，节省调用 |
+| 宽表列优先级裁剪 | ✅ | >50 列按 metric>time>id>dimension 排序取前50 |
+| key_columns 幻觉校验 | ✅ | 与真实列名交集，剔除不存在的列 |
+| 表摘要缺失章节 LLM 补全 | ✅ | 定向 LLM 补全替代纯规则兜底 |
+| 列级错误容忍 | ✅ | 单列 LLM 失败不回滚整表 |
+| 业务域与知识库绑定 | ✅ | `BusinessDomainKnowledgeBase` 多对多 |
+| 表绑知识库与固定条目 | ✅ | `TableKnowledgeBase` + `TableKnowledgeEntry` |
+| Few-shot 历史问答 | ✅ | `QueryExample` + 向量检索 → `few_shot_json` |
+| 业务域全局语义 | 🔲 | 域描述注入 Copilot 上下文靠前位置 |
+| 指标目录 / 强结构化规则 | ⏸️ | 新表承载指标表达式，拼入 SqlCopilotContext |
+| 跨表 JOIN 约定 | ⏸️ | 推荐 JOIN 路径、禁止 JOIN 先验 |
+| PII / 脱敏列标记 | ⏸️ | 合规需求 |
 
 ---
 

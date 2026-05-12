@@ -404,6 +404,7 @@ async def analyze_column(
     db: Session,
     *,
     semantic_model_ref: str,
+    business_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not _has_llm_key(db):
         col = column_info.get("column_name", "")
@@ -421,14 +422,124 @@ async def analyze_column(
             "is_usable": True,
             "reason": "未配置LLM Key，使用本地规则兜底生成",
         }
+
+    domain_contexts = (business_context or {}).get("domain_contexts") or []
+    domain_knowledge_entries = (business_context or {}).get("domain_knowledge_entries") or []
+    domain_hint = ""
+    if domain_contexts:
+        domain_names = [d.get("domain_name", "") for d in domain_contexts if d.get("domain_name")]
+        domain_descs = [d.get("domain_description", "") for d in domain_contexts if d.get("domain_description")]
+        domain_hint = f"\n所属业务域: {'、'.join(domain_names)}"
+        if domain_descs:
+            domain_hint += f"\n业务域描述: {'；'.join(domain_descs[:2])}"
+    if domain_knowledge_entries:
+        knowledge_parts = []
+        for e in domain_knowledge_entries[:5]:
+            part = f"- {e.get('title','')}"
+            if e.get("summary"):
+                part += f": {e.get('summary','')[:200]}"
+            knowledge_parts.append(part)
+        if knowledge_parts:
+            domain_hint += f"\n关联业务知识条目:\n" + "\n".join(knowledge_parts)
+
     prompt = f"""你是一个数据分析专家，请根据字段信息理解其业务含义。
 表名: {table_name}
 字段信息: {json.dumps(column_info, ensure_ascii=False)}
-统计信息: {json.dumps(profiling_result, ensure_ascii=False)}
+统计信息: {json.dumps(profiling_result, ensure_ascii=False)}{domain_hint}
 若统计信息的 quality_metrics.enum 存在且含 values 数组：该列为离散枚举类字段。desc 开头必须用一句话标明枚举类型（MySQL ENUM / SET 或「样本中观测到的离散取值」），并列出全部或已给出的取值；type 填 enum。
 若无枚举信息，按常规划分 type（dimension/metric/time/id 等），不要编造枚举取值。
-输出JSON键: desc,type,is_usable,reason"""
+若 type 为 metric：推断该度量的可加性（additive=可直接SUM，如金额/数量；semi_additive=不可跨时间SUM但可分组内SUM，如余额/库存；non_additive=不可SUM仅可COUNT/AVG，如比率/单价）。输出 aggregation 字段，值为 sum / avg / latest / count 之一，作为 SQL 生成时的默认聚合建议。
+若提供了业务域知识，请将业务域知识与字段含义结合，使 desc 更加精准、贴合实际业务场景。desc 应为完整的中文自然语言描述，可适当引用业务域知识中的术语和口径定义。
+输出JSON键: desc,type,is_usable,reason；若type为metric则额外输出 aggregation"""
     return await _chat_json(prompt, semantic_model_ref, db)
+
+
+async def _normalize_summary_async(
+    raw_summary: str,
+    table_name: str,
+    columns_with_semantic: list[dict[str, Any]],
+    context: dict[str, Any],
+    db: Session,
+    semantic_model_ref: str,
+    *,
+    fallback_text: str = "",
+) -> str:
+    """Parse sections from LLM output, fill missing sections with targeted LLM call or rule fallback."""
+
+    def _parse_sections(raw_text: str) -> dict[str, list[str]]:
+        parsed: dict[str, list[str]] = {s: [] for s in TABLE_DESC_SECTIONS}
+        current_section = ""
+        for line in raw_text.split("\n"):
+            trimmed = line.strip()
+            if not trimmed:
+                continue
+            if trimmed in parsed:
+                current_section = trimmed
+                continue
+            if current_section:
+                if trimmed.startswith(("*", "•")):
+                    trimmed = f"- {trimmed[1:].strip()}"
+                if not trimmed.startswith("- "):
+                    trimmed = f"- {trimmed}"
+                parsed[current_section].append(trimmed)
+        return parsed
+
+    def _render_sections(parsed: dict[str, list[str]]) -> str:
+        blocks = [f"{section}\n" + "\n".join(parsed[section][:5]) for section in TABLE_DESC_SECTIONS]
+        return "\n\n".join(blocks)
+
+    raw = (raw_summary or "").replace("\r", "").strip()
+    if not raw:
+        return fallback_text or _render_sections(_parse_sections(""))
+
+    parsed = _parse_sections(raw)
+    missing_sections = [s for s in TABLE_DESC_SECTIONS if not parsed[s]]
+    if not missing_sections:
+        return _render_sections(parsed)
+
+    # Try LLM fill for missing sections
+    if _has_llm_key(db) and semantic_model_ref:
+        col_summary = json.dumps(
+            [{"column_name": c.get("column_name"), "semantic_desc": c.get("semantic_desc"), "semantic_type": c.get("semantic_type")}
+             for c in columns_with_semantic[:30]],
+            ensure_ascii=False,
+        )
+        domain_hint = ""
+        for d in (context.get("domain_contexts") or [])[:2]:
+            domain_hint += f"业务域「{d.get('domain_name','')}」：{d.get('domain_description','')}；"
+        fill_prompt = f"""你是一个数据表分析助手。已有部分章节的描述草稿，请仅补全以下缺失章节的内容。
+表名: {table_name}
+关键字段: {col_summary}
+业务背景: {domain_hint}
+
+已有描述:
+{raw[:800]}
+
+需要补全的章节: {'、'.join(missing_sections)}
+
+请严格按照以下格式输出仅缺失章节的内容（每条以 "- " 开头）：
+{chr(10).join(f'{s}\n- …' for s in missing_sections)}
+
+只输出上述章节，不输出已有内容。输出JSON键: {','.join(missing_sections)}"""
+        try:
+            fill_result = await _chat_json(fill_prompt, semantic_model_ref, db)
+            for section in missing_sections:
+                fill_val = fill_result.get(section)
+                if isinstance(fill_val, str) and fill_val.strip():
+                    lines = fill_val.strip().split("\n")
+                    parsed[section] = [l if l.startswith("- ") else f"- {l}" for l in lines[:4] if l.strip()]
+        except Exception:
+            import logging
+            _logger = logging.getLogger(__name__)
+            _logger.warning("LLM section fill failed for %s, using rule fallback", missing_sections, exc_info=True)
+
+    # Rule fallback for any sections still missing after LLM attempt
+    fallback_parsed = _parse_sections(fallback_text or "")
+    for section in TABLE_DESC_SECTIONS:
+        if not parsed[section]:
+            parsed[section] = fallback_parsed.get(section, [])
+
+    return _render_sections(parsed)
 
 
 async def analyze_table(
@@ -448,7 +559,9 @@ async def analyze_table(
         prev_desc = str(context.get("previous_table_description") or "").strip()
         return (
             "业务描述\n"
-            f"- {table_name} 用于承载该业务域相关的核心数据。\n"
+            f"- 每行代表一条{table_name}记录（行粒度供参考，请结合实际业务确认）。\n"
+            "- 该表的业务角色为数据明细/维度表，用于支撑相关业务域的数据查询与分析。\n"
+            f"- 共包含 {len(columns_with_semantic)} 个字段、{row_count} 行数据，覆盖当前数据源可访问的数据范围。\n"
             f"- 关联数据域：{('、'.join(domain_names) if domain_names else '未归属明确数据域')}。\n\n"
             "数据定位\n"
             f"- 关联业务域：{('、'.join(domain_names) if domain_names else '未归属明确业务域')}。\n"
@@ -466,39 +579,23 @@ async def analyze_table(
             "- 如存在字段缺失或命名歧义，可能导致指标解释偏差。"
         )
 
-    def normalize_summary_template(raw_summary: str) -> str:
-        def parse_sections(raw_text: str) -> dict[str, list[str]]:
-            parsed_sections: dict[str, list[str]] = {s: [] for s in TABLE_DESC_SECTIONS}
-            current_section = ""
-            for line in raw_text.split("\n"):
-                trimmed = line.strip()
-                if not trimmed:
-                    continue
-                if trimmed in parsed_sections:
-                    current_section = trimmed
-                    continue
-                if current_section:
-                    if trimmed.startswith(("*", "•")):
-                        trimmed = f"- {trimmed[1:].strip()}"
-                    if not trimmed.startswith("- "):
-                        trimmed = f"- {trimmed}"
-                    parsed_sections[current_section].append(trimmed)
-            return parsed_sections
-
-        raw = (raw_summary or "").replace("\r", "").strip()
-        if not raw:
-            return fallback_summary_text()
-        parsed = parse_sections(raw)
-        fallback_parsed = parse_sections(fallback_summary_text())
-        for section in TABLE_DESC_SECTIONS:
-            if not parsed[section]:
-                parsed[section] = fallback_parsed[section]
-
-        blocks = [f"{section}\n" + "\n".join(parsed[section][:4]) for section in TABLE_DESC_SECTIONS]
-        return "\n\n".join(blocks)
-
     context = business_context or {}
     domain_contexts = context.get("domain_contexts") or []
+
+    # Column priority filtering for wide tables: keep top 50 by semantic importance
+    _TYPE_PRIORITY = {"metric": 0, "time": 1, "id": 2, "enum": 3, "dimension": 4}
+    if len(columns_with_semantic) > 50:
+        sorted_cols = sorted(
+            columns_with_semantic,
+            key=lambda c: (
+                _TYPE_PRIORITY.get(str(c.get("semantic_type", "")).lower(), 5),
+                c.get("null_ratio", 0),
+            ),
+        )
+        prompt_cols = sorted_cols[:50]
+    else:
+        prompt_cols = columns_with_semantic
+
     if not _has_llm_key(db):
         return {
             "summary": fallback_summary_text(),
@@ -508,26 +605,30 @@ async def analyze_table(
         }
     prompt = f"""你是资深数据分析师，请总结数据表用途。
 表名: {table_name}
-字段: {json.dumps(columns_with_semantic, ensure_ascii=False)}
+字段: {json.dumps(prompt_cols, ensure_ascii=False)}
 总行数: {row_count}
 业务上下文（必须充分考虑）: {json.dumps(context, ensure_ascii=False)}
 
 输出要求：
 1) summary 必须严格使用下面固定模板输出，不要新增/删减标题：
 业务描述
-- <1-3条>
+- <3-5条；必须覆盖以下内容，让读者一眼看懂表的用途：
+  第1条：行粒度 — 每行代表什么（如"一条订单记录"、"一笔交易的某次状态变更"、"一天的汇总快照"），这是聚合策略的关键依据
+  第2条：表角色与用途 — 该表是事实表/维度表/汇总表/快照表/日志表，解决什么业务问题，主要使用者是谁
+  第3条：数据范围 — 覆盖的时间周期、业务主体范围、数据量级特征
+  第4-5条（可选）：关键特征 — 与其他表的上下游关系、更新频率特征、核心区分字段>
 
 数据定位
-- <2-4条，覆盖业务域/数据库/表自身描述>
+- <2-4条，覆盖业务域/数据源/数据库/表自身描述，说明表所在的数据环境>
 
 核心口径
-- <2-4条，给出关键口径、关键维度、关键指标>
+- <3-5条，给出关键口径、关键维度、关键指标；若某度量不可直接 SUM（如余额、比率），请注明推荐聚合方式；若存在枚举字段，列出取值>
 
 使用建议
-- <2-4条，给出适合的分析用法>
+- <2-4条，给出最适合的分析用法和典型联动表>
 
 风险边界
-- <2-4条，给出限制、风险与不适用场景>
+- <2-4条，给出限制、风险与明确不适用场景>
 
 2) 每一条都必须以 "- " 开头
 2) use_cases 给出 3-5 个高价值分析场景
@@ -537,12 +638,37 @@ async def analyze_table(
 
 输出JSON键: summary,use_cases,key_columns,warnings"""
     result = await _chat_json(prompt, semantic_model_ref, db)
+
+    # Validate key_columns against real column names
+    all_col_names = {c["column_name"] for c in columns_with_semantic if c.get("column_name")}
+    raw_key_columns = result.get("key_columns")
+    if isinstance(raw_key_columns, list):
+        valid_cols = [k for k in raw_key_columns if k in all_col_names]
+        hallucinated = [k for k in raw_key_columns if k not in all_col_names]
+        if hallucinated:
+            warnings_extra = f"以下key_columns未在表中找到对应字段，已自动移除：{'、'.join(hallucinated)}。"
+            result["warnings"] = (
+                str(result.get("warnings") or "").strip()
+                + " " + warnings_extra
+            ).strip()
+        result["key_columns"] = valid_cols if valid_cols else [c["column_name"] for c in columns_with_semantic[:3]]
+    else:
+        result["key_columns"] = [c["column_name"] for c in columns_with_semantic[:3]]
+
     use_cases = result.get("use_cases")
-    key_columns = result.get("key_columns")
-    result["summary"] = normalize_summary_template(str(result.get("summary") or ""))
     result["use_cases"] = use_cases if isinstance(use_cases, list) else ["基础统计分析", "趋势分析", "明细核对"]
-    result["key_columns"] = key_columns if isinstance(key_columns, list) else [c["column_name"] for c in columns_with_semantic[:3]]
     result["warnings"] = str(result.get("warnings") or "").strip() or "暂无明确风险说明，建议结合业务背景复核。"
+
+    # Normalize summary with LLM fill for missing sections
+    result["summary"] = await _normalize_summary_async(
+        str(result.get("summary") or ""),
+        table_name,
+        columns_with_semantic,
+        context,
+        db,
+        semantic_model_ref,
+        fallback_text=fallback_summary_text(),
+    )
     return result
 
 
@@ -667,11 +793,31 @@ async def batch_analyze_columns(
     concurrency: int = 5,
     *,
     semantic_model_ref: str,
+    business_context: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     sem = asyncio.Semaphore(concurrency)
 
     async def worker(col: dict[str, Any], prof: dict[str, Any]) -> dict[str, Any]:
         async with sem:
-            return await analyze_column(table_name, col, prof, db, semantic_model_ref=semantic_model_ref)
+            try:
+                return await analyze_column(
+                    table_name, col, prof, db,
+                    semantic_model_ref=semantic_model_ref,
+                    business_context=business_context,
+                )
+            except Exception:
+                import logging
+                _logger = logging.getLogger(__name__)
+                cn = col.get("column_name", "?")
+                _logger.warning("Column analysis failed for %s.%s, using fallback", table_name, cn, exc_info=True)
+                ctype = (col.get("data_type") or "").lower()
+                stype = "dimension"
+                if "id" in cn.lower():
+                    stype = "id"
+                elif any(x in ctype for x in ["int", "decimal", "float", "double"]):
+                    stype = "metric"
+                elif "date" in ctype or "time" in ctype:
+                    stype = "time"
+                return {"desc": f"{cn}（LLM分析失败，提供兜底语义）", "type": stype, "is_usable": False, "reason": "LLM analysis failed for this column"}
 
     return await asyncio.gather(*(worker(c, p) for c, p in column_inputs))

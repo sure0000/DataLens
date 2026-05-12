@@ -265,3 +265,49 @@ def sync_git_source_now(kb_id: int, source_id: int, db: Session = Depends(get_db
         detail = (str(raw).strip() if raw is not None else "") or "同步失败（服务端未返回具体原因）"
         raise HTTPException(status_code=502, detail=detail)
     return out
+
+
+@router.post("/{kb_id}/analyze-codebase")
+def analyze_codebase(kb_id: int, db: Session = Depends(get_db)) -> dict:
+    """触发代码库分析：扫描知识库中所有 git 同步条目，提取表引用并关联。"""
+    import asyncio
+    import threading
+
+    _get_kb(db, kb_id)
+
+    # 检查是否有 git 条目
+    has_entries = db.execute(
+        select(KnowledgeEntry.id).where(
+            KnowledgeEntry.knowledge_base_id == kb_id,
+            cast(KnowledgeEntry.source_meta, JSONB)["kind"].astext == "git_file",
+        ).limit(1)
+    ).scalars().first()
+    if not has_entries:
+        return {"ok": True, "total": 0, "analyzed": 0, "message": "该知识库没有 git 同步条目"}
+
+    # 在后台线程中运行（不阻塞请求响应）
+    result_holder: dict = {}
+
+    def _run():
+        from database import SessionLocal
+
+        db2 = SessionLocal()
+        try:
+            from services.codebase_analyzer import run_codebase_analysis_for_kb
+
+            r = asyncio.run(run_codebase_analysis_for_kb(db2, kb_id))
+            result_holder.update(r)
+        except Exception as exc:
+            result_holder["ok"] = False
+            result_holder["error"] = str(exc)
+        finally:
+            db2.close()
+
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+
+    # 等待最多 3 秒，如果没完成则返回 "processing"
+    t.join(timeout=3.0)
+    if t.is_alive():
+        return {"ok": True, "processing": True, "message": "代码库分析正在后台运行，完成后会自动关联表引用"}
+    return result_holder

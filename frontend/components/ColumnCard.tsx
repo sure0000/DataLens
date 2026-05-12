@@ -16,6 +16,21 @@ type Column = {
     completeness_score?: number;
     uniqueness_score?: number;
     risk_level?: "low" | "medium" | "high";
+    zero_ratio?: number;
+    negative_ratio?: number;
+    outlier_count?: number;
+    outlier_ratio?: number;
+    min_length?: number;
+    max_length?: number;
+    avg_length?: number;
+    distribution?: {
+      min?: number;
+      max?: number;
+      avg?: number;
+      p25?: number;
+      p50?: number;
+      p75?: number;
+    };
   };
 };
 
@@ -74,6 +89,70 @@ function trimDuplicateTypePreamble(desc: string, physicalType: string): string {
   return next || desc;
 }
 
+function DistributionBar({ dist }: { dist: NonNullable<Column["quality_metrics"]>["distribution"] }) {
+  if (!dist || dist.min == null || dist.max == null) return null;
+  const min = dist.min;
+  const max = dist.max;
+  const range = max - min || 1;
+  const p25 = dist.p25 ?? min;
+  const p50 = dist.p50 ?? min;
+  const p75 = dist.p75 ?? max;
+  const avg = dist.avg;
+
+  const fmt = (n: number) => {
+    if (Number.isInteger(n)) return n.toLocaleString();
+    return n < 10 ? n.toFixed(2) : n < 1000 ? n.toFixed(1) : n.toLocaleString(undefined, { maximumFractionDigits: 0 });
+  };
+
+  const pct = (v: number) => `${((v - min) / range) * 100}%`;
+
+  return (
+    <div className="mt-2">
+      {/* Box plot bar */}
+      <div className="flex items-center gap-1.5">
+        <span className="text-[10px] text-app-muted w-6 shrink-0">分布</span>
+        <div className="relative flex-1 h-4 flex items-center">
+          {/* whisker line: min → max */}
+          <div className="absolute left-0 right-0 h-px bg-[#d1d5db]" />
+          {/* whisker: min → p25 */}
+          <div className="absolute h-px bg-[#9ca3af]" style={{ left: pct(min), width: pct(p25) }} />
+          {/* whisker: p75 → max */}
+          <div className="absolute h-px bg-[#9ca3af]" style={{ left: pct(p75), width: `calc(${pct(max)} - ${pct(p75)})` }} />
+          {/* IQR box: p25 → p75 */}
+          <div
+            className="absolute h-2 rounded-sm border border-[#60a5fa] bg-[#bfdbfe]"
+            style={{ left: pct(p25), width: `calc(${pct(p75)} - ${pct(p25)})`, top: "50%", transform: "translateY(-50%)" }}
+          />
+          {/* median line */}
+          <div
+            className="absolute w-px h-4 bg-[#1d4ed8]"
+            style={{ left: pct(p50) }}
+          />
+          {/* avg dot */}
+          {avg != null && (
+            <div
+              className="absolute w-2.5 h-2.5 rounded-full bg-[#ef4444] border-2 border-white shadow-sm"
+              style={{ left: pct(avg), top: "50%", transform: "translate(-50%, -50%)" }}
+              title={`均值 ${fmt(avg)}`}
+            />
+          )}
+        </div>
+      </div>
+      {/* Stats row */}
+      <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap mt-1 ml-7">
+        <span className="text-[11px] text-app-muted">min <span className="text-app-ink font-medium">{fmt(min)}</span></span>
+        <span className="text-[11px] text-app-muted">P25 <span className="text-app-ink font-medium">{fmt(p25)}</span></span>
+        <span className="text-[11px] text-[#1d4ed8] font-medium">P50 <span className="font-semibold">{fmt(p50)}</span></span>
+        <span className="text-[11px] text-app-muted">P75 <span className="text-app-ink font-medium">{fmt(p75)}</span></span>
+        <span className="text-[11px] text-app-muted">max <span className="text-app-ink font-medium">{fmt(max)}</span></span>
+        {avg != null && (
+          <span className="text-[11px] text-[#ef4444]">avg <span className="font-medium">{fmt(avg)}</span></span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function ColumnCard({ col, isLast = false }: { col: Column; isLast?: boolean }) {
   const quality = col.quality_metrics || {};
   const riskLevel = quality.risk_level || "low";
@@ -83,6 +162,7 @@ export default function ColumnCard({ col, isLast = false }: { col: Column; isLas
   const displayDesc = trimDuplicateTypePreamble(col.semantic_desc || "", col.data_type || "");
   const ratio = (value?: number) => `${((value || 0) * 100).toFixed(1)}%`;
 
+  const hasDist = quality.distribution?.min != null && quality.distribution?.max != null;
   const metrics: { label: string; value: string }[] = [
     { label: "完整性", value: ratio(quality.completeness_score) },
     { label: "重复率", value: ratio(quality.duplicate_ratio) },
@@ -90,6 +170,15 @@ export default function ColumnCard({ col, isLast = false }: { col: Column; isLas
   ];
   if (typeof quality.uniqueness_score === "number") {
     metrics.push({ label: "唯一性", value: ratio(quality.uniqueness_score) });
+  }
+  if (typeof quality.zero_ratio === "number") {
+    metrics.push({ label: "零值率", value: ratio(quality.zero_ratio) });
+  }
+  if (typeof quality.negative_ratio === "number" && quality.negative_ratio > 0) {
+    metrics.push({ label: "负值率", value: ratio(quality.negative_ratio) });
+  }
+  if (typeof quality.outlier_count === "number" && quality.outlier_count > 0) {
+    metrics.push({ label: "异常值", value: String(quality.outlier_count) });
   }
 
   return (
@@ -155,7 +244,18 @@ export default function ColumnCard({ col, isLast = false }: { col: Column; isLas
               distinct
               <span className="ml-1 text-app-secondary">{col.distinct_count ?? 0}</span>
             </span>
+            {quality.min_length != null && (
+              <span className="text-xs text-app-muted">
+                长度
+                <span className="ml-1 text-app-secondary">{quality.min_length} ~ {quality.max_length}{quality.avg_length != null ? ` / ${quality.avg_length}` : ""}</span>
+              </span>
+            )}
           </div>
+
+          {/* Distribution bar for numeric columns */}
+          {quality.distribution?.min != null && quality.distribution?.max != null && (
+            <DistributionBar dist={quality.distribution} />
+          )}
 
           {/* Top values */}
           {(col.top_values ?? []).length > 0 && (
