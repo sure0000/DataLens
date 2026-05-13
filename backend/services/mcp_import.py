@@ -43,7 +43,11 @@ def _sanitize_mcp_prompt(raw: str | None) -> str:
 
 
 def _format_sync_exception(exc: BaseException) -> str:
-    """格式化异常为用户可读的信息。"""
+    """格式化异常为用户可读的信息。展开 ExceptionGroup 的子异常。"""
+    # Python 3.11+ ExceptionGroup / TaskGroup 会把真实异常包在 sub-exceptions 里
+    if isinstance(exc, BaseExceptionGroup):
+        parts = [_format_sync_exception(e) for e in exc.exceptions]
+        return " | ".join(parts)[:2000]
     msg = str(exc) or type(exc).__name__
     return msg[:2000]
 
@@ -156,6 +160,51 @@ def _extract_title(md: str) -> str:
 
 # ── MCP 客户端封装 ──────────────────────────────────────────────────────────
 
+async def _list_mcp_tools_stdio(
+    command: str,
+    env: dict[str, str] | None,
+    *,
+    args: list[str] | None = None,
+    timeout: float = 30.0,
+) -> list[dict[str, Any]]:
+    """仅连接 MCP Server 并列出可用 tools，不调用任何 tool。"""
+    from mcp import ClientSession, StdioServerParameters
+    from mcp.client.stdio import stdio_client
+
+    if args:
+        parsed_args = args
+        parsed_command = command
+    else:
+        parsed = _parse_command_args(command)
+        parsed_command = parsed[0]
+        parsed_args = parsed[1:]
+
+    server_params = StdioServerParameters(command=parsed_command, args=parsed_args, env=env or None)
+    async with asyncio.timeout(timeout):
+        async with stdio_client(server_params) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                tools = await session.list_tools()
+                return [{"name": t.name, "description": t.description or ""} for t in tools.tools]
+
+
+async def _list_mcp_tools_http(
+    url: str,
+    *,
+    timeout: float = 30.0,
+) -> list[dict[str, Any]]:
+    """仅连接 HTTP MCP Server 并列出可用 tools，不调用任何 tool。"""
+    from mcp import ClientSession
+    from mcp.client.sse import sse_client
+
+    async with asyncio.timeout(timeout):
+        async with sse_client(url) as (read, write):
+            async with ClientSession(read, write) as session:
+                await session.initialize()
+                tools = await session.list_tools()
+                return [{"name": t.name, "description": t.description or ""} for t in tools.tools]
+
+
 async def _call_mcp_tool_stdio(
     command: str,
     env: dict[str, str] | None,
@@ -165,15 +214,12 @@ async def _call_mcp_tool_stdio(
     args: list[str] | None = None,
     user_prompt: str = "",
     timeout: float = 300.0,
+    db: Session | None = None,
+    source_name: str = "",
 ) -> tuple[str, list[dict[str, Any]]]:
-    """通过 stdio 启动 MCP Server 并调用 tool。返回 (raw_result, tool_list)。
-
-    若提供 user_prompt，会根据 tool 的 input_schema 自动映射到正确的参数名。
-    优先使用 args 参数（标准 MCP 格式）；若为空则从 command 字符串解析（历史兼容）。
-    """
+    """通过 stdio 启动 MCP Server，使用 LLM agent 循环调用 tools 收集内容。"""
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
-    from mcp.types import TextContent
 
     if args:
         parsed_args = args
@@ -199,33 +245,31 @@ async def _call_mcp_tool_stdio(
                     for t in tools.tools
                 ]
 
-                # 选择 tool
-                resolved_tool = tool_name
-                if not resolved_tool and tools.tools:
-                    resolved_tool = tools.tools[0].name
-                if not resolved_tool:
+                if not tools.tools:
                     raise RuntimeError("MCP Server 未提供任何 tool")
 
-                # 获取选中 tool 的 input schema，用于智能映射用户提示词
+                # 优先使用 LLM agent 模式
+                if db is not None:
+                    result = await _run_mcp_agent(session, tools, user_prompt, db, source_name)
+                    if result.strip():
+                        return result, tool_list
+
+                # fallback：直接调用指定 tool（无 LLM 时）
+                from mcp.types import TextContent
+                resolved_tool = tool_name or tools.tools[0].name
                 input_schema: dict[str, Any] | None = None
                 for t in tools.tools:
                     if t.name == resolved_tool and t.inputSchema:
                         input_schema = t.inputSchema
                         break
-
-                # 合并用户提示词到 tool 参数
                 final_args = _merge_user_prompt_into_args(tool_args or {}, user_prompt, input_schema) if user_prompt.strip() else (tool_args or {})
-
-                result = await session.call_tool(resolved_tool, arguments=final_args)
-
-                # 提取文本内容
+                result_raw = await session.call_tool(resolved_tool, arguments=final_args)
                 parts: list[str] = []
-                for item in result.content:
+                for item in result_raw.content:
                     if isinstance(item, TextContent):
                         parts.append(item.text)
                     else:
                         parts.append(str(item))
-
                 return "\n\n".join(parts), tool_list
 
 
@@ -236,14 +280,12 @@ async def _call_mcp_tool_http(
     *,
     user_prompt: str = "",
     timeout: float = 300.0,
+    db: Session | None = None,
+    source_name: str = "",
 ) -> tuple[str, list[dict[str, Any]]]:
-    """通过 HTTP/SSE 连接 MCP Server 并调用 tool。返回 (raw_result, tool_list)。
-
-    若提供 user_prompt，会根据 tool 的 input_schema 自动映射到正确的参数名。
-    """
+    """通过 HTTP/SSE 连接 MCP Server，使用 LLM agent 循环调用 tools 收集内容。"""
     from mcp import ClientSession
     from mcp.client.sse import sse_client
-    from mcp.types import TextContent
 
     async with asyncio.timeout(timeout):
         async with sse_client(url) as (read, write):
@@ -255,31 +297,31 @@ async def _call_mcp_tool_http(
                     for t in tools.tools
                 ]
 
-                resolved_tool = tool_name
-                if not resolved_tool and tools.tools:
-                    resolved_tool = tools.tools[0].name
-                if not resolved_tool:
+                if not tools.tools:
                     raise RuntimeError("MCP Server 未提供任何 tool")
 
-                # 获取选中 tool 的 input schema，用于智能映射用户提示词
+                # 优先使用 LLM agent 模式
+                if db is not None:
+                    result = await _run_mcp_agent(session, tools, user_prompt, db, source_name)
+                    if result.strip():
+                        return result, tool_list
+
+                # fallback：直接调用指定 tool（无 LLM 时）
+                from mcp.types import TextContent
+                resolved_tool = tool_name or tools.tools[0].name
                 input_schema: dict[str, Any] | None = None
                 for t in tools.tools:
                     if t.name == resolved_tool and t.inputSchema:
                         input_schema = t.inputSchema
                         break
-
-                # 合并用户提示词到 tool 参数
                 final_args = _merge_user_prompt_into_args(tool_args or {}, user_prompt, input_schema) if user_prompt.strip() else (tool_args or {})
-
-                result = await session.call_tool(resolved_tool, arguments=final_args)
-
+                result_raw = await session.call_tool(resolved_tool, arguments=final_args)
                 parts: list[str] = []
-                for item in result.content:
+                for item in result_raw.content:
                     if isinstance(item, TextContent):
                         parts.append(item.text)
                     else:
                         parts.append(str(item))
-
                 return "\n\n".join(parts), tool_list
 
 
@@ -331,19 +373,155 @@ def _merge_user_prompt_into_args(
     return args
 
 
-_ANALYSIS_PROMPT = """你是一个知识库内容整理助手。请分析以下从外部系统导入的原始内容，将其整理为结构清晰的 Markdown 文档。
+_AGENT_SYSTEM = """你是一个知识库内容采集助手。你可以调用 MCP Server 提供的工具来获取用户需要的内容。
 
-要求：
-1. 提取核心信息，去除冗余和无关内容
-2. 使用层级标题（# ## ###）组织文档结构
-3. 保留原始内容中的关键数据、链接、代码片段
-4. 使用中文撰写标题和简述
-5. 如果内容涉及多个主题，请合理拆分章节
-6. 输出纯 Markdown，不要包含任何前言或后记
+工作流程：
+1. 根据用户的需求，选择合适的工具并调用
+2. 分析工具返回的结果，判断是否需要继续调用其他工具（例如先搜索获取 ID，再用 ID 获取详细内容）
+3. 重复调用直到收集到足够的内容
+4. 当内容收集完毕后，将所有收集到的内容整理为结构清晰的 Markdown 文档输出
 
-原始内容如下：
-
+注意：
+- 优先获取实际内容，而不仅仅是列表或索引
+- 如果返回的是 ID 列表，应继续调用工具获取每个 ID 对应的详细内容
+- 最终输出应该是完整的 Markdown 文档，包含实际内容而非仅仅是标题列表
+- 输出纯 Markdown，不要包含任何前言或后记
 """
+
+_MAX_AGENT_ROUNDS = 10  # 最多循环轮数，防止无限循环
+_MAX_TOOL_RESULT_CHARS = 20000  # 单次 tool 结果最大字符数
+
+
+async def _run_mcp_agent(
+    session: Any,
+    tools_raw: Any,
+    user_prompt: str,
+    db: Session,
+    source_name: str,
+) -> str:
+    """LLM 驱动的 MCP agent 循环：自动决策调用哪些 tool、组合结果输出 markdown。"""
+    from mcp.types import TextContent
+    from services.llm_models import has_any_llm_key, resolve_effective_model
+    from services.llm_service import _client_and_model_for_ref
+
+    # 检查 LLM 是否可用
+    if not has_any_llm_key(db):
+        _logger.warning("MCP agent: no LLM key, falling back to single tool call")
+        return ""
+
+    model_ref = resolve_effective_model(None, db)
+    if not model_ref:
+        _logger.warning("MCP agent: no model resolved, falling back to single tool call")
+        return ""
+
+    client, model_name = _client_and_model_for_ref(model_ref, db)
+
+    # 构建 OpenAI function calling 格式的 tools 列表
+    openai_tools = []
+    for t in tools_raw.tools:
+        schema = t.inputSchema if t.inputSchema else {"type": "object", "properties": {}}
+        # 移除 $defs 等复杂引用，简化 schema 避免部分模型不支持
+        simple_schema = {
+            "type": "object",
+            "properties": schema.get("properties", {}),
+        }
+        if schema.get("required"):
+            simple_schema["required"] = schema["required"]
+        openai_tools.append({
+            "type": "function",
+            "function": {
+                "name": t.name,
+                "description": (t.description or "")[:500],
+                "parameters": simple_schema,
+            },
+        })
+
+    goal = user_prompt.strip() if user_prompt.strip() else "获取该 MCP Server 中所有可用的内容，整理为知识库文档"
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": _AGENT_SYSTEM},
+        {"role": "user", "content": f"目标：{goal}\n\n请开始收集内容。"},
+    ]
+
+    collected_parts: list[str] = []
+
+    for round_num in range(_MAX_AGENT_ROUNDS):
+        _logger.info("MCP agent round %d/%d for %s", round_num + 1, _MAX_AGENT_ROUNDS, source_name)
+
+        resp = await client.chat.completions.create(
+            model=model_name,
+            messages=messages,
+            tools=openai_tools if openai_tools else None,
+            tool_choice="auto" if openai_tools else None,
+            temperature=0.1,
+        )
+
+        msg = resp.choices[0].message
+        finish_reason = resp.choices[0].finish_reason
+
+        # LLM 决定停止调用 tool，输出最终内容
+        if finish_reason == "stop" or not msg.tool_calls:
+            final_text = (msg.content or "").strip()
+            if final_text:
+                collected_parts.append(final_text)
+            break
+
+        # 追加 assistant 消息（含 tool_calls），保留 reasoning_content（思考模式模型需要）
+        assistant_msg: dict[str, Any] = {
+            "role": "assistant",
+            "content": msg.content or "",
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                }
+                for tc in msg.tool_calls
+            ],
+        }
+        # DeepSeek R1 等思考模式模型会在响应中附带 reasoning_content，必须原样传回
+        # model_extra 包含 SDK 不认识的非标准字段
+        reasoning = None
+        if hasattr(msg, "model_extra") and isinstance(msg.model_extra, dict):
+            reasoning = msg.model_extra.get("reasoning_content")
+        if not reasoning and hasattr(msg, "reasoning_content"):
+            reasoning = getattr(msg, "reasoning_content", None)
+        if reasoning:
+            assistant_msg["reasoning_content"] = reasoning
+        messages.append(assistant_msg)
+
+        # 执行每个 tool call
+        for tc in msg.tool_calls:
+            tool_name = tc.function.name
+            try:
+                tool_args = json.loads(tc.function.arguments or "{}")
+            except json.JSONDecodeError:
+                tool_args = {}
+
+            _logger.info("MCP agent calling tool: %s args: %s", tool_name, str(tool_args)[:200])
+
+            try:
+                result = await session.call_tool(tool_name, arguments=tool_args)
+                parts: list[str] = []
+                for item in result.content:
+                    if isinstance(item, TextContent):
+                        parts.append(item.text)
+                    else:
+                        parts.append(str(item))
+                tool_result = "\n".join(parts)
+                # 截断过长结果
+                if len(tool_result) > _MAX_TOOL_RESULT_CHARS:
+                    tool_result = tool_result[:_MAX_TOOL_RESULT_CHARS] + "\n\n[结果已截断...]"
+            except Exception as e:
+                tool_result = f"[工具调用失败: {e}]"
+                _logger.warning("MCP agent tool %s failed: %s", tool_name, e)
+
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": tool_result,
+            })
+
+    return "\n\n".join(collected_parts)
 
 
 async def _analyze_content_with_llm(db: Session, raw_content: str, source_name: str) -> str:
@@ -433,6 +611,8 @@ async def _run_mcp_import_async(db: Session, source_id: int, target_kb_id: int, 
                 tool_args=tool_args,
                 args=src.mcp_args,
                 user_prompt=sanitized_prompt,
+                db=db,
+                source_name=src.name,
             )
         elif src.mcp_transport == "http":
             if not (src.mcp_url or "").strip():
@@ -444,14 +624,17 @@ async def _run_mcp_import_async(db: Session, source_id: int, target_kb_id: int, 
                 tool_name=src.mcp_tool_name,
                 tool_args=tool_args,
                 user_prompt=sanitized_prompt,
+                db=db,
+                source_name=src.name,
             )
         else:
             error_msg = f"不支持的传输方式: {src.mcp_transport}"
             _set_import_status(db, source_id, kb_id, "failed", error=error_msg)
             return {"ok": False, "error": error_msg}
     except Exception as exc:
+        import traceback
+        _logger.warning("MCP import failed for source_id=%s kb_id=%s: %s\n%s", source_id, kb_id, exc, traceback.format_exc())
         detail = _format_sync_exception(exc)
-        _logger.warning("MCP import failed for source_id=%s kb_id=%s: %s", source_id, kb_id, detail)
         _set_import_status(db, source_id, kb_id, "failed", error=detail)
         return {"ok": False, "error": detail}
 
@@ -543,42 +726,33 @@ def run_mcp_import(db: Session, source_id: int, target_kb_id: int, prompt: str |
 
 
 async def test_mcp_connection_async(source: KnowledgeMcpSource) -> dict[str, Any]:
-    """测试 MCP Server 连接并列出可用 tools。"""
+    """测试 MCP Server 连接并列出可用 tools（不调用任何 tool）。"""
     env = dict(source.mcp_env or {}) if source.mcp_env else None
 
     try:
         if source.mcp_transport == "stdio":
             if not (source.mcp_command or "").strip():
                 return {"ok": False, "error": "stdio 模式下 mcp_command 不能为空"}
-            raw, tool_list = await _call_mcp_tool_stdio(
+            tool_list = await _list_mcp_tools_stdio(
                 command=source.mcp_command or "",
                 env=env,
-                tool_name=None,
-                tool_args=None,
                 args=source.mcp_args,
                 timeout=30.0,
-                user_prompt="",
             )
         elif source.mcp_transport == "http":
             if not (source.mcp_url or "").strip():
                 return {"ok": False, "error": "http 模式下 mcp_url 不能为空"}
-            raw, tool_list = await _call_mcp_tool_http(
+            tool_list = await _list_mcp_tools_http(
                 url=source.mcp_url or "",
-                tool_name=None,
-                tool_args=None,
                 timeout=30.0,
-                user_prompt="",
             )
         else:
             return {"ok": False, "error": f"不支持的传输方式: {source.mcp_transport}"}
 
-        return {
-            "ok": True,
-            "tools": tool_list,
-            "preview": raw[:800] if raw else "",
-        }
+        return {"ok": True, "tools": tool_list, "preview": ""}
     except Exception as exc:
-        return {"ok": False, "error": str(exc)[:2000], "tools": []}
+        detail = _format_sync_exception(exc)
+        return {"ok": False, "error": detail, "tools": []}
 
 
 # ── 调度辅助 ────────────────────────────────────────────────────────────────

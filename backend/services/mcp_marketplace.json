@@ -2,17 +2,17 @@
   {
     "id": "notion",
     "name": "Notion",
-    "description": "导入 Notion 工作区中的文档、数据库页面和知识库内容",
+    "description": "导入 Notion 工作区中的文档、数据库页面和知识库内容（官方 MCP Server）",
     "icon": "notion",
     "category": "文档协作",
     "mcp_transport": "stdio",
-    "mcp_command": "npx -y @anthropic/notion-mcp",
-    "mcp_env_keys": ["NOTION_API_KEY"],
-    "mcp_tool_name": "notion_get_page",
+    "mcp_command": "npx -y @notionhq/notion-mcp-server",
+    "mcp_env_keys": ["NOTION_TOKEN"],
+    "mcp_tool_name": "API-post-search",
     "mcp_tool_args_template": {},
     "content_mode": "markdown",
-    "install_instructions": "1. 在 Notion 集成页面创建 Integration 并获取 API Key\n2. 将需要导入的页面分享给该 Integration\n3. 设置环境变量 NOTION_API_KEY\n4. 确保本机已安装 Node.js 18+",
-    "docs_url": "https://developers.notion.com/docs/create-a-notion-integration"
+    "install_instructions": "1. 打开 https://www.notion.so/profile/integrations，创建一个 Internal Integration\n2. 复制 Integration Token（以 ntn_ 开头）\n3. 将需要导入的页面或数据库通过「连接」菜单分享给该 Integration\n4. 设置环境变量 NOTION_TOKEN=<你的 Token>\n5. 确保本机已安装 Node.js 18+",
+    "docs_url": "https://github.com/makenotion/notion-mcp-server"
   },
   {
     "id": "confluence",
