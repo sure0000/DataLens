@@ -59,8 +59,10 @@ def _has_legacy_llm_key(db: Session | None = None) -> bool:
 
 
 def has_any_llm_key(db: Session | None = None) -> bool:
-    if db is not None and list_connections(db):
-        return True
+    if db is not None:
+        for conn in list_connections(db):
+            if (conn.api_key or "").strip():
+                return True
     return _has_legacy_llm_key(db)
 
 

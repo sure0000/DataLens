@@ -112,6 +112,26 @@ const OPENAI_MODEL_IDS: { id: string; label: string }[] = [
   { id: "gpt-4-turbo", label: "gpt-4-turbo" }
 ];
 
+const SILICONFLOW_MODEL_IDS: { id: string; label: string }[] = [
+  { id: "deepseek-ai/DeepSeek-V4-Flash", label: "DeepSeek-V4-Flash（284B MoE）" },
+  { id: "Qwen/Qwen3.6-27B", label: "Qwen3.6-27B（Dense 27B）" },
+  { id: "Pro/moonshotai/Kimi-K2.6", label: "Kimi-K2.6（1T MoE）" },
+  { id: "Qwen/Qwen3.6-35B-A3B", label: "Qwen3.6-35B-A3B（35B MoE）" },
+  { id: "Pro/zai-org/GLM-5.1", label: "GLM-5.1（754B MoE）" },
+  { id: "Pro/zai-org/GLM-5", label: "GLM-5（754B MoE）" },
+  { id: "MiniMaxAI/MiniMax-M2.5", label: "MiniMax-M2.5" },
+  { id: "Pro/MiniMaxAI/MiniMax-M2.5", label: "MiniMax-M2.5 Pro" },
+  { id: "Qwen/Qwen3.5-397B-A17B", label: "Qwen3.5-397B-A17B（397B MoE）" },
+  { id: "Qwen/Qwen3.5-122B-A10B", label: "Qwen3.5-122B-A10B（122B MoE）" },
+  { id: "Qwen/Qwen3.5-35B-A3B", label: "Qwen3.5-35B-A3B（35B MoE）" },
+  { id: "Pro/moonshotai/Kimi-K2.5", label: "Kimi-K2.5（1T MoE）" },
+  { id: "Pro/zai-org/GLM-4.7", label: "GLM-4.7（754B MoE）" },
+  { id: "deepseek-ai/DeepSeek-V3.2", label: "DeepSeek-V3.2" },
+  { id: "Pro/deepseek-ai/DeepSeek-V3.2", label: "DeepSeek-V3.2 Pro" },
+  { id: "deepseek-ai/DeepSeek-V3.1-Terminus", label: "DeepSeek-V3.1-Terminus" },
+  { id: "Pro/deepseek-ai/DeepSeek-V3.1-Terminus", label: "DeepSeek-V3.1-Terminus Pro" },
+];
+
 function StatusDot({ ok }: { ok: boolean }) {
   return (
     <span
@@ -157,6 +177,38 @@ function IconEyeOff({ className = "h-4 w-4" }: { className?: string }) {
   );
 }
 
+type McpSource = {
+  id: number;
+  name: string;
+  mcp_transport: string;
+  mcp_command?: string | null;
+  mcp_args?: string[] | null;
+  mcp_url?: string | null;
+  mcp_env?: Record<string, string> | null;
+  mcp_tool_name?: string | null;
+  mcp_tool_args?: Record<string, unknown> | null;
+  content_mode: string;
+  max_entry_chars: number;
+  created_at?: string;
+};
+
+type McpMarketplaceTemplate = {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  category: string;
+  mcp_transport: string;
+  mcp_command?: string;
+  mcp_url?: string;
+  mcp_env_keys: string[];
+  mcp_tool_name?: string;
+  mcp_tool_args_template?: Record<string, unknown>;
+  content_mode: string;
+  install_instructions: string;
+  docs_url?: string;
+};
+
 export default function SettingsPage() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [cfg, setCfg] = useState<LlmConfig | null>(null);
@@ -166,7 +218,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingConn, setSavingConn] = useState(false);
-  const [toast, setToast] = useState<{ message: string; tone?: "success" | "error" } | null>(null);
+  const [toast, setToast] = useState<{ message: string; tone?: "success" | "error" | "info" } | null>(null);
 
   const [addOpen, setAddOpen] = useState(false);
   const [addVendorId, setAddVendorId] = useState(LLM_VENDORS[0].id);
@@ -184,11 +236,28 @@ export default function SettingsPage() {
   const [deleteConnId, setDeleteConnId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
+  // MCP 源管理
+  const [mcpSources, setMcpSources] = useState<McpSource[]>([]);
+  const [mcpModalOpen, setMcpModalOpen] = useState(false);
+  const [mcpSaving, setMcpSaving] = useState(false);
+  const [editingMcpId, setEditingMcpId] = useState<number | null>(null);
+  const [mcpName, setMcpName] = useState("");
+  const [mcpConfigText, setMcpConfigText] = useState("");
+  const [mcpTestingId, setMcpTestingId] = useState<number | null>(null);
+  const [mcpMarketplaceOpen, setMcpMarketplaceOpen] = useState(false);
+  const [mcpTemplates, setMcpTemplates] = useState<McpMarketplaceTemplate[]>([]);
+  const [deleteMcpId, setDeleteMcpId] = useState<number | null>(null);
+  const [activeTab, setActiveTab] = useState<"models" | "semantic" | "mcp">("models");
+
   const connectRef = useRef<HTMLElement>(null);
 
   const addVendor = useMemo(() => LLM_VENDORS.find((v) => v.id === addVendorId) ?? LLM_VENDORS[0], [addVendorId]);
   const addChannel = addVendor.channel;
-  const modelIdOptions = useMemo(() => (addChannel === "deepseek" ? DEEPSEEK_MODEL_IDS : OPENAI_MODEL_IDS), [addChannel]);
+  const modelIdOptions = useMemo(() => {
+    if (addVendorId === "siliconflow") return SILICONFLOW_MODEL_IDS;
+    if (addChannel === "deepseek") return DEEPSEEK_MODEL_IDS;
+    return OPENAI_MODEL_IDS;
+  }, [addChannel, addVendorId]);
 
   useEffect(() => {
     setAddModelId((prev) => (modelIdOptions.some((o) => o.id === prev) ? prev : modelIdOptions[0].id));
@@ -219,16 +288,18 @@ export default function SettingsPage() {
   async function load() {
     setLoading(true);
     try {
-      const [cat, c, connRes] = await Promise.all([
+      const [cat, c, connRes, mcpList] = await Promise.all([
         api<Catalog>("/api/llm/catalog"),
         api<LlmConfig>("/api/llm/config"),
-        api<{ connections: LlmConnPublic[] }>("/api/llm/connections")
+        api<{ connections: LlmConnPublic[] }>("/api/llm/connections"),
+        api<McpSource[]>("/api/mcp-sources").catch(() => [] as McpSource[]),
       ]);
       setCatalog(cat);
       setCfg(c);
       setSemantic(c.semantic_llm_model || "auto");
       setSavedSemantic(c.semantic_llm_model_resolved || "");
       setConnections(connRes.connections || []);
+      setMcpSources(Array.isArray(mcpList) ? mcpList : []);
     } catch {
       setToast({ message: "加载失败，请确认后端已启动", tone: "error" });
     } finally {
@@ -266,7 +337,7 @@ export default function SettingsPage() {
     setAddUrl(v.presetBaseUrl || "");
     setAddName(v.presetConnectionName || "");
     setAddKey("");
-    setAddModelId(v.channel === "deepseek" ? DEEPSEEK_MODEL_IDS[0].id : OPENAI_MODEL_IDS[0].id);
+    setAddModelId(v.id === "siliconflow" ? SILICONFLOW_MODEL_IDS[0].id : v.channel === "deepseek" ? DEEPSEEK_MODEL_IDS[0].id : OPENAI_MODEL_IDS[0].id);
     setAddOpen(true);
   }
 
@@ -373,6 +444,197 @@ export default function SettingsPage() {
     }
   }
 
+  // ── MCP 源操作 ──
+
+  const MCP_CONFIG_TEMPLATE = `{
+  "command": "uvx",
+  "args": ["mcp-atlassian"],
+  "env": {}
+}`;
+
+  function parseMcpConfig(text: string): Record<string, unknown> | null {
+    try {
+      let cfg = JSON.parse(text);
+      if (typeof cfg !== "object" || !cfg) return null;
+      // 支持 Cursor mcpServers 外层包裹：提取第一个 server
+      if (cfg.mcpServers && typeof cfg.mcpServers === "object" && !Array.isArray(cfg.mcpServers)) {
+        const names = Object.keys(cfg.mcpServers);
+        if (names.length === 0) return null;
+        const inner = (cfg.mcpServers as Record<string, unknown>)[names[0]];
+        if (typeof inner === "object" && inner && !Array.isArray(inner)) {
+          cfg = inner as Record<string, unknown>;
+        }
+      }
+      return cfg as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }
+
+  function mcpFieldsToConfig(s: McpSource): string {
+    const cfg: Record<string, unknown> = {};
+    if (s.mcp_transport === "http" && s.mcp_url) {
+      cfg.url = s.mcp_url;
+    } else {
+      cfg.command = s.mcp_command || "";
+      if (s.mcp_args && s.mcp_args.length > 0) cfg.args = s.mcp_args;
+    }
+    if (s.mcp_env && Object.keys(s.mcp_env).length > 0) cfg.env = s.mcp_env;
+    if (s.mcp_tool_name) cfg.tool_name = s.mcp_tool_name;
+    if (s.mcp_tool_args && Object.keys(s.mcp_tool_args).length > 0) cfg.tool_args = s.mcp_tool_args;
+    if (s.content_mode && s.content_mode !== "markdown") cfg.content_mode = s.content_mode;
+    if (s.max_entry_chars && s.max_entry_chars !== 50000) cfg.max_entry_chars = s.max_entry_chars;
+    return JSON.stringify(cfg, null, 2);
+  }
+
+  function openMcpModalCreate() {
+    setEditingMcpId(null);
+    setMcpName("");
+    setMcpConfigText(MCP_CONFIG_TEMPLATE);
+    setMcpModalOpen(true);
+  }
+
+  function openMcpModalEdit(s: McpSource) {
+    setEditingMcpId(s.id);
+    setMcpName(s.name);
+    setMcpConfigText(mcpFieldsToConfig(s));
+    setMcpModalOpen(true);
+  }
+
+  async function saveMcpSource() {
+    // 从 mcpServers 外层包裹中提取第一个 server 名
+    let name = mcpName.trim();
+    try {
+      const raw = JSON.parse(mcpConfigText);
+      if (raw.mcpServers && typeof raw.mcpServers === "object" && !Array.isArray(raw.mcpServers)) {
+        const names = Object.keys(raw.mcpServers);
+        if (names.length > 0 && !name) {
+          name = names[0];
+          setMcpName(names[0]);
+        }
+      }
+    } catch { /* ignore */ }
+    if (!name) { setToast({ message: "请填写名称", tone: "error" }); return; }
+    const cfg = parseMcpConfig(mcpConfigText);
+    if (!cfg) { setToast({ message: "JSON 配置格式错误", tone: "error" }); return; }
+    // 自动检测传输方式：有 url → http，有 command → stdio
+    const hasUrl = typeof cfg.url === "string" && cfg.url.trim();
+    const hasCommand = typeof cfg.command === "string" && cfg.command.trim();
+    const transport =
+      cfg.transport === "http" || cfg.transport === "stdio" ? String(cfg.transport) :
+      hasUrl ? "http" :
+      hasCommand ? "stdio" :
+      "stdio";
+    if (!hasUrl && !hasCommand) {
+      setToast({ message: "请提供 command（stdio 模式）或 url（http 模式）", tone: "error" });
+      return;
+    }
+
+    setMcpSaving(true);
+    try {
+      const body: Record<string, unknown> = {
+        name,
+        mcp_transport: transport,
+        mcp_command: typeof cfg.command === "string" ? cfg.command.trim() || null : null,
+        mcp_args: Array.isArray(cfg.args) ? cfg.args.map(String) : null,
+        mcp_url: typeof cfg.url === "string" ? cfg.url.trim() || null : null,
+        mcp_env: cfg.env && typeof cfg.env === "object" && !Array.isArray(cfg.env)
+          ? Object.fromEntries(Object.entries(cfg.env as Record<string, unknown>).map(([k, v]) => [k, String(v)]))
+          : null,
+        mcp_tool_name: typeof cfg.tool_name === "string" ? cfg.tool_name.trim() || null : null,
+        mcp_tool_args: cfg.tool_args && typeof cfg.tool_args === "object" ? cfg.tool_args : null,
+        content_mode: cfg.content_mode === "json_to_md" ? "json_to_md" : "markdown",
+        max_entry_chars: typeof cfg.max_entry_chars === "number" ? cfg.max_entry_chars : 50000,
+      };
+      if (editingMcpId) {
+        await api(`/api/mcp-sources/${editingMcpId}`, { method: "PUT", body: JSON.stringify(body) });
+        setToast({ message: "MCP 源已更新", tone: "success" });
+      } else {
+        await api(`/api/mcp-sources`, { method: "POST", body: JSON.stringify(body) });
+        setToast({ message: "MCP 源已添加", tone: "success" });
+      }
+      setMcpModalOpen(false);
+      load();
+    } catch (e: unknown) {
+      const detail = e instanceof Error ? (e as { message?: string }).message || String(e) : "保存失败";
+      setToast({ message: detail.length > 500 ? detail.slice(0, 500) + "…" : detail, tone: "error" });
+    } finally {
+      setMcpSaving(false);
+    }
+  }
+
+  async function testMcpSource(s: McpSource) {
+    setMcpTestingId(s.id);
+    setToast({ message: "正在测试 MCP Server 连接…", tone: "info" });
+    try {
+      const res = await api<{ ok?: boolean; tools?: { name: string; description: string }[]; preview?: string; error?: string }>(
+        `/api/mcp-sources/${s.id}/test`,
+        { method: "POST" }
+      );
+      if (res.ok) {
+        const toolNames = (res.tools || []).map((t: { name: string }) => t.name).join(", ");
+        const preview = res.preview ? `\n预览：${res.preview.slice(0, 200)}` : "";
+        setToast({ message: `连接成功！可用 tools：${toolNames || "（无）"}${preview}`, tone: "success" });
+      } else {
+        setToast({ message: `连接失败：${res.error || "未知错误"}`, tone: "error" });
+      }
+    } catch (e: unknown) {
+      setToast({ message: e instanceof Error ? e.message : "测试失败", tone: "error" });
+    } finally {
+      setMcpTestingId(null);
+    }
+  }
+
+  function confirmDeleteMcpSource(s: McpSource) {
+    setDeleteMcpId(s.id);
+  }
+
+  async function executeDeleteMcpSource() {
+    const id = deleteMcpId;
+    if (id == null) return;
+    setDeleting(true);
+    try {
+      await api(`/api/mcp-sources/${id}`, { method: "DELETE" });
+      setDeleteMcpId(null);
+      setToast({ message: "MCP 源已删除", tone: "success" });
+      load();
+    } catch (e: unknown) {
+      setToast({ message: e instanceof Error ? e.message : "删除失败", tone: "error" });
+    } finally {
+      setDeleting(false);
+    }
+  }
+
+  async function openMcpMarketplace() {
+    try {
+      const templates = await api<McpMarketplaceTemplate[]>("/api/mcp-marketplace");
+      setMcpTemplates(Array.isArray(templates) ? templates : []);
+    } catch {
+      setMcpTemplates([]);
+    }
+    setMcpMarketplaceOpen(true);
+  }
+
+  function applyMcpTemplate(tpl: McpMarketplaceTemplate) {
+    const config: Record<string, unknown> = {};
+    if (tpl.mcp_transport === "http" && tpl.mcp_url) {
+      config.url = tpl.mcp_url;
+    } else {
+      const parts = (tpl.mcp_command || "").trim().split(/\s+/);
+      config.command = parts[0] || "";
+      config.args = parts.slice(1);
+      config.env = Object.fromEntries((tpl.mcp_env_keys || []).map((k: string) => [k, ""]));
+    }
+    if (tpl.mcp_tool_name) config.tool_name = tpl.mcp_tool_name;
+    if (tpl.mcp_tool_args_template && Object.keys(tpl.mcp_tool_args_template).length > 0) config.tool_args = tpl.mcp_tool_args_template;
+    if (tpl.content_mode && tpl.content_mode !== "markdown") config.content_mode = tpl.content_mode;
+    setMcpName(tpl.name);
+    setMcpConfigText(JSON.stringify(config, null, 2));
+    setMcpMarketplaceOpen(false);
+    setEditingMcpId(null);
+    setMcpModalOpen(true);
+  }
+
   const semanticCustomModels = catalog
     ? catalog.models.filter((m) => m.model_family === "custom" || m.id.startsWith("conn:"))
     : [];
@@ -398,175 +660,290 @@ export default function SettingsPage() {
       <PageHeader title="偏好设置" />
 
       <div className="mx-auto mt-6 max-w-2xl pb-16">
-        <div className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 sm:gap-x-4">
-          <div className="flex flex-col items-center pt-1">
-            <div
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 border-app-primary bg-app-activeBg text-xs font-bold text-app-primary"
-              aria-hidden
-            >
-              1
-            </div>
-            <div className="my-2 min-h-[3rem] w-0 flex-1 border-l-2 border-dashed border-app-border sm:min-h-[4rem]" aria-hidden />
-            <div
-              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full border-2 text-xs font-bold ${
-                hasSemanticConnections ? "border-app-primary bg-app-activeBg text-app-primary" : "border-app-border bg-app-hover text-app-muted"
+        <div className="flex gap-4">
+          {/* ── 左侧 Tab 栏 ── */}
+          <nav className="w-36 shrink-0 flex flex-col gap-1" role="tablist" aria-label="偏好设置分类">
+            <button
+              role="tab"
+              aria-selected={activeTab === "models"}
+              onClick={() => setActiveTab("models")}
+              className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-left transition-colors ${
+                activeTab === "models"
+                  ? "bg-app-activeBg text-app-primary border border-app-primary/20"
+                  : "text-app-secondary hover:bg-app-hover hover:text-app-ink"
               }`}
-              aria-hidden
             >
-              2
-            </div>
-          </div>
+              <IconPlug className="h-4 w-4 shrink-0" />
+              模型管理
+            </button>
+            <button
+              role="tab"
+              aria-selected={activeTab === "semantic"}
+              onClick={() => setActiveTab("semantic")}
+              className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-left transition-colors ${
+                activeTab === "semantic"
+                  ? "bg-app-activeBg text-app-primary border border-app-primary/20"
+                  : "text-app-secondary hover:bg-app-hover hover:text-app-ink"
+              }`}
+            >
+              <IconColumns className="h-4 w-4 shrink-0" />
+              语义分析
+            </button>
+            <button
+              role="tab"
+              aria-selected={activeTab === "mcp"}
+              onClick={() => setActiveTab("mcp")}
+              className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-left transition-colors ${
+                activeTab === "mcp"
+                  ? "bg-app-activeBg text-app-primary border border-app-primary/20"
+                  : "text-app-secondary hover:bg-app-hover hover:text-app-ink"
+              }`}
+            >
+              <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                <polyline points="7,10 12,15 17,10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              MCP 管理
+            </button>
+          </nav>
 
-          <div className="space-y-6">
-            <section ref={connectRef} className="app-card rounded-2xl p-5 sm:p-6">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-app-primary">
-                    <IconPlug />
-                  </span>
-                  <div>
-                    <h2 className="app-card-title text-base">大模型接入</h2>
-                    <p className="mt-1 text-[11px] text-app-muted">新增后写入数据库，并出现在下方「可用大模型」与语义分析/Copilot 可选列表中。</p>
-                  </div>
-                </div>
-                <button type="button" className="app-button shrink-0 rounded-xl px-4 py-2 text-sm font-medium" onClick={() => openAddModal()}>
-                  新增接入
-                </button>
-              </div>
-
-              {loading ? (
-                <div className="mt-6 flex items-center gap-2 text-sm text-app-muted" role="status">
-                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-app-border border-t-app-primary" />
-                  加载中
-                </div>
-              ) : (
-                <div className="mt-5">
-                  <h3 className="text-xs font-semibold uppercase tracking-wide text-app-muted">可用大模型</h3>
-                  {connections.length === 0 ? (
-                    <div className="mt-3 rounded-xl border border-dashed border-app-border bg-app-hover/30 px-4 py-8 text-center text-sm text-app-muted">
-                      暂无接入，请点击右上角「新增接入」。
+          {/* ── 右侧内容面板 ── */}
+          <div className="min-w-0 flex-1">
+            {activeTab === "models" && (
+              <section ref={connectRef} className="app-card rounded-2xl p-5 sm:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-app-primary">
+                      <IconPlug />
+                    </span>
+                    <div>
+                      <h2 className="app-card-title text-base">大模型接入</h2>
+                      <p className="mt-1 text-[11px] text-app-muted">新增后写入数据库，并出现在下方「可用大模型」与语义分析/Copilot 可选列表中。</p>
                     </div>
-                  ) : (
-                    <ul className="mt-3 divide-y divide-app-border overflow-hidden rounded-xl border border-app-border bg-white">
-                      {connections.map((row) => (
-                        <li key={row.id} className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4">
-                          <div className="min-w-0 flex-1 space-y-1">
-                            <p className="truncate text-sm font-semibold text-app-ink">{row.custom_name}</p>
-                            <p className="text-[11px] text-app-secondary">
-                              <span className="text-app-muted">厂商</span> {row.vendor_label}
-                              <span className="mx-1.5 text-app-border">·</span>
-                              <span className="text-app-muted">模型</span>{" "}
-                              <span className="font-mono text-app-ink">{row.model_id}</span>
-                            </p>
-                            <p className="truncate font-mono text-[10px] text-app-muted" title={row.base_url}>
-                              {row.base_url}
-                            </p>
-                          </div>
-                          <div className="flex shrink-0 flex-wrap gap-2">
-                            <button
-                              type="button"
-                              className="app-button-secondary rounded-lg px-3 py-1.5 text-xs font-medium"
-                              onClick={() => void openViewConnection(row.id)}
-                            >
-                              查看
-                            </button>
-                            <button
-                              type="button"
-                              className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50"
-                              onClick={() => setDeleteConnId(row.id)}
-                            >
-                              删除
-                            </button>
-                          </div>
-                        </li>
-                      ))}
-                    </ul>
-                  )}
-                </div>
-              )}
-            </section>
-
-            <section className="app-card rounded-2xl p-5 sm:p-6">
-              <div className="flex items-start gap-3">
-                <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-app-primary">
-                  <IconColumns />
-                </span>
-                <div className="min-w-0 flex-1">
-                  <h2 className="app-card-title text-base">语义分析</h2>
-                </div>
-              </div>
-
-              {loading ? (
-                <div className="mt-6 flex items-center gap-2 text-sm text-app-muted" role="status">
-                  <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-app-border border-t-app-primary" />
-                  加载中
-                </div>
-              ) : !hasSemanticConnections ? (
-                <div className="mt-6 flex flex-col items-center gap-4 rounded-2xl border border-dashed border-app-border bg-app-hover/30 px-4 py-10">
-                  <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100/80 text-amber-700">
-                    <IconColumns className="h-7 w-7" />
                   </div>
-                  <p className="text-center text-sm text-app-secondary">尚未配置可用大模型，请先新增一条接入。</p>
-                  <button type="button" className="app-button rounded-xl px-4 py-2 text-sm font-medium" onClick={() => openAddModal()}>
+                  <button type="button" className="app-button shrink-0 rounded-xl px-4 py-2 text-sm font-medium" onClick={() => openAddModal()}>
                     新增接入
                   </button>
                 </div>
-              ) : !catalog ? (
-                <p className="mt-6 text-sm text-app-muted">模型目录加载中…</p>
-              ) : (
-                <div className="mt-5 space-y-4">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                    <label className="flex min-w-0 flex-1 flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                      可选模型
-                      <select
-                        className="app-input rounded-xl px-3 py-2.5 text-sm focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1"
-                        value={semantic}
-                        onChange={(e) => setSemantic(e.target.value)}
-                      >
-                        <option value={catalog.auto_id}>自动</option>
-                        {semanticOrphanOption ? (
-                          <option value={semantic} disabled>
-                            （已不在列表）{formatTripletLine(tripletForModelRef(catalog, semantic))}
-                          </option>
-                        ) : null}
-                        {semanticCustomModels.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {formatTripletLine(tripletFromCatalogModel(m))}
-                          </option>
+
+                {loading ? (
+                  <div className="mt-6 flex items-center gap-2 text-sm text-app-muted" role="status">
+                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-app-border border-t-app-primary" />
+                    加载中
+                  </div>
+                ) : (
+                  <div className="mt-5">
+                    <h3 className="text-xs font-semibold uppercase tracking-wide text-app-muted">可用大模型</h3>
+                    {connections.length === 0 ? (
+                      <div className="mt-3 rounded-xl border border-dashed border-app-border bg-app-hover/30 px-4 py-8 text-center text-sm text-app-muted">
+                        暂无接入，请点击右上角「新增接入」。
+                      </div>
+                    ) : (
+                      <ul className="mt-3 divide-y divide-app-border overflow-hidden rounded-xl border border-app-border bg-white">
+                        {connections.map((row) => (
+                          <li key={row.id} className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4">
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <p className="truncate text-sm font-semibold text-app-ink">{row.custom_name}</p>
+                              <p className="text-[11px] text-app-secondary">
+                                <span className="text-app-muted">厂商</span> {row.vendor_label}
+                                <span className="mx-1.5 text-app-border">·</span>
+                                <span className="text-app-muted">模型</span>{" "}
+                                <span className="font-mono text-app-ink">{row.model_id}</span>
+                              </p>
+                              <p className="truncate font-mono text-[10px] text-app-muted" title={row.base_url}>
+                                {row.base_url}
+                              </p>
+                            </div>
+                            <div className="flex shrink-0 flex-wrap gap-2">
+                              <button
+                                type="button"
+                                className="app-button-secondary rounded-lg px-3 py-1.5 text-xs font-medium"
+                                onClick={() => void openViewConnection(row.id)}
+                              >
+                                查看
+                              </button>
+                              <button
+                                type="button"
+                                className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50"
+                                onClick={() => setDeleteConnId(row.id)}
+                              >
+                                删除
+                              </button>
+                            </div>
+                          </li>
                         ))}
-                      </select>
-                    </label>
-                    <button
-                      type="button"
-                      className="app-button shrink-0 rounded-xl px-4 py-2.5 text-sm font-medium"
-                      disabled={saving}
-                      onClick={() => void saveSemantic()}
-                    >
-                      {saving ? "保存中…" : "保存"}
+                      </ul>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {activeTab === "semantic" && (
+              <section className="app-card rounded-2xl p-5 sm:p-6">
+                <div className="flex items-start gap-3">
+                  <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-app-primary">
+                    <IconColumns />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <h2 className="app-card-title text-base">语义分析</h2>
+                  </div>
+                </div>
+
+                {loading ? (
+                  <div className="mt-6 flex items-center gap-2 text-sm text-app-muted" role="status">
+                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-app-border border-t-app-primary" />
+                    加载中
+                  </div>
+                ) : !hasSemanticConnections ? (
+                  <div className="mt-6 flex flex-col items-center gap-4 rounded-2xl border border-dashed border-app-border bg-app-hover/30 px-4 py-10">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100/80 text-amber-700">
+                      <IconColumns className="h-7 w-7" />
+                    </div>
+                    <p className="text-center text-sm text-app-secondary">尚未配置可用大模型，请先新增一条接入。</p>
+                    <button type="button" className="app-button rounded-xl px-4 py-2 text-sm font-medium" onClick={() => openAddModal()}>
+                      新增接入
                     </button>
                   </div>
-                  {effectiveTriplet ? (
-                    <div className="rounded-xl border border-app-border bg-app-hover/40 px-3 py-3 text-sm">
-                      <p className="text-[11px] font-medium text-app-muted">当前生效</p>
-                      <dl className="mt-2 grid gap-2 sm:grid-cols-3">
-                        <div>
-                          <dt className="text-[10px] font-medium uppercase tracking-wide text-app-muted">名称</dt>
-                          <dd className="mt-0.5 font-medium text-app-ink">{effectiveTriplet.name}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-[10px] font-medium uppercase tracking-wide text-app-muted">厂商</dt>
-                          <dd className="mt-0.5 text-app-ink">{effectiveTriplet.vendor}</dd>
-                        </div>
-                        <div>
-                          <dt className="text-[10px] font-medium uppercase tracking-wide text-app-muted">模型</dt>
-                          <dd className="mt-0.5 font-mono text-xs text-app-ink">{effectiveTriplet.model}</dd>
-                        </div>
-                      </dl>
+                ) : !catalog ? (
+                  <p className="mt-6 text-sm text-app-muted">模型目录加载中…</p>
+                ) : (
+                  <div className="mt-5 space-y-4">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                      <label className="flex min-w-0 flex-1 flex-col gap-1.5 text-xs font-medium text-app-secondary">
+                        可选模型
+                        <select
+                          className="app-input rounded-xl px-3 py-2.5 text-sm focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1"
+                          value={semantic}
+                          onChange={(e) => setSemantic(e.target.value)}
+                        >
+                          <option value={catalog.auto_id}>自动</option>
+                          {semanticOrphanOption ? (
+                            <option value={semantic} disabled>
+                              （已不在列表）{formatTripletLine(tripletForModelRef(catalog, semantic))}
+                            </option>
+                          ) : null}
+                          {semanticCustomModels.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {formatTripletLine(tripletFromCatalogModel(m))}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <button
+                        type="button"
+                        className="app-button shrink-0 rounded-xl px-4 py-2.5 text-sm font-medium"
+                        disabled={saving}
+                        onClick={() => void saveSemantic()}
+                      >
+                        {saving ? "保存中…" : "保存"}
+                      </button>
                     </div>
-                  ) : null}
+                    {effectiveTriplet ? (
+                      <div className="rounded-xl border border-app-border bg-app-hover/40 px-3 py-3 text-sm">
+                        <p className="text-[11px] font-medium text-app-muted">当前生效</p>
+                        <dl className="mt-2 grid gap-2 sm:grid-cols-3">
+                          <div>
+                            <dt className="text-[10px] font-medium uppercase tracking-wide text-app-muted">名称</dt>
+                            <dd className="mt-0.5 font-medium text-app-ink">{effectiveTriplet.name}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-[10px] font-medium uppercase tracking-wide text-app-muted">厂商</dt>
+                            <dd className="mt-0.5 text-app-ink">{effectiveTriplet.vendor}</dd>
+                          </div>
+                          <div>
+                            <dt className="text-[10px] font-medium uppercase tracking-wide text-app-muted">模型</dt>
+                            <dd className="mt-0.5 font-mono text-xs text-app-ink">{effectiveTriplet.model}</dd>
+                          </div>
+                        </dl>
+                      </div>
+                    ) : null}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {activeTab === "mcp" && (
+              <section className="app-card rounded-2xl p-5 sm:p-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-app-primary">
+                      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
+                        <polyline points="7,10 12,15 17,10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
+                    </span>
+                    <div>
+                      <h2 className="app-card-title text-base">MCP 管理</h2>
+                      <p className="mt-1 text-[11px] text-app-muted">
+                        配置 MCP Server 连接，供知识库导入时选用。使用 JSON 配置，简洁通用。
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <button type="button" className="app-button-secondary rounded-xl px-3 py-1.5 text-xs" onClick={() => void openMcpMarketplace()}>
+                      模板市场
+                    </button>
+                    <button type="button" className="app-button rounded-xl px-4 py-2 text-sm font-medium" onClick={openMcpModalCreate}>
+                      添加 MCP 源
+                    </button>
+                  </div>
                 </div>
-              )}
-            </section>
+
+                {loading ? (
+                  <div className="mt-6 flex items-center gap-2 text-sm text-app-muted" role="status">
+                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-app-border border-t-app-primary" />
+                    加载中
+                  </div>
+                ) : mcpSources.length === 0 ? (
+                  <div className="mt-5 rounded-xl border border-dashed border-app-border bg-app-hover/30 px-4 py-8 text-center text-sm text-app-muted">
+                    暂无 MCP 源。可从「模板市场」快速创建，或手动编写 JSON 配置。
+                  </div>
+                ) : (
+                  <ul className="mt-3 divide-y divide-app-border overflow-hidden rounded-xl border border-app-border bg-white">
+                    {mcpSources.map((s) => (
+                      <li key={s.id} className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4">
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-semibold text-app-ink">{s.name}</p>
+                            <span className="text-[11px] text-app-muted">
+                              {s.mcp_transport === "http" ? "HTTP" : "stdio"}
+                              {s.mcp_tool_name ? ` · ${s.mcp_tool_name}` : ""}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 flex-wrap gap-2">
+                          <button
+                            className={`app-button-secondary rounded-lg px-3 py-1.5 text-xs font-medium ${mcpTestingId === s.id ? "is-loading" : ""}`}
+                            type="button"
+                            disabled={mcpTestingId !== null}
+                            onClick={() => void testMcpSource(s)}
+                          >
+                            {mcpTestingId === s.id ? "测试中…" : "测试连接"}
+                          </button>
+                          <button
+                            type="button"
+                            className="app-button-secondary rounded-lg px-3 py-1.5 text-xs font-medium"
+                            onClick={() => openMcpModalEdit(s)}
+                          >
+                            编辑
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50"
+                            onClick={() => confirmDeleteMcpSource(s)}
+                          >
+                            删除
+                          </button>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </section>
+            )}
           </div>
         </div>
       </div>
@@ -765,6 +1142,89 @@ export default function SettingsPage() {
           document.body
         )}
 
+      {/* ── MCP 源创建/编辑弹窗 ── */}
+      {mcpModalOpen && typeof document !== "undefined" && createPortal(
+        <div className="app-modal-backdrop app-modal-backdrop--front" role="presentation" onClick={() => !mcpSaving && setMcpModalOpen(false)}>
+          <div
+            className="app-modal-surface app-chatgpt-dialog mx-4 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl p-5 sm:p-6"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mcp-form-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="mcp-form-title" className="text-base font-semibold text-app-ink">
+              {editingMcpId ? "编辑 MCP 源" : "添加 MCP 源"}
+            </h3>
+            <div className="mt-4 space-y-3">
+              <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
+                名称
+                <input className="app-input rounded-xl px-3 py-2 text-sm" value={mcpName} onChange={(e) => setMcpName(e.target.value)} disabled={mcpSaving} placeholder="例如：Notion 工作区" />
+              </label>
+              <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
+                JSON 配置
+                <textarea
+                  className="app-input rounded-xl px-3 py-2 text-sm font-mono min-h-[200px]"
+                  value={mcpConfigText}
+                  onChange={(e) => setMcpConfigText(e.target.value)}
+                  disabled={mcpSaving}
+                  spellCheck={false}
+                  placeholder={MCP_CONFIG_TEMPLATE}
+                />
+              </label>
+              <p className="text-[10px] text-app-muted leading-relaxed">
+                Cursor 兼容格式：stdio 模式填 command + args + env，http 模式填 url。可选：tool_name、tool_args、content_mode (markdown/json_to_md)、max_entry_chars。可直接粘贴 mcpServers 配置。
+              </p>
+            </div>
+            <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+              <button type="button" className="app-dialog-btn app-dialog-btn-secondary w-full sm:w-auto" onClick={() => setMcpModalOpen(false)} disabled={mcpSaving}>取消</button>
+              <button type="button" className="app-dialog-btn app-dialog-btn-primary w-full sm:w-auto" disabled={mcpSaving} onClick={() => void saveMcpSource()}>
+                {mcpSaving ? "保存中…" : "保存"}
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* ── MCP 模板市场弹窗 ── */}
+      {mcpMarketplaceOpen && typeof document !== "undefined" && createPortal(
+        <div className="app-modal-backdrop app-modal-backdrop--front" role="presentation" onClick={() => setMcpMarketplaceOpen(false)}>
+          <div
+            className="app-modal-surface app-chatgpt-dialog mx-4 max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl p-5 sm:p-6"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mcp-marketplace-title"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 id="mcp-marketplace-title" className="text-base font-semibold text-app-ink">MCP 模板市场</h3>
+            <p className="mt-1 text-[11px] text-app-muted">选择一个模板快速创建 MCP 导入源。创建后可在编辑窗中调整 JSON 配置。</p>
+            {!mcpTemplates.length ? (
+              <p className="mt-4 text-sm text-app-muted">暂无可用模板。</p>
+            ) : (
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {mcpTemplates.map((tpl) => (
+                  <div key={tpl.id} className="rounded-xl border border-app-border bg-app-hover/40 p-4 flex flex-col justify-between">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[10px] font-medium rounded-full border border-app-border px-2 py-0.5 text-app-muted">{tpl.category}</span>
+                        <span className="text-[10px] text-app-muted">{tpl.mcp_transport === "http" ? "HTTP" : "stdio"}</span>
+                      </div>
+                      <p className="font-semibold text-sm text-app-ink">{tpl.name}</p>
+                      <p className="text-app-muted mt-1 text-xs line-clamp-3">{tpl.description}</p>
+                    </div>
+                    <button className="app-button mt-3 text-xs w-full" type="button" onClick={() => applyMcpTemplate(tpl)}>
+                      使用此模板
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <button type="button" className="app-dialog-btn app-dialog-btn-secondary mt-4 w-full" onClick={() => setMcpMarketplaceOpen(false)}>关闭</button>
+          </div>
+        </div>,
+        document.body
+      )}
+
       <ConfirmDialog
         open={deleteConnId !== null}
         title="删除该接入？"
@@ -778,6 +1238,18 @@ export default function SettingsPage() {
           const id = deleteConnId;
           if (id) void confirmDeleteConnection();
         }}
+      />
+
+      <ConfirmDialog
+        open={deleteMcpId !== null}
+        title="删除该 MCP 源？"
+        description={`将删除「${mcpSources.find(s => s.id === deleteMcpId)?.name || ""}」及其在所有知识库中导入的全部条目与索引。`}
+        confirmText="删除"
+        cancelText="取消"
+        danger
+        loading={deleting}
+        onCancel={() => setDeleteMcpId(null)}
+        onConfirm={() => { void executeDeleteMcpSource(); }}
       />
 
       {toast && <Toast message={toast.message} tone={toast.tone} onClose={() => setToast(null)} />}

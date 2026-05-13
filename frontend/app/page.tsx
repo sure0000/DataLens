@@ -36,7 +36,7 @@ export default function Home() {
           ? formatApiError(e)
           : e instanceof Error
             ? e.message
-            : "加载业务域失败：请确认后端已启动（默认 http://localhost:8000）且 NEXT_PUBLIC_API_URL 配置正确。"
+            : "加载业务域失败：请确认后端已启动（默认 http://127.0.0.1:8000）且 NEXT_PUBLIC_API_URL 配置正确。"
       );
     } finally {
       setLoading(false);

@@ -1,4 +1,4 @@
-"""按 cron 表达式调度知识库 Git 源同步（APScheduler）。"""
+"""按 cron 表达式调度知识库 Git / MCP 源同步（APScheduler）。"""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 _scheduler = BackgroundScheduler(timezone="UTC")
 
 
-def _run_sync_job(source_id: int) -> None:
+def _run_git_sync_job(source_id: int) -> None:
     db = SessionLocal()
     try:
         from services.git_knowledge_sync import run_git_source_sync
@@ -33,13 +33,14 @@ def _run_sync_job(source_id: int) -> None:
         db.close()
 
 
-def refresh_git_sync_schedules() -> None:
-    """根据数据库中的 enabled + cron_expression 重建全部定时任务。"""
+def _refresh_schedules_for_model(
+    model: type, job_prefix: str, job_func: callable
+) -> None:
     if not _scheduler.running:
         return
     for j in list(_scheduler.get_jobs()):
         jid = getattr(j, "id", None) or ""
-        if isinstance(jid, str) and jid.startswith("git_sync_"):
+        if isinstance(jid, str) and jid.startswith(job_prefix):
             try:
                 _scheduler.remove_job(jid)
             except JobLookupError:
@@ -47,7 +48,9 @@ def refresh_git_sync_schedules() -> None:
 
     db = SessionLocal()
     try:
-        rows = db.scalars(select(KnowledgeGitSource).where(KnowledgeGitSource.enabled.is_(True))).all()
+        rows = db.scalars(
+            select(model).where(model.enabled.is_(True))
+        ).all()
         for r in rows:
             cron = (r.cron_expression or "").strip()
             if not cron:
@@ -55,11 +58,13 @@ def refresh_git_sync_schedules() -> None:
             try:
                 trigger = CronTrigger.from_crontab(cron)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("跳过无效 cron source_id=%s expr=%r: %s", r.id, cron, exc)
+                logger.warning(
+                    "跳过无效 cron source_id=%s expr=%r: %s", r.id, cron, exc
+                )
                 continue
-            job_id = f"git_sync_{r.id}"
+            job_id = f"{job_prefix}{r.id}"
             _scheduler.add_job(
-                _run_sync_job,
+                job_func,
                 trigger,
                 id=job_id,
                 args=[r.id],
@@ -67,6 +72,12 @@ def refresh_git_sync_schedules() -> None:
             )
     finally:
         db.close()
+
+
+def refresh_git_sync_schedules() -> None:
+    _refresh_schedules_for_model(
+        KnowledgeGitSource, "git_sync_", _run_git_sync_job
+    )
 
 
 def start_git_sync_scheduler() -> None:

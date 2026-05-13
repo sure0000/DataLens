@@ -48,6 +48,10 @@ function sourceBadgeText(meta?: Record<string, string> | Record<string, unknown>
   if (kind === "manual") return "手动编写";
   if (kind === "file") return `文件：${ref || "上传"}`;
   if (kind === "git_file") return ref ? `代码：${ref}` : "代码仓库";
+  if (kind === "mcp_import") {
+    const server = typeof meta.mcp_server === "string" ? meta.mcp_server : "";
+    return server ? `MCP：${server}` : "MCP 导入";
+  }
   return LEGACY_LINK_KIND_LABEL[kind] ?? kind;
 }
 
@@ -174,7 +178,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   const [viewEntry, setViewEntry] = useState<Entry | null>(null);
 
   const [importModalOpen, setImportModalOpen] = useState(false);
-  const [importTab, setImportTab] = useState<"url" | "file" | "official">("url");
+  const [importTab, setImportTab] = useState<"url" | "file" | "mcp">("url");
   const [importUrl, setImportUrl] = useState("");
   const [importTitle, setImportTitle] = useState("");
   const [importBusy, setImportBusy] = useState(false);
@@ -207,15 +211,13 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   const [gCron, setGCron] = useState("");
   const [gEnabled, setGEnabled] = useState(true);
 
-  // 官方 API 导入
-  const [importOfficialIntegration, setImportOfficialIntegration] = useState<
-    "notion" | "confluence" | "obsidian" | "feishu"
-  >("notion");
-  const [importApiKey, setImportApiKey] = useState("");
-  const [importObjectId, setImportObjectId] = useState("");
-  const [confluenceEmail, setConfluenceEmail] = useState("");
-  const [confluenceDomain, setConfluenceDomain] = useState("");
-  const [feishuAppId, setFeishuAppId] = useState("");
+  // MCP 导入
+  const [mcpImportSources, setMcpImportSources] = useState<
+    { id: number; name: string; mcp_transport: string; last_import_status?: string; last_import_error?: string; last_import_entries?: number; last_import_at?: string; last_import_kb_id?: number }[]
+  >([]);
+  const [selectedMcpSourceId, setSelectedMcpSourceId] = useState<number | null>(null);
+  const [mcpImportPrompt, setMcpImportPrompt] = useState("");
+  const [mcpImportPolling, setMcpImportPolling] = useState(false);
 
   const [confirmState, setConfirmState] = useState<{
     title: string;
@@ -520,13 +522,55 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     setImportUrl("");
     setImportTitle("");
     setImportFileKey((k) => k + 1);
-    setImportApiKey("");
-    setImportObjectId("");
-    setImportOfficialIntegration("notion");
-    setConfluenceEmail("");
-    setConfluenceDomain("");
-    setFeishuAppId("");
+    setSelectedMcpSourceId(null);
+    setMcpImportPrompt("");
+    loadMcpSourcesForImport();
     setImportModalOpen(true);
+  }
+
+  async function loadMcpSourcesForImport() {
+    try {
+      const sources = await api<typeof mcpImportSources[number][]>("/api/mcp-sources");
+      setMcpImportSources(Array.isArray(sources) ? sources : []);
+    } catch {
+      setMcpImportSources([]);
+    }
+  }
+
+  async function pollMcpImportStatus() {
+    // 轮询 MCP 源状态直到没有 importing 状态的源
+    setMcpImportPolling(true);
+    try {
+      for (let i = 0; i < 30; i++) {
+        const sources = await api<typeof mcpImportSources[number][]>("/api/mcp-sources");
+        if (!Array.isArray(sources)) break;
+        setMcpImportSources(sources);
+        const stillImporting = sources.some(
+          (s) => s.last_import_status === "importing" && s.last_import_kb_id === kbId
+        );
+        if (!stillImporting) {
+          // 检查最近一次导入结果
+          const recent = sources.find(
+            (s) => s.last_import_kb_id === kbId && s.last_import_status !== "importing"
+          );
+          if (recent) {
+            if (recent.last_import_status === "success") {
+              notifyUser(`MCP 导入完成：${recent.last_import_entries ?? 0} 个条目`, "success");
+            } else if (recent.last_import_status === "failed") {
+              notifyUser(`MCP 导入失败：${recent.last_import_error || "未知错误"}`, "error");
+            }
+          }
+          break;
+        }
+        await new Promise((r) => setTimeout(r, 2000));
+      }
+    } catch {
+      // 轮询期间出现网络错误，静默忽略
+    } finally {
+      setMcpImportPolling(false);
+      setImportBusy(false);
+      load();
+    }
   }
 
   async function submitUrlImport() {
@@ -552,80 +596,29 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     }
   }
 
-  async function submitOfficialImport() {
-    const key = importApiKey.trim();
-    const oid = importObjectId.trim();
-
-    if (!oid) {
-      notifyUser(
-        importOfficialIntegration === "obsidian"
-          ? "请填写 Obsidian Publish 页面完整 URL"
-          : "请填写页面/文档 ID 或链接"
-      );
+  async function submitMcpImport() {
+    if (!selectedMcpSourceId) {
+      notifyUser("请选择 MCP 源");
       return;
     }
-    if (importOfficialIntegration === "notion" && !key) {
-      notifyUser("请填写 Notion Integration Token");
-      return;
-    }
-    if (importOfficialIntegration === "confluence") {
-      if (!key) {
-        notifyUser("请填写 Confluence API Token");
-        return;
-      }
-      if (!confluenceEmail.trim() || !confluenceDomain.trim()) {
-        notifyUser("Confluence 请填写 Atlassian 账号邮箱与站点域名");
-        return;
-      }
-    }
-    if (importOfficialIntegration === "feishu") {
-      if (!feishuAppId.trim()) {
-        notifyUser("飞书请填写 app_id（在「应用凭证」中）");
-        return;
-      }
-      if (!key) {
-        notifyUser("请填写飞书 app_secret");
-        return;
-      }
-    }
-
-    const extra: Record<string, string> = {};
-    if (importOfficialIntegration === "confluence") {
-      extra.email = confluenceEmail.trim();
-      extra.domain = confluenceDomain.trim();
-    }
-    if (importOfficialIntegration === "feishu") {
-      extra.app_id = feishuAppId.trim();
-    }
-
     setImportBusy(true);
     try {
-      const res = await api<{ entry?: Entry; entries?: Entry[]; mode?: string }>(
-        `/api/knowledge-bases/${kbId}/entries/import-official`,
-        {
-          method: "POST",
-          body: JSON.stringify({
-            integration: importOfficialIntegration,
-            api_key: key,
-            object_id: oid,
-            title: importTitle.trim() || null,
-            ...(Object.keys(extra).length ? { extra } : {}),
-          }),
-        }
+      const body: Record<string, unknown> = {};
+      const prompt = mcpImportPrompt.trim();
+      if (prompt) body.prompt = prompt;
+      const res = await api<{ ok?: boolean; entries?: number; message?: string }>(
+        `/api/knowledge-bases/${kbId}/import-from-mcp/${selectedMcpSourceId}`,
+        { method: "POST", body: JSON.stringify(body) }
       );
-      if (res.entries && res.entries.length > 0) {
-        notifyUser(`已从 ${importOfficialIntegration} 官方 API 导入 ${res.entries.length} 条`);
-      } else {
-        notifyUser("已从官方 API 创建条目");
-      }
+      notifyUser(res.message || "MCP 导入已触发", "info");
       setImportModalOpen(false);
-      load();
+      // 启动轮询，等待后台导入完成
+      pollMcpImportStatus();
     } catch (e: unknown) {
       notifyUser(
-        e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "官方 API 导入失败",
+        e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "MCP 导入失败",
         "error"
       );
-    } finally {
       setImportBusy(false);
     }
   }
@@ -1224,7 +1217,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
             </div>
             <p className="app-text-muted text-xs leading-relaxed">
               <strong>链接</strong>：普通 <code className="rounded bg-app-hover px-1">http(s)</code> 网页。
-              <strong>官方 API</strong>：Notion / Confluence Cloud / 飞书云文档；Obsidian 为 Publish 公开页 URL（走抓取管线）。
+              <strong>MCP 导入</strong>：从偏好设置中配置的 MCP Server 拉取数据。
             </p>
             <div className="mt-3 flex rounded-lg border border-app-border p-0.5">
               <button
@@ -1250,12 +1243,12 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
               <button
                 type="button"
                 className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-colors ${
-                  importTab === "official" ? "bg-app-primary text-white" : "text-app-secondary hover:text-app-ink"
+                  importTab === "mcp" ? "bg-app-primary text-white" : "text-app-secondary hover:text-app-ink"
                 }`}
-                onClick={() => setImportTab("official")}
+                onClick={() => setImportTab("mcp")}
                 disabled={importBusy}
               >
-                官方 API
+                MCP 导入
               </button>
             </div>
 
@@ -1291,122 +1284,83 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
               </div>
             ) : (
               <div className="mt-4 space-y-3">
-                <label className="app-form-label">
-                  <span>平台</span>
-                  <select
-                    className="app-input"
-                    value={importOfficialIntegration}
-                    onChange={(ev) =>
-                      setImportOfficialIntegration(ev.target.value as "notion" | "confluence" | "obsidian" | "feishu")
-                    }
-                    disabled={importBusy}
-                  >
-                    <option value="notion">Notion（Integration + Page/Database ID）</option>
-                    <option value="confluence">Confluence Cloud（API Token + 页面数字 ID）</option>
-                    <option value="feishu">飞书云文档（app_id + app_secret + 文档 token/链接）</option>
-                    <option value="obsidian">Obsidian Publish（页面完整 URL，无需 Token）</option>
-                  </select>
-                </label>
-
-                {importOfficialIntegration === "confluence" ? (
+                {mcpImportSources.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-app-border bg-app-hover/30 px-4 py-8 text-center text-sm text-app-muted">
+                    暂无 MCP 源，请先在「偏好设置 → MCP 管理」中配置。
+                  </div>
+                ) : (
                   <>
                     <label className="app-form-label">
-                      <span>Atlassian 账号邮箱</span>
-                      <input
-                        className="app-input font-mono text-sm"
-                        placeholder="you@company.com"
-                        value={confluenceEmail}
-                        onChange={(ev) => setConfluenceEmail(ev.target.value)}
-                        disabled={importBusy}
-                        autoComplete="email"
-                      />
+                      <span>选择 MCP 源</span>
+                      <select
+                        className="app-input"
+                        value={selectedMcpSourceId ?? ""}
+                        onChange={(ev) => setSelectedMcpSourceId(ev.target.value ? Number(ev.target.value) : null)}
+                        disabled={importBusy || mcpImportPolling}
+                      >
+                        <option value="">请选择…</option>
+                        {mcpImportSources.map((s) => {
+                          const importingThis = s.last_import_status === "importing" && s.last_import_kb_id === kbId;
+                          const failedThis = s.last_import_status === "failed" && s.last_import_kb_id === kbId;
+                          const successThis = s.last_import_status === "success" && s.last_import_kb_id === kbId;
+                          let suffix = `（${s.mcp_transport === "http" ? "HTTP" : "stdio"}）`;
+                          if (importingThis) suffix = " ⏳ 导入中…";
+                          else if (failedThis) suffix = " ❌ 上次失败";
+                          else if (successThis) suffix = ` ✅ ${s.last_import_entries ?? 0} 条`;
+                          return (
+                            <option key={s.id} value={s.id}>
+                              {s.name}{suffix}
+                            </option>
+                          );
+                        })}
+                      </select>
                     </label>
+                    {/* 显示当前选中源的导入错误信息 */}
+                    {(() => {
+                      const selected = mcpImportSources.find((s) => s.id === selectedMcpSourceId);
+                      if (selected?.last_import_status === "failed" && selected.last_import_kb_id === kbId) {
+                        return (
+                          <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                            上次导入失败：{selected.last_import_error || "未知错误"}
+                          </p>
+                        );
+                      }
+                      if (selected?.last_import_status === "importing" && selected.last_import_kb_id === kbId) {
+                        return (
+                          <p className="rounded-lg border border-sky-200 bg-sky-50 px-3 py-2 text-xs text-sky-700">
+                            正在导入中，请稍候…
+                          </p>
+                        );
+                      }
+                      return null;
+                    })()}
                     <label className="app-form-label">
-                      <span>站点域名</span>
-                      <input
-                        className="app-input font-mono text-sm"
-                        placeholder="yourcompany.atlassian.net"
-                        value={confluenceDomain}
-                        onChange={(ev) => setConfluenceDomain(ev.target.value)}
-                        disabled={importBusy}
+                      <span>自定义提示词（可选，传递给 MCP Tool）</span>
+                      <textarea
+                        className="app-input min-h-[80px] text-sm"
+                        placeholder="例如：获取 Confluence 空间中「产品需求」页面及其子页面"
+                        value={mcpImportPrompt}
+                        onChange={(ev) => setMcpImportPrompt(ev.target.value)}
+                        disabled={importBusy || mcpImportPolling}
+                        maxLength={2000}
                       />
+                      <span className="mt-1 block text-right text-[11px] text-app-muted">
+                        {mcpImportPrompt.length}/2000
+                      </span>
                     </label>
+                    <button
+                      className={`app-button w-full ${importBusy || mcpImportPolling ? "is-loading" : ""}`}
+                      type="button"
+                      disabled={importBusy || mcpImportPolling || !selectedMcpSourceId}
+                      onClick={() => void submitMcpImport()}
+                    >
+                      {importBusy || mcpImportPolling ? "导入中…" : "从 MCP 导入"}
+                    </button>
                   </>
-                ) : null}
-
-                {importOfficialIntegration === "feishu" ? (
-                  <label className="app-form-label">
-                    <span>飞书 app_id</span>
-                    <input
-                      className="app-input font-mono text-sm"
-                      placeholder="cli_xxxxxxxx"
-                      value={feishuAppId}
-                      onChange={(ev) => setFeishuAppId(ev.target.value)}
-                      disabled={importBusy}
-                    />
-                  </label>
-                ) : null}
-
-                {importOfficialIntegration !== "obsidian" ? (
-                  <label className="app-form-label">
-                    <span>
-                      {importOfficialIntegration === "notion"
-                        ? "Notion Integration Token"
-                        : importOfficialIntegration === "confluence"
-                          ? "Confluence API Token"
-                          : "飞书 app_secret"}
-                    </span>
-                    <input
-                      className="app-input font-mono text-sm"
-                      placeholder={importOfficialIntegration === "notion" ? "secret_…" : "粘贴密钥"}
-                      value={importApiKey}
-                      onChange={(ev) => setImportApiKey(ev.target.value)}
-                      disabled={importBusy}
-                      type="password"
-                      autoComplete="off"
-                    />
-                  </label>
-                ) : (
-                  <p className="text-xs text-app-secondary">Obsidian Publish 无需填写密钥，请将完整发布页 URL 填在下方。</p>
                 )}
-
-                <label className="app-form-label">
-                  <span>
-                    {importOfficialIntegration === "obsidian"
-                      ? "Publish 页面 URL"
-                      : importOfficialIntegration === "confluence"
-                        ? "页面数字 ID（URL 中 /pages/ 后的数字）"
-                        : importOfficialIntegration === "feishu"
-                          ? "文档 token 或含 /docx/ 的文档链接"
-                          : "Page / Database ID（UUID）"}
-                  </span>
-                  <input
-                    className="app-input font-mono text-sm"
-                    placeholder={
-                      importOfficialIntegration === "obsidian"
-                        ? "https://publish.obsidian.md/…"
-                        : importOfficialIntegration === "feishu"
-                          ? "doxcn… 或 https://…/docx/…"
-                          : "32 位 UUID 或数字 ID"
-                    }
-                    value={importObjectId}
-                    onChange={(ev) => setImportObjectId(ev.target.value)}
-                    disabled={importBusy}
-                  />
-                </label>
-
-                <label className="app-form-label">
-                  <span>自定义标题（可选）</span>
-                  <input className="app-input" value={importTitle} onChange={(ev) => setImportTitle(ev.target.value)} disabled={importBusy} />
-                </label>
-                <button
-                  className={`app-button w-full ${importBusy ? "is-loading" : ""}`}
-                  type="button"
-                  disabled={importBusy}
-                  onClick={() => void submitOfficialImport()}
-                >
-                  {importBusy ? "导入中…" : "导入"}
-                </button>
+                <p className="text-[11px] text-app-muted">
+                  MCP 源在「偏好设置 → MCP 管理」中配置。导入的数据会替换该源在此知识库中之前导入的全部条目。
+                </p>
               </div>
             )}
           </div>

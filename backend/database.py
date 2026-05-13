@@ -56,6 +56,20 @@ def init_db() -> None:
                 "AND trim(coalesce(source_meta->>'ref','')) ~ '^https?://';"
             )
         )
+        # MCP 源全局化迁移：knowledge_base_id 改为可选，删除 cron/状态 字段
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources ALTER COLUMN knowledge_base_id DROP NOT NULL;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources DROP COLUMN IF EXISTS cron_expression;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources DROP COLUMN IF EXISTS enabled;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources DROP COLUMN IF EXISTS last_sync_at;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources DROP COLUMN IF EXISTS last_sync_status;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources DROP COLUMN IF EXISTS last_error;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources ADD COLUMN IF NOT EXISTS mcp_args JSONB;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources ADD COLUMN IF NOT EXISTS last_import_status TEXT;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources ADD COLUMN IF NOT EXISTS last_import_error TEXT;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources ADD COLUMN IF NOT EXISTS last_import_entries INT;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources ADD COLUMN IF NOT EXISTS last_import_at TIMESTAMP;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources ADD COLUMN IF NOT EXISTS last_import_kb_id INT;"))
+
         conn.execute(
             text(
                 """
