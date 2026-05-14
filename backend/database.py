@@ -42,6 +42,7 @@ def init_db() -> None:
         conn.execute(text("ALTER TABLE IF EXISTS knowledge_entries ADD COLUMN IF NOT EXISTS source_meta JSONB;"))
         conn.execute(text("ALTER TABLE IF EXISTS knowledge_entries ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT '';"))
         conn.execute(text("ALTER TABLE IF EXISTS knowledge_entries ADD COLUMN IF NOT EXISTS source_url TEXT;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_entries ADD COLUMN IF NOT EXISTS semantic_role TEXT;"))
         conn.execute(
             text(
                 "UPDATE knowledge_entries SET summary = trim(substring(regexp_replace(trim(body), '[\\n\\r\\t]+', ' ', 'g') from 1 for 420)) "
@@ -56,19 +57,7 @@ def init_db() -> None:
                 "AND trim(coalesce(source_meta->>'ref','')) ~ '^https?://';"
             )
         )
-        # MCP 源全局化迁移：knowledge_base_id 改为可选，删除 cron/状态 字段
-        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources ALTER COLUMN knowledge_base_id DROP NOT NULL;"))
-        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources DROP COLUMN IF EXISTS cron_expression;"))
-        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources DROP COLUMN IF EXISTS enabled;"))
-        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources DROP COLUMN IF EXISTS last_sync_at;"))
-        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources DROP COLUMN IF EXISTS last_sync_status;"))
-        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources DROP COLUMN IF EXISTS last_error;"))
-        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources ADD COLUMN IF NOT EXISTS mcp_args JSONB;"))
-        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources ADD COLUMN IF NOT EXISTS last_import_status TEXT;"))
-        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources ADD COLUMN IF NOT EXISTS last_import_error TEXT;"))
-        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources ADD COLUMN IF NOT EXISTS last_import_entries INT;"))
-        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources ADD COLUMN IF NOT EXISTS last_import_at TIMESTAMP;"))
-        conn.execute(text("ALTER TABLE IF EXISTS knowledge_mcp_sources ADD COLUMN IF NOT EXISTS last_import_kb_id INT;"))
+
 
         conn.execute(
             text(
@@ -96,5 +85,57 @@ def init_db() -> None:
                     updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
                 );
                 """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS import_logs (
+                    id SERIAL PRIMARY KEY,
+                    knowledge_base_id INT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                    source_type TEXT NOT NULL,
+                    source_id INT,
+                    source_name TEXT,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    entries_created INT NOT NULL DEFAULT 0,
+                    entries_updated INT NOT NULL DEFAULT 0,
+                    entries_deleted INT NOT NULL DEFAULT 0,
+                    error_message TEXT,
+                    started_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+                    completed_at TIMESTAMP,
+                    created_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+                );
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS knowledge_api_sources (
+                    id SERIAL PRIMARY KEY,
+                    knowledge_base_id INT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                    name TEXT NOT NULL,
+                    integration TEXT NOT NULL,
+                    api_key TEXT NOT NULL,
+                    object_id TEXT NOT NULL,
+                    extra JSONB,
+                    enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                    last_sync_at TIMESTAMP,
+                    last_sync_status TEXT,
+                    last_error TEXT,
+                    created_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+                    updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+                );
+                """
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE knowledge_api_sources ALTER COLUMN knowledge_base_id DROP NOT NULL;"
+            )
+        )
+        conn.execute(
+            text(
+                "ALTER TABLE knowledge_api_sources ALTER COLUMN object_id DROP NOT NULL;"
             )
         )

@@ -17,10 +17,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from models import KnowledgeEntry, KnowledgeGitSource
-from services.embedding_service import (
-    delete_embeddings_for_knowledge_entries,
-    replace_knowledge_entry_embedding,
-)
+from services.embedding_service import delete_embeddings_for_knowledge_entries
 
 _HTTP_TIMEOUT = 120.0
 
@@ -47,6 +44,17 @@ def _trigger_codebase_analysis(knowledge_base_id: int) -> None:
 
     t = threading.Thread(target=_run, daemon=True, name=f"codebase-analysis-kb-{knowledge_base_id}")
     t.start()
+
+
+def _plain_excerpt(body: str, max_len: int = 420) -> str:
+    s = (body or "").strip()
+    if not s:
+        return ""
+    s = re.sub(r"[\n\r\t]+", " ", s)
+    s = re.sub(r" +", " ", s).strip()
+    if len(s) <= max_len:
+        return s
+    return f"{s[: max_len - 1].rstrip()}…"
 
 
 def _format_sync_exception(exc: BaseException) -> str:
@@ -82,17 +90,6 @@ def _format_sync_exception(exc: BaseException) -> str:
     if isinstance(exc, httpx.RequestError):
         return f"网络请求失败：{exc!s}"[:2000]
     return (str(exc) or type(exc).__name__)[:2000]
-
-
-def _plain_excerpt(body: str, max_len: int = 420) -> str:
-    s = (body or "").strip()
-    if not s:
-        return ""
-    s = re.sub(r"[\n\r\t]+", " ", s)
-    s = re.sub(r" +", " ", s).strip()
-    if len(s) <= max_len:
-        return s
-    return f"{s[: max_len - 1].rstrip()}…"
 
 
 def _parse_globs(s: str) -> list[str]:
@@ -377,7 +374,11 @@ def _collect_files(src: KnowledgeGitSource) -> tuple[list[tuple[str, str]], str]
 
 
 def run_git_source_sync(db: Session, source_id: int) -> dict[str, Any]:
-    """同步单个 Git 源：删除该源此前写入的条目，再写入当前文件列表。成功或失败都会更新 last_sync_*。"""
+    """增量同步 Git 源：比较内容哈希，仅写入变更文件，删除已移除文件。"""
+    import hashlib
+
+    from services.embedding_service import replace_knowledge_entry_embedding
+
     src = db.get(KnowledgeGitSource, source_id)
     if not src:
         return {"ok": False, "error": "Git 源不存在"}
@@ -396,27 +397,27 @@ def run_git_source_sync(db: Session, source_id: int) -> dict[str, Any]:
         db.commit()
         return {"ok": False, "error": detail, "files": 0}
 
-    old_ids = list(
-        db.scalars(
-            select(KnowledgeEntry.id).where(
+    # 构建远程文件映射：path -> (body, hash)
+    remote_map: dict[str, tuple[str, str]] = {}
+    for path, body in files:
+        content_hash = hashlib.sha256(body.encode()).hexdigest()
+        remote_map[path] = (body, content_hash)
+
+    # 加载此 Git 源的现有条目，按 ref 索引
+    existing_entries = list(
+        db.execute(
+            select(KnowledgeEntry).where(
                 KnowledgeEntry.knowledge_base_id == kb_id,
                 cast(KnowledgeEntry.source_meta, JSONB)["kind"].astext == "git_file",
                 cast(KnowledgeEntry.source_meta, JSONB)["git_source_id"].astext == str(source_id),
             )
-        ).all()
+        ).scalars().all()
     )
-    delete_embeddings_for_knowledge_entries(db, old_ids)
-    if old_ids:
-        db.execute(delete(KnowledgeEntry).where(KnowledgeEntry.id.in_(old_ids)))
-        db.flush()
-
-    max_order = db.execute(
-        select(KnowledgeEntry.sort_order)
-        .where(KnowledgeEntry.knowledge_base_id == kb_id)
-        .order_by(KnowledgeEntry.sort_order.desc())
-        .limit(1)
-    ).scalar_one_or_none()
-    next_order = (max_order or 0) + 1
+    existing_by_ref: dict[str, KnowledgeEntry] = {}
+    for e in existing_entries:
+        ref = (e.source_meta or {}).get("ref", "")
+        if ref:
+            existing_by_ref[ref] = e
 
     label = f"{'GitHub' if src.provider == 'github' else 'GitLab'} · {src.owner}/{src.repo}"
     base_url = ""
@@ -429,47 +430,85 @@ def run_git_source_sync(db: Session, source_id: int) -> dict[str, Any]:
         base_url = f"{root}/{enc}/-/blob/{br}/"
 
     created = 0
+    updated = 0
+    deleted = 0
+
+    # 确定 sort_order 起点
+    max_order = db.execute(
+        select(KnowledgeEntry.sort_order)
+        .where(KnowledgeEntry.knowledge_base_id == kb_id)
+        .order_by(KnowledgeEntry.sort_order.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    next_order = (max_order or 0) + 1
+
     try:
-        for path, body in files:
-            title = path.split("/")[-1] or path
-            excerpt = _plain_excerpt(body)
+        for path, (body, content_hash) in remote_map.items():
             source_url = (base_url + quote(path, safe="/")) if base_url else None
-            meta: dict[str, str] = {
+            meta = {
                 "kind": "git_file",
                 "git_source_id": str(source_id),
                 "ref": path,
                 "label": label,
+                "content_hash": content_hash,
             }
-            entry = KnowledgeEntry(
-                knowledge_base_id=kb_id,
-                title=title[:500],
-                summary=excerpt,
-                body=body,
-                sort_order=next_order,
-                source_url=source_url,
-                source_meta=meta,
-                updated_at=now,
-            )
-            db.add(entry)
-            db.flush()
-            replace_knowledge_entry_embedding(db, entry.id, entry.title, entry.body, entry.summary)
-            next_order += 1
-            created += 1
+
+            existing = existing_by_ref.get(path)
+            if existing:
+                old_hash = (existing.source_meta or {}).get("content_hash", "")
+                if old_hash == content_hash:
+                    continue  # 未改变，跳过
+                # 内容已变更，更新
+                title = path.split("/")[-1] or path
+                existing.title = title[:500]
+                existing.body = body
+                existing.summary = _plain_excerpt(body)
+                existing.source_url = source_url
+                existing.source_meta = meta
+                existing.updated_at = now
+                db.flush()
+                replace_knowledge_entry_embedding(db, existing.id, existing.title, existing.body, existing.summary)
+                updated += 1
+            else:
+                # 新文件
+                from services.entry_service import create_entry
+
+                title = path.split("/")[-1] or path
+                create_entry(
+                    db, kb_id, title, body,
+                    source_meta=meta, source_url=source_url,
+                    sort_order=next_order,
+                )
+                next_order += 1
+                created += 1
+
+        # 删除远程已移除的文件对应的条目
+        stale_refs = set(existing_by_ref.keys()) - set(remote_map.keys())
+        if stale_refs:
+            stale_ids = [existing_by_ref[ref].id for ref in stale_refs]
+            delete_embeddings_for_knowledge_entries(db, stale_ids)
+            db.execute(delete(KnowledgeEntry).where(KnowledgeEntry.id.in_(stale_ids)))
+            deleted = len(stale_ids)
 
         src.last_sync_at = now
         src.last_sync_status = "success"
         src.last_error = None
         src.updated_at = now
         db.commit()
-        if created == 0:
-            msg = (
-                "未发现可导入的文本文件：请检查 include_globs、path_prefix、分支与仓库内容，"
-                "或放宽 glob / 提高 max_files / 确认默认分支上确有匹配后缀的源码或文档。"
-            )
-        else:
-            msg = f"已同步 {created} 个文件为知识条目"
+
+        total = created + updated
+        if total > 0:
             _trigger_codebase_analysis(kb_id)
-        return {"ok": True, "files": created, "message": msg}
+        if total == 0 and deleted == 0:
+            msg = "所有文件均为最新，无需同步。"
+        else:
+            parts = []
+            if created: parts.append(f"新增 {created}")
+            if updated: parts.append(f"更新 {updated}")
+            if deleted: parts.append(f"删除 {deleted}")
+            msg = f"已同步：{'，'.join(parts)} 个文件"
+        return {"ok": True, "files": total, "created": created, "updated": updated, "deleted": deleted, "message": msg}
+
     except Exception as exc:  # noqa: BLE001
         db.rollback()
         detail = _format_sync_exception(exc)

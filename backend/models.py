@@ -153,6 +153,8 @@ class KnowledgeEntry(Base):
     source_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 来源：手动 | 链接 | 文件 | notion/confluence/obsidian 等
     source_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 语义角色分类：table_overview | column_glossary | business_metric | query_pattern | join_guide | data_quality | general_reference
+    semantic_role: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -241,43 +243,42 @@ class LlmConnection(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
-class KnowledgeMcpSource(Base):
-    """知识库绑定的 MCP 导入源：通过 MCP Server 的 tool 拉取内容并转 markdown 存入知识条目。
+class ImportLog(Base):
+    """统一的导入日志：记录所有来源的导入事件。"""
 
-    支持 stdio（本地进程）和 http（远程 URL）两种传输方式。
-    """
+    __tablename__ = "import_logs"
 
-    __tablename__ = "knowledge_mcp_sources"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    source_type: Mapped[str] = mapped_column(Text, nullable=False)
+    source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    entries_created: Mapped[int] = mapped_column(Integer, default=0)
+    entries_updated: Mapped[int] = mapped_column(Integer, default=0)
+    entries_deleted: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class KnowledgeApiSource(Base):
+    """官方 API 导入源（Notion / Confluence / 飞书），全局配置。kb_id 非空时为旧版 KB 绑定。"""
+
+    __tablename__ = "knowledge_api_sources"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     knowledge_base_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
-
-    # MCP 连接方式
-    mcp_transport: Mapped[str] = mapped_column(Text, nullable=False)  # stdio | http
-    # stdio 模式：本地命令 + 参数 + 环境变量（标准 MCP 配置格式）
-    mcp_command: Mapped[str | None] = mapped_column(Text, nullable=True)  # 可执行文件，如 "uvx" / "npx"
-    mcp_args: Mapped[list | None] = mapped_column(JSON, nullable=True)  # 命令行参数，如 ["mcp-atlassian"]
-    mcp_env: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {"CONFLUENCE_URL": "..."}
-    # http 模式：远程 URL
-    mcp_url: Mapped[str | None] = mapped_column(Text, nullable=True)  # 如 "http://localhost:3001/mcp"
-
-    # 工具配置
-    mcp_tool_name: Mapped[str | None] = mapped_column(Text, nullable=True)  # 要调用的 tool 名；空则调用第一个可用 tool
-    mcp_tool_args: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # 默认参数模板
-
-    # 格式化
-    content_mode: Mapped[str] = mapped_column(Text, nullable=False, default="markdown")  # markdown | json_to_md
-
-    # 导入策略
-    max_entry_chars: Mapped[int] = mapped_column(Integer, default=50000)  # 单条目最大字数，超出则拆分
-
-    # 最近一次导入状态
-    last_import_status: Mapped[str | None] = mapped_column(Text, nullable=True)  # importing | success | failed
-    last_import_error: Mapped[str | None] = mapped_column(Text, nullable=True)  # 失败时的错误信息
-    last_import_entries: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 成功时导入的条目数
-    last_import_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    last_import_kb_id: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 导入到哪个知识库
-
+    integration: Mapped[str] = mapped_column(Text, nullable=False)
+    api_key: Mapped[str] = mapped_column(Text, nullable=False)
+    object_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extra: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_sync_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+

@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import ColumnMeta, DataSource, TableMeta, TableSummary
 from routers.analyze import schedule_table_analyze
+from services.metadata_ingest import run_metadata_ingest_for_datasource
 from services.schema_extractor import (
     ALLOWED_SOURCE_TYPES,
     _is_postgres_family,
@@ -110,6 +111,7 @@ def create_datasource(body: DataSourceBody, db: Session = Depends(get_db)) -> di
     db.add(row)
     db.commit()
     db.refresh(row)
+    run_metadata_ingest_for_datasource(row.id)
     return {"id": row.id}
 
 

@@ -48,10 +48,6 @@ function sourceBadgeText(meta?: Record<string, string> | Record<string, unknown>
   if (kind === "manual") return "手动编写";
   if (kind === "file") return `文件：${ref || "上传"}`;
   if (kind === "git_file") return ref ? `代码：${ref}` : "代码仓库";
-  if (kind === "mcp_import") {
-    const server = typeof meta.mcp_server === "string" ? meta.mcp_server : "";
-    return server ? `MCP：${server}` : "MCP 导入";
-  }
   return LEGACY_LINK_KIND_LABEL[kind] ?? kind;
 }
 
@@ -93,6 +89,22 @@ type GitHubDiagResponse = {
   summary: string;
   api_github_com: GitHubDiagProbe;
   github_com: GitHubDiagProbe;
+};
+
+type ApiSource = {
+  id: number;
+  knowledge_base_id: number | null;
+  name: string;
+  integration: string;
+  object_id: string;
+  extra: Record<string, string>;
+  has_key: boolean;
+  enabled: boolean;
+  last_sync_at?: string | null;
+  last_sync_status?: string | null;
+  last_error?: string | null;
+  created_at: string;
+  updated_at: string;
 };
 
 function gitBranchLabel(s: GitSource): string {
@@ -178,9 +190,6 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   const [viewEntry, setViewEntry] = useState<Entry | null>(null);
 
   const [importModalOpen, setImportModalOpen] = useState(false);
-  const [importTab, setImportTab] = useState<"url" | "file" | "mcp">("url");
-  const [importUrl, setImportUrl] = useState("");
-  const [importTitle, setImportTitle] = useState("");
   const [importBusy, setImportBusy] = useState(false);
   const [importFileKey, setImportFileKey] = useState(0);
 
@@ -211,14 +220,11 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   const [gCron, setGCron] = useState("");
   const [gEnabled, setGEnabled] = useState(true);
 
-  // MCP 导入
-  const [mcpImportSources, setMcpImportSources] = useState<
-    { id: number; name: string; mcp_transport: string; last_import_status?: string; last_import_error?: string; last_import_entries?: number; last_import_at?: string; last_import_kb_id?: number }[]
-  >([]);
-  const [selectedMcpSourceId, setSelectedMcpSourceId] = useState<number | null>(null);
-  const [mcpImportPrompt, setMcpImportPrompt] = useState("");
-  const [mcpPhase, setMcpPhase] = useState<"form" | "confirming" | "importing" | "done">("form");
-  const [mcpImportResult, setMcpImportResult] = useState<{ status: "success" | "failed"; entries?: number; error?: string } | null>(null);
+  const [apiSources, setApiSources] = useState<ApiSource[]>([]);
+  const [apiSourceSyncingId, setApiSourceSyncingId] = useState<number | null>(null);
+  const [apiImportModalOpen, setApiImportModalOpen] = useState(false);
+  const [apiImportSource, setApiImportSource] = useState<ApiSource | null>(null);
+  const [apiImportObjectId, setApiImportObjectId] = useState("");
 
   const [confirmState, setConfirmState] = useState<{
     title: string;
@@ -233,17 +239,20 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     if (!Number.isFinite(kbId)) return;
     setLoading(true);
     try {
-      const [res, gitRes] = await Promise.all([
+      const [res, gitRes, apiRes] = await Promise.all([
         api<{ knowledge_base: KB; entries: Entry[] }>(`/api/knowledge-bases/${kbId}`),
-        api<{ git_sources: GitSource[] }>(`/api/knowledge-bases/${kbId}/git-sources`).catch(() => ({ git_sources: [] as GitSource[] }))
+        api<{ git_sources: GitSource[] }>(`/api/knowledge-bases/${kbId}/git-sources`).catch(() => ({ git_sources: [] as GitSource[] })),
+        api<{ api_sources: ApiSource[] }>(`/api/api-sources`).catch(() => ({ api_sources: [] as ApiSource[] }))
       ]);
       setKb(res.knowledge_base);
       setEntries(res.entries);
       setGitSources(gitRes.git_sources ?? []);
+      setApiSources(apiRes.api_sources ?? []);
     } catch {
       setKb(null);
       setEntries([]);
       setGitSources([]);
+      setApiSources([]);
     } finally {
       setLoading(false);
     }
@@ -267,20 +276,21 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   }, [entries]);
 
   useEffect(() => {
-    const open = isKbEditOpen || isEntryModalOpen || importModalOpen || gitModalOpen || !!viewEntry;
+    const open = isKbEditOpen || isEntryModalOpen || importModalOpen || apiImportModalOpen || gitModalOpen || !!viewEntry;
     if (!open) return;
     const onKeyDown = (evt: KeyboardEvent) => {
       if (evt.key === "Escape") {
         setIsKbEditOpen(false);
         setIsEntryModalOpen(false);
-        if (mcpPhase !== "importing") setImportModalOpen(false);
+        setImportModalOpen(false);
+        setApiImportModalOpen(false);
         setGitModalOpen(false);
         setViewEntry(null);
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isKbEditOpen, isEntryModalOpen, importModalOpen, gitModalOpen, viewEntry, mcpPhase]);
+  }, [isKbEditOpen, isEntryModalOpen, importModalOpen, gitModalOpen, viewEntry]);
 
   function openGitModalCreate() {
     setEditingGitId(null);
@@ -438,6 +448,27 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     }
   }
 
+  async function importFromApiSource(id: number, objectId: string) {
+    setApiSourceSyncingId(id);
+    notifyUser("正在从 API 源导入内容…", "info");
+    try {
+      const res = await api<{ ok?: boolean; entries_created?: number; message?: string }>(
+        `/api/knowledge-bases/${kbId}/api-sources/${id}/import`,
+        { method: "POST", body: JSON.stringify({ object_id: objectId.trim() }) }
+      );
+      notifyUser(`已导入 ${res.entries_created ?? 0} 个条目`, "success", { persist: true });
+      await load();
+    } catch (e: unknown) {
+      let detail =
+        e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "导入失败";
+      detail = (detail || "").trim() || "导入失败";
+      notifyUser(detail, "error", { persist: true });
+      await load();
+    } finally {
+      setApiSourceSyncingId(null);
+    }
+  }
+
   function confirmDeleteGitSource(s: GitSource) {
     setConfirmState({
       title: "删除该代码源？",
@@ -519,118 +550,8 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   }
 
   function openImportModal() {
-    setImportTab("url");
-    setImportUrl("");
-    setImportTitle("");
     setImportFileKey((k) => k + 1);
-    setSelectedMcpSourceId(null);
-    setMcpImportPrompt("");
-    setMcpPhase("form");
-    setMcpImportResult(null);
-    loadMcpSourcesForImport();
     setImportModalOpen(true);
-  }
-
-  async function loadMcpSourcesForImport() {
-    try {
-      const sources = await api<typeof mcpImportSources[number][]>("/api/mcp-sources");
-      setMcpImportSources(Array.isArray(sources) ? sources : []);
-    } catch {
-      setMcpImportSources([]);
-    }
-  }
-
-  async function pollMcpImportStatus() {
-    // 轮询最多 5 分钟（150 次 × 2 秒）
-    try {
-      for (let i = 0; i < 150; i++) {
-        const sources = await api<typeof mcpImportSources[number][]>("/api/mcp-sources");
-        if (!Array.isArray(sources)) break;
-        setMcpImportSources(sources);
-        const stillImporting = sources.some(
-          (s) => s.last_import_status === "importing" && s.last_import_kb_id === kbId
-        );
-        if (!stillImporting) {
-          const recent = sources.find(
-            (s) => s.last_import_kb_id === kbId && s.last_import_status !== "importing"
-          );
-          if (recent?.last_import_status === "success") {
-            setMcpImportResult({ status: "success", entries: recent.last_import_entries ?? 0 });
-          } else if (recent?.last_import_status === "failed") {
-            setMcpImportResult({ status: "failed", error: recent.last_import_error || "未知错误" });
-          } else {
-            setMcpImportResult({ status: "failed", error: "未获取到导入结果" });
-          }
-          setMcpPhase("done");
-          load();
-          return;
-        }
-        await new Promise((r) => setTimeout(r, 2000));
-      }
-      // 超时
-      setMcpImportResult({ status: "failed", error: "导入超时（超过 5 分钟），请稍后在条目列表查看结果" });
-      setMcpPhase("done");
-      load();
-    } catch {
-      setMcpImportResult({ status: "failed", error: "轮询期间发生网络错误" });
-      setMcpPhase("done");
-    } finally {
-      setImportBusy(false);
-    }
-  }
-
-  async function submitUrlImport() {
-    const u = importUrl.trim();
-    if (!u) {
-      notifyUser("请填写链接地址");
-      return;
-    }
-    setImportBusy(true);
-    try {
-      await api(`/api/knowledge-bases/${kbId}/entries/import-url`, {
-        method: "POST",
-        body: JSON.stringify({
-          url: u,
-          title: importTitle.trim() || null,
-        }),
-      });
-      notifyUser("已从链接创建条目，可继续手动润色");
-      setImportModalOpen(false);
-      load();
-    } finally {
-      setImportBusy(false);
-    }
-  }
-
-  function requestMcpImport() {
-    if (!selectedMcpSourceId) {
-      notifyUser("请选择 MCP 源");
-      return;
-    }
-    setMcpPhase("confirming");
-  }
-
-  async function doMcpImport() {
-    if (!selectedMcpSourceId) return;
-    setMcpPhase("importing");
-    setImportBusy(true);
-    try {
-      const body: Record<string, unknown> = {};
-      const prompt = mcpImportPrompt.trim();
-      if (prompt) body.prompt = prompt;
-      await api<{ ok?: boolean; entries?: number; message?: string }>(
-        `/api/knowledge-bases/${kbId}/import-from-mcp/${selectedMcpSourceId}`,
-        { method: "POST", body: JSON.stringify(body) }
-      );
-      pollMcpImportStatus();
-    } catch (e: unknown) {
-      setMcpImportResult({
-        status: "failed",
-        error: e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "MCP 导入失败",
-      });
-      setMcpPhase("done");
-      setImportBusy(false);
-    }
   }
 
   async function onImportFilePicked(e: React.ChangeEvent<HTMLInputElement>) {
@@ -948,6 +869,79 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
             )}
           </section>
 
+          {/* ── 官方 API 导入源 ── */}
+          <section className="app-card mt-6 p-4">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <h2 className="app-section-title">官方 API 导入（Notion / Confluence / 飞书）</h2>
+                <p className="app-text-muted mt-1 text-xs">
+                  配置 API 源后可一键导入内容为知识条目。配置与导入分离，支持重复使用。
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                <button className="app-button-secondary text-sm" type="button" onClick={() => router.push("/settings")}>
+                  管理 API 源
+                </button>
+              </div>
+            </div>
+            {!apiSources.length ? (
+              <p className="app-text-muted mt-4 text-sm">尚未配置 API 源。</p>
+            ) : (
+              <ul className="mt-4 space-y-3">
+                {apiSources.map((s) => {
+                  const syncChip = gitSyncStatusChip(s.last_sync_status);
+                  const integrationLabel =
+                    s.integration === "notion" ? "Notion" :
+                    s.integration === "confluence" ? "Confluence" :
+                    s.integration === "feishu" ? "飞书" : s.integration;
+                  return (
+                  <li
+                    key={s.id}
+                    className="flex flex-col gap-3 rounded-lg border border-app-border bg-app-hover p-3 text-sm sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0">
+                      <p className="font-semibold text-app-primary">
+                        {s.name}{" "}
+                        <span className="font-normal text-app-secondary">
+                          ({integrationLabel})
+                        </span>
+                      </p>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-xs">
+                        <span className="app-text-muted">
+                          上次导入：{s.last_sync_at ? new Date(s.last_sync_at).toLocaleString() : "—"}
+                        </span>
+                        <span
+                          className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-semibold ${syncChip.className}`}
+                        >
+                          {syncChip.text}
+                        </span>
+                      </div>
+                      {(s.last_sync_status || "").toLowerCase() === "error" &&
+                      s.last_error != null &&
+                      String(s.last_error).trim() ? (
+                        <p className="mt-2 rounded-md border border-rose-100 bg-rose-50/80 px-2 py-1.5 text-[11px] font-medium leading-snug text-rose-900 whitespace-pre-wrap break-words">
+                          {String(s.last_error).trim()}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="flex shrink-0 flex-wrap gap-2">
+                      <button
+                        className={`app-button text-xs ${apiSourceSyncingId === s.id ? "is-loading" : ""}`}
+                        type="button"
+                        title={!s.enabled ? "请在偏好设置中启用该 API 源" : undefined}
+                        disabled={!s.enabled || (apiSourceSyncingId !== null && apiSourceSyncingId !== s.id)}
+                        onClick={() => { setApiImportSource(s); setApiImportObjectId(""); setApiImportModalOpen(true); }}
+                      >
+                        {apiSourceSyncingId === s.id ? "导入中…" : "导入到此知识库"}
+                      </button>
+                    </div>
+                  </li>
+                  );
+                })}
+              </ul>
+            )}
+          </section>
+
           <section className="mt-6 space-y-3">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex items-center gap-3">
@@ -989,7 +983,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
             {!filteredEntries.length && (
               <EmptyState
                 title={entries.length ? "没有匹配的条目" : "还没有条目"}
-                description="手写 Markdown，或先用「导入资料」从网页/Office 文件抓取后再编辑。"
+                description="手写 Markdown，或通过「导入资料」上传 Office 文件。"
                 actionLabel="手动新增"
                 onAction={openNewEntry}
               />
@@ -1212,7 +1206,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       )}
 
       {importModalOpen && (
-        <div className="app-modal-backdrop" role="presentation" onClick={() => !importBusy && mcpPhase !== "importing" && setImportModalOpen(false)}>
+        <div className="app-modal-backdrop" role="presentation" onClick={() => !importBusy && setImportModalOpen(false)}>
           <div
             className="app-card max-h-[90vh] w-full max-w-lg overflow-auto p-5"
             role="dialog"
@@ -1220,231 +1214,29 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
             onClick={(ev) => ev.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="app-section-title">导入资料</h2>
-              <button className="app-control-button" type="button" disabled={importBusy || mcpPhase === "importing"} onClick={() => setImportModalOpen(false)}>
+              <h2 className="app-section-title">导入文件</h2>
+              <button className="app-control-button" type="button" disabled={importBusy} onClick={() => setImportModalOpen(false)}>
                 关闭
               </button>
             </div>
             <p className="app-text-muted text-xs leading-relaxed">
-              <strong>链接</strong>：普通 <code className="rounded bg-app-hover px-1">http(s)</code> 网页。
-              <strong>MCP 导入</strong>：从偏好设置中配置的 MCP Server 拉取数据。
+              上传 Office / Markdown 文件，自动解析正文并创建知识条目。
             </p>
-            <div className="mt-3 flex rounded-lg border border-app-border p-0.5">
-              <button
-                type="button"
-                className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-colors ${
-                  importTab === "url" ? "bg-app-primary text-white" : "text-app-secondary hover:text-app-ink"
-                }`}
-                onClick={() => setImportTab("url")}
-                disabled={importBusy}
-              >
-                链接抓取
-              </button>
-              <button
-                type="button"
-                className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-colors ${
-                  importTab === "file" ? "bg-app-primary text-white" : "text-app-secondary hover:text-app-ink"
-                }`}
-                onClick={() => setImportTab("file")}
-                disabled={importBusy}
-              >
-                上传文件
-              </button>
-              <button
-                type="button"
-                className={`flex-1 rounded-md px-3 py-2 text-xs font-medium transition-colors ${
-                  importTab === "mcp" ? "bg-app-primary text-white" : "text-app-secondary hover:text-app-ink"
-                }`}
-                onClick={() => setImportTab("mcp")}
-                disabled={importBusy}
-              >
-                MCP 导入
-              </button>
+            <div className="mt-4 space-y-3">
+              <p className="text-xs text-app-secondary">支持：.md、.txt、.html、.docx、.pdf、.xlsx、.csv（单文件不超过 12MB）</p>
+              <label className="app-form-label">
+                <span>选择文件</span>
+                <input
+                  key={importFileKey}
+                  type="file"
+                  className="app-input cursor-pointer py-2 file:mr-3 file:rounded-md file:border-0 file:bg-app-hover file:px-3 file:py-1.5 file:text-xs"
+                  accept=".md,.markdown,.txt,.html,.htm,.docx,.pdf,.xlsx,.csv"
+                  disabled={importBusy}
+                  onChange={(ev) => void onImportFilePicked(ev)}
+                />
+              </label>
+              {importBusy ? <p className="text-xs text-app-muted">正在解析并写入索引…</p> : null}
             </div>
-
-            {importTab === "url" ? (
-              <div className="mt-4 space-y-3">
-                <label className="app-form-label">
-                  <span>网页 URL</span>
-                  <input className="app-input font-mono text-sm" placeholder="https://…" value={importUrl} onChange={(ev) => setImportUrl(ev.target.value)} disabled={importBusy} />
-                </label>
-                <label className="app-form-label">
-                  <span>标题（可选，不填则尝试用页面标题或链接摘要）</span>
-                  <input className="app-input" value={importTitle} onChange={(ev) => setImportTitle(ev.target.value)} disabled={importBusy} />
-                </label>
-                <button className={`app-button w-full ${importBusy ? "is-loading" : ""}`} type="button" disabled={importBusy} onClick={() => void submitUrlImport()}>
-                  {importBusy ? "导入中…" : "创建条目"}
-                </button>
-              </div>
-            ) : importTab === "file" ? (
-              <div className="mt-4 space-y-3">
-                <p className="text-xs text-app-secondary">支持：.md、.txt、.html、.docx、.pdf（单文件不超过 12MB）</p>
-                <label className="app-form-label">
-                  <span>选择文件</span>
-                  <input
-                    key={importFileKey}
-                    type="file"
-                    className="app-input cursor-pointer py-2 file:mr-3 file:rounded-md file:border-0 file:bg-app-hover file:px-3 file:py-1.5 file:text-xs"
-                    accept=".md,.markdown,.txt,.html,.htm,.docx,.pdf"
-                    disabled={importBusy}
-                    onChange={(ev) => void onImportFilePicked(ev)}
-                  />
-                </label>
-                {importBusy ? <p className="text-xs text-app-muted">正在解析并写入索引…</p> : null}
-              </div>
-            ) : (
-              <div className="mt-4 space-y-3">
-                {/* phase: importing — 进度展示 */}
-                {mcpPhase === "importing" && (
-                  <div className="rounded-xl border border-sky-200 bg-sky-50 px-4 py-6 text-center">
-                    <p className="text-sm font-medium text-sky-700">正在从 MCP 导入数据…</p>
-                    <p className="mt-1 text-xs text-sky-600">后台处理中，请勿关闭此窗口</p>
-                    <div className="mt-3 flex justify-center">
-                      <div className="h-1.5 w-40 overflow-hidden rounded-full bg-sky-200">
-                        <div className="h-full w-1/2 animate-[slide_1.2s_ease-in-out_infinite] rounded-full bg-sky-500" />
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* phase: done — 结果展示 */}
-                {mcpPhase === "done" && mcpImportResult && (
-                  mcpImportResult.status === "success" ? (
-                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-5 text-center">
-                      <p className="text-sm font-medium text-emerald-700">导入完成</p>
-                      <p className="mt-1 text-xs text-emerald-600">共写入 {mcpImportResult.entries ?? 0} 个条目</p>
-                    </div>
-                  ) : (
-                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-5 text-center">
-                      <p className="text-sm font-medium text-rose-700">导入失败</p>
-                      <p className="mt-1 text-xs text-rose-600">{mcpImportResult.error}</p>
-                    </div>
-                  )
-                )}
-
-                {/* phase: form / confirming — 表单 */}
-                {(mcpPhase === "form" || mcpPhase === "confirming") && (
-                  mcpImportSources.length === 0 ? (
-                    <div className="rounded-xl border border-dashed border-app-border bg-app-hover/30 px-4 py-8 text-center text-sm text-app-muted">
-                      暂无 MCP 源，请先在「偏好设置 → MCP 管理」中配置。
-                    </div>
-                  ) : (
-                    <>
-                      <label className="app-form-label">
-                        <span>选择 MCP 源</span>
-                        <select
-                          className="app-input"
-                          value={selectedMcpSourceId ?? ""}
-                          onChange={(ev) => {
-                            setSelectedMcpSourceId(ev.target.value ? Number(ev.target.value) : null);
-                            setMcpPhase("form");
-                          }}
-                          disabled={mcpPhase === "confirming"}
-                        >
-                          <option value="">请选择…</option>
-                          {mcpImportSources.map((s) => {
-                            const importingThis = s.last_import_status === "importing" && s.last_import_kb_id === kbId;
-                            const failedThis = s.last_import_status === "failed" && s.last_import_kb_id === kbId;
-                            const successThis = s.last_import_status === "success" && s.last_import_kb_id === kbId;
-                            let suffix = `（${s.mcp_transport === "http" ? "HTTP" : "stdio"}）`;
-                            if (importingThis) suffix = " ⏳ 导入中…";
-                            else if (failedThis) suffix = " ❌ 上次失败";
-                            else if (successThis) suffix = ` ✅ ${s.last_import_entries ?? 0} 条`;
-                            return (
-                              <option key={s.id} value={s.id}>
-                                {s.name}{suffix}
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </label>
-                      {/* 上次导入状态提示 */}
-                      {(() => {
-                        const selected = mcpImportSources.find((s) => s.id === selectedMcpSourceId);
-                        if (selected?.last_import_status === "failed" && selected.last_import_kb_id === kbId) {
-                          return (
-                            <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
-                              上次导入失败：{selected.last_import_error || "未知错误"}
-                            </p>
-                          );
-                        }
-                        return null;
-                      })()}
-                      <label className="app-form-label">
-                        <span>自定义提示词（可选，传递给 MCP Tool）</span>
-                        <textarea
-                          className="app-input min-h-[80px] text-sm"
-                          placeholder="例如：获取 Confluence 空间中「产品需求」页面及其子页面"
-                          value={mcpImportPrompt}
-                          onChange={(ev) => setMcpImportPrompt(ev.target.value)}
-                          disabled={mcpPhase === "confirming"}
-                          maxLength={2000}
-                        />
-                        <span className="mt-1 block text-right text-[11px] text-app-muted">
-                          {mcpImportPrompt.length}/2000
-                        </span>
-                      </label>
-
-                      {/* 确认步骤 */}
-                      {mcpPhase === "confirming" ? (
-                        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-4 space-y-3">
-                          <p className="text-xs font-medium text-amber-800">确认导入</p>
-                          <p className="text-xs text-amber-700">
-                            此操作会<strong>替换</strong>该 MCP 源在此知识库中之前导入的全部条目，不可撤销。确认继续？
-                          </p>
-                          <div className="flex gap-2">
-                            <button
-                              className="app-button-secondary flex-1 text-xs"
-                              type="button"
-                              onClick={() => setMcpPhase("form")}
-                            >
-                              取消
-                            </button>
-                            <button
-                              className="app-button flex-1 text-xs"
-                              type="button"
-                              onClick={() => void doMcpImport()}
-                            >
-                              确认导入
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <button
-                          className="app-button w-full"
-                          type="button"
-                          disabled={!selectedMcpSourceId}
-                          onClick={() => requestMcpImport()}
-                        >
-                          从 MCP 导入
-                        </button>
-                      )}
-                    </>
-                  )
-                )}
-
-                {/* done 阶段底部操作 */}
-                {mcpPhase === "done" && (
-                  <button
-                    className="app-button-secondary w-full text-xs"
-                    type="button"
-                    onClick={() => {
-                      setMcpPhase("form");
-                      setMcpImportResult(null);
-                      setSelectedMcpSourceId(null);
-                      setMcpImportPrompt("");
-                      loadMcpSourcesForImport();
-                    }}
-                  >
-                    重新导入
-                  </button>
-                )}
-
-                <p className="text-[11px] text-app-muted">
-                  MCP 源在「偏好设置 → MCP 管理」中配置。导入的数据会替换该源在此知识库中之前导入的全部条目。
-                </p>
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -1602,6 +1394,64 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                 {gitSaving ? "保存中…" : "保存"}
               </button>
               <button className="app-button-secondary flex-1" type="button" disabled={gitSaving} onClick={() => setGitModalOpen(false)}>
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {apiImportModalOpen && apiImportSource && (
+        <div className="app-modal-backdrop" role="presentation" onClick={() => setApiImportModalOpen(false)}>
+          <div
+            className="app-card max-h-[90vh] w-full max-w-md overflow-auto p-5"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="api-import-title"
+            onClick={(ev) => ev.stopPropagation()}
+          >
+            <div className="mb-3 flex items-center justify-between">
+              <h2 id="api-import-title" className="app-section-title">导入到知识库</h2>
+              <button className="app-control-button" type="button" onClick={() => setApiImportModalOpen(false)}>
+                关闭
+              </button>
+            </div>
+            <p className="text-sm text-app-secondary">
+              源：<span className="font-semibold text-app-primary">{apiImportSource.name}</span>
+              <span className="text-app-muted">（{apiImportSource.integration === "notion" ? "Notion" : apiImportSource.integration === "confluence" ? "Confluence" : "飞书"}）</span>
+            </p>
+            <label className="app-form-label mt-3">
+              <span>
+                {apiImportSource.integration === "notion" ? "Page / Database ID" :
+                 apiImportSource.integration === "confluence" ? "Page ID" :
+                 "Doc Token"}
+              </span>
+              <input
+                className="app-input font-mono text-sm"
+                placeholder={
+                  apiImportSource.integration === "notion" ? "Notion 页面或数据库的 UUID" :
+                  apiImportSource.integration === "confluence" ? "Confluence 页面 ID（数字）" :
+                  "飞书文档 Token"
+                }
+                value={apiImportObjectId}
+                onChange={(ev) => setApiImportObjectId(ev.target.value)}
+                onKeyDown={(ev) => {
+                  if (ev.key === "Enter" && apiImportObjectId.trim()) {
+                    void importFromApiSource(apiImportSource.id, apiImportObjectId).then(() => setApiImportModalOpen(false));
+                  }
+                }}
+              />
+            </label>
+            <div className="mt-4 flex gap-2">
+              <button
+                className={`app-button flex-1 ${apiSourceSyncingId === apiImportSource.id ? "is-loading" : ""}`}
+                type="button"
+                disabled={!apiImportObjectId.trim() || apiSourceSyncingId === apiImportSource.id}
+                onClick={() => void importFromApiSource(apiImportSource.id, apiImportObjectId).then(() => setApiImportModalOpen(false))}
+              >
+                {apiSourceSyncingId === apiImportSource.id ? "导入中…" : "导入"}
+              </button>
+              <button className="app-button-secondary flex-1" type="button" onClick={() => setApiImportModalOpen(false)} disabled={apiSourceSyncingId === apiImportSource.id}>
                 取消
               </button>
             </div>
