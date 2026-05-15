@@ -562,8 +562,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <Link
               href="/knowledge-bases"
               className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isActive(pathname, "/knowledge-bases") ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
-              title="知识库"
-              aria-label="知识库"
+              title="语义知识库"
+              aria-label="语义知识库"
             >
               <Icon name="book" />
             </Link>
@@ -613,15 +613,15 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 </span>
                 <span>业务域</span>
               </Link>
-              <Link
-                href="/knowledge-bases"
-                className={`app-nav-item rounded-lg ${isActive(pathname, "/knowledge-bases") ? "is-active" : ""}`}
-              >
-                <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
-                  <Icon name="book" />
-                </span>
-                <span>知识库</span>
-              </Link>
+            <Link
+              href="/knowledge-bases"
+              className={`app-nav-item rounded-lg ${isActive(pathname, "/knowledge-bases") ? "is-active" : ""}`}
+            >
+              <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
+                <Icon name="book" />
+              </span>
+              <span>语义知识库</span>
+            </Link>
               <Link href="/settings" className={`app-nav-item rounded-lg ${isActive(pathname, "/settings") ? "is-active" : ""}`}>
                 <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
                   <Icon name="settings" />

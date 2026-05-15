@@ -139,3 +139,78 @@ def init_db() -> None:
                 "ALTER TABLE knowledge_api_sources ALTER COLUMN object_id DROP NOT NULL;"
             )
         )
+        # 语义知识库新表
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS pipeline_configs (
+                id SERIAL PRIMARY KEY,
+                knowledge_base_id INT NOT NULL UNIQUE REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                chunk_strategy TEXT NOT NULL DEFAULT 'heading',
+                chunk_size INT NOT NULL DEFAULT 1500,
+                chunk_overlap INT NOT NULL DEFAULT 200,
+                min_chunk_chars INT NOT NULL DEFAULT 20,
+                dedup_threshold FLOAT NOT NULL DEFAULT 0.97,
+                created_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+                updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+            );
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS documents (
+                id SERIAL PRIMARY KEY,
+                knowledge_base_id INT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                title TEXT NOT NULL,
+                source_type TEXT NOT NULL DEFAULT 'file',
+                source_meta JSONB,
+                raw_text TEXT,
+                char_count INT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                error_message TEXT,
+                stage_timings JSONB,
+                knowledge_entry_id INT REFERENCES knowledge_entries(id) ON DELETE SET NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+                updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+            );
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS document_chunks (
+                id SERIAL PRIMARY KEY,
+                document_id INT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+                knowledge_base_id INT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                chunk_index INT NOT NULL,
+                content TEXT NOT NULL,
+                char_start INT,
+                char_end INT,
+                parent_chunk_id INT REFERENCES document_chunks(id) ON DELETE SET NULL,
+                quality_score FLOAT,
+                embedding vector(1536),
+                tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
+                created_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+            );
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_document_chunks_kb ON document_chunks(knowledge_base_id);"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_document_chunks_doc ON document_chunks(document_id);"
+        ))
+        # 迁移：将旧的 tsv TEXT 列升级为 tsvector GENERATED 列（必须在建 GIN 索引前执行）
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='document_chunks' AND column_name='tsv'
+                    AND data_type='text'
+                ) THEN
+                    ALTER TABLE document_chunks DROP COLUMN tsv;
+                    ALTER TABLE document_chunks
+                        ADD COLUMN tsv tsvector
+                        GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED;
+                END IF;
+            END $$;
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_document_chunks_tsv ON document_chunks USING gin(tsv);"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding ON document_chunks USING hnsw(embedding vector_cosine_ops);"
+        ))

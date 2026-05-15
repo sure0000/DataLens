@@ -6,6 +6,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from database import Base
 
+# ---------------------------------------------------------------------------
+# Document pipeline models (语义知识库核心)
+# ---------------------------------------------------------------------------
+
 
 class TableMeta(Base):
     __tablename__ = "tables"
@@ -137,6 +141,86 @@ class KnowledgeBase(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    pipeline_config: Mapped["PipelineConfig | None"] = relationship(back_populates="knowledge_base", uselist=False)
+    documents: Mapped[list["Document"]] = relationship(back_populates="knowledge_base", cascade="all, delete-orphan")
+
+
+class PipelineConfig(Base):
+    """每个知识库的流水线配置：分块策略、清洗规则等。"""
+
+    __tablename__ = "pipeline_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False, unique=True)
+    # 分块策略: heading | hierarchical | fixed
+    chunk_strategy: Mapped[str] = mapped_column(Text, nullable=False, default="heading")
+    chunk_size: Mapped[int] = mapped_column(Integer, default=1500)
+    chunk_overlap: Mapped[int] = mapped_column(Integer, default=200)
+    # 清洗：最小块字符数，低于此值丢弃
+    min_chunk_chars: Mapped[int] = mapped_column(Integer, default=20)
+    # 近重复检测阈值（cosine 相似度），超过则跳过入库
+    dedup_threshold: Mapped[float] = mapped_column(Float, default=0.97)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    knowledge_base: Mapped["KnowledgeBase"] = relationship(back_populates="pipeline_config")
+
+
+class Document(Base):
+    """流水线处理的文档单元，对应一次文件上传/Git文件/API页面。"""
+
+    __tablename__ = "documents"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    # 文档标题（文件名或页面标题）
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    # 来源类型: file | git | notion | confluence | feishu | manual
+    source_type: Mapped[str] = mapped_column(Text, nullable=False, default="file")
+    source_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 原始文本（提取后，清洗前）
+    raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 字符数统计
+    char_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 流水线状态: pending → extracting → cleaning → chunking → embedding → indexed | failed
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 各阶段耗时（毫秒）
+    stage_timings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 关联的 KnowledgeEntry（手动条目为 None）
+    knowledge_entry_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_entries.id", ondelete="SET NULL"), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    knowledge_base: Mapped["KnowledgeBase"] = relationship(back_populates="documents")
+    chunks: Mapped[list["DocumentChunk"]] = relationship(back_populates="document", cascade="all, delete-orphan")
+
+
+class DocumentChunk(Base):
+    """文档分块后的最小检索单元，替代 Embedding 表中的 knowledge_entry 记录。"""
+
+    __tablename__ = "document_chunks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_id: Mapped[int] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), nullable=False)
+    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    # 在原文中的字符偏移（用于分块浏览器定位）
+    char_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    char_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # 层级分块时的父块 id
+    parent_chunk_id: Mapped[int | None] = mapped_column(ForeignKey("document_chunks.id", ondelete="SET NULL"), nullable=True)
+    # 清洗质量分 0.0-1.0
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # 向量（与 Embedding 表并存，新文档走此表）
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    # tsvector 由 PostgreSQL GENERATED ALWAYS AS 自动维护，不在 ORM 中映射（避免 INSERT 时冲突）
+    # tsv 列存在于 DB 中，仅通过原生 SQL 查询使用
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    document: Mapped["Document"] = relationship(back_populates="chunks")
 
 
 class KnowledgeEntry(Base):

@@ -235,6 +235,72 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   } | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
 
+  // 文档流水线 Tab 状态
+  type DetailTab = "entries" | "documents" | "chunks" | "search";
+  const [activeTab, setActiveTab] = useState<DetailTab>("entries");
+  type DocStatus = "pending" | "extracting" | "cleaning" | "chunking" | "embedding" | "indexed" | "failed";
+  type DocRow = {
+    id: number; title: string; source_type: string; source_meta: Record<string, string>;
+    char_count: number | null; status: DocStatus; error_message: string | null;
+    stage_timings: Record<string, number>; created_at: string; updated_at: string;
+  };
+  type ChunkRow = { id: number; chunk_index: number; content: string; quality_score: number | null; char_start: number | null; char_end: number | null; };
+  const [documents, setDocuments] = useState<DocRow[]>([]);
+  const [docsLoading, setDocsLoading] = useState(false);
+  const [selectedDocId, setSelectedDocId] = useState<number | null>(null);
+  const [chunks, setChunks] = useState<ChunkRow[]>([]);
+  const [chunksLoading, setChunksLoading] = useState(false);
+
+  async function loadDocuments() {
+    setDocsLoading(true);
+    try {
+      const res = await api<{ documents: DocRow[] }>(`/api/knowledge-bases/${kbId}/documents`);
+      setDocuments(res.documents ?? []);
+    } catch { setDocuments([]); } finally { setDocsLoading(false); }
+  }
+
+  async function loadChunks(docId: number) {
+    setChunksLoading(true);
+    setSelectedDocId(docId);
+    try {
+      const res = await api<{ chunks: ChunkRow[] }>(`/api/knowledge-bases/${kbId}/documents/${docId}/chunks`);
+      setChunks(res.chunks ?? []);
+    } catch { setChunks([]); } finally { setChunksLoading(false); }
+  }
+
+  async function retryDocument(docId: number) {
+    try {
+      await api(`/api/knowledge-bases/${kbId}/documents/${docId}/retry`, { method: "POST" });
+      notifyUser("已重新提交处理", "success");
+      loadDocuments();
+    } catch (e: unknown) {
+      notifyUser(e instanceof Error ? e.message : "重试失败", "error");
+    }
+  }
+
+  async function deleteDocumentRow(docId: number) {
+    try {
+      await api(`/api/knowledge-bases/${kbId}/documents/${docId}`, { method: "DELETE" });
+      setDocuments((prev) => prev.filter((d) => d.id !== docId));
+      if (selectedDocId === docId) { setSelectedDocId(null); setChunks([]); }
+    } catch (e: unknown) {
+      notifyUser(e instanceof Error ? e.message : "删除失败", "error");
+    }
+  }
+
+  function docStatusChip(status: DocStatus): { text: string; className: string } {
+    const map: Record<DocStatus, { text: string; className: string }> = {
+      pending:    { text: "等待中",   className: "border-app-border bg-app-hover text-app-muted" },
+      extracting: { text: "提取中",   className: "border-blue-200 bg-blue-50 text-blue-700" },
+      cleaning:   { text: "清洗中",   className: "border-blue-200 bg-blue-50 text-blue-700" },
+      chunking:   { text: "分块中",   className: "border-blue-200 bg-blue-50 text-blue-700" },
+      embedding:  { text: "向量化中", className: "border-indigo-200 bg-indigo-50 text-indigo-700" },
+      indexed:    { text: "已索引",   className: "border-emerald-200 bg-emerald-50 text-emerald-800" },
+      failed:     { text: "失败",     className: "border-rose-200 bg-rose-50 text-rose-800" },
+    };
+    return map[status] ?? { text: status, className: "border-app-border bg-white text-app-secondary" };
+  }
+
   async function load() {
     if (!Number.isFinite(kbId)) return;
     setLoading(true);
@@ -686,11 +752,11 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       <PageHeader
         breadcrumbs={[
           { label: "首页", href: "/" },
-          { label: "知识库", href: "/knowledge-bases" },
+          { label: "语义知识库", href: "/knowledge-bases" },
           { label: kb?.name || "…" }
         ]}
-        title={kb?.name || "知识库"}
-        subtitle={kb?.description || "在此维护条目；保存条目时会写入向量索引，供语义检索与下游 RAG 使用。"}
+        title={kb?.name || "语义知识库"}
+        subtitle={kb?.description || "文档经过清洗、分块、向量化后进入语义索引，支持混合检索（向量 + 关键词）。"}
         actions={
           <div className="app-toolbar flex-wrap">
             <button className="app-button-secondary app-toolbar-action" type="button" onClick={openKbEdit}>
@@ -713,14 +779,37 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       />
       <Toast message={message} tone={messageTone} duration={toastDurationMs} onClose={dismissToast} />
 
+      {!loading && kb && (
+        <div className="mt-4 flex gap-1 border-b border-app-border">
+          {(["entries", "documents", "chunks", "search"] as DetailTab[]).map((t) => {
+            const labels: Record<DetailTab, string> = { entries: "知识条目", documents: "文档", chunks: "分块浏览器", search: "检索测试" };
+            return (
+              <button
+                key={t}
+                type="button"
+                className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${activeTab === t ? "border-indigo-500 text-indigo-600" : "border-transparent text-app-secondary hover:text-app-primary"}`}
+                onClick={() => {
+                  setActiveTab(t);
+                  if (t === "documents") loadDocuments();
+                }}
+              >
+                {labels[t]}
+              </button>
+            );
+          })}
+        </div>
+      )}
+
       {loading && <p className="app-text-muted mt-4 text-sm">加载中…</p>}
 
       {!loading && kb && (
         <>
+          {/* ── 检索测试 Tab ── */}
+          {activeTab === "search" && (
           <section className="app-card mt-6 p-4">
-            <h2 className="app-section-title">语义检索（向量）</h2>
+            <h2 className="app-section-title">混合检索测试</h2>
             <p className="app-text-muted mt-1 text-xs">
-              与常见 RAG 知识库一致：用自然语言提问，按向量相似度返回最相关条目。未配置 OPENAI_API_KEY 时使用确定性本地向量，仅适合联调。
+              向量检索 + BM25 关键词检索，通过 Reciprocal Rank Fusion 合并排名。结果显示向量距离和关键词分数供调试。
             </p>
             <div className="app-toolbar mt-3 flex-wrap">
               <input
@@ -728,51 +817,114 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                 placeholder="例如：退款口径如何定义？"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") runSemanticSearch();
-                }}
+                onKeyDown={(e) => { if (e.key === "Enter") runSemanticSearch(); }}
               />
-              <button className={`app-button app-toolbar-action ${searching ? "is-loading" : ""}`} type="button" onClick={runSemanticSearch} disabled={searching}>
-                检索
+              <button className={`app-button app-toolbar-action shrink-0 ${searching ? "is-loading" : ""}`} type="button" onClick={runSemanticSearch} disabled={searching || !searchQuery.trim()}>
+                {searching ? "检索中…" : "检索"}
               </button>
             </div>
             {hits.length > 0 && (
-              <ul className="mt-4 space-y-2">
+              <ul className="mt-4 space-y-3">
                 {hits.map((h) => (
-                  <li key={`${h.entry_id}-${h.snippet.slice(0, 20)}`} className="rounded-lg border border-app-border bg-app-hover p-3 text-sm">
-                    <p className="font-semibold text-app-primary">{h.title}</p>
-                    {(h.summary ?? "").trim() ? (
-                      <p className="app-text-muted mt-1 line-clamp-2 text-xs leading-relaxed">{h.summary}</p>
-                    ) : null}
-                    <p className="app-text-secondary mt-1 line-clamp-4 whitespace-pre-wrap break-words">{h.snippet}</p>
-                    <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2">
-                      <button
-                        type="button"
-                        className="app-link text-xs"
-                        onClick={() => {
-                          const found = entries.find((x) => x.id === h.entry_id);
-                          if (found) setViewEntry(found);
-                        }}
-                      >
-                        查看正文
-                      </button>
-                      <button
-                        type="button"
-                        className="app-link text-xs"
-                        onClick={() => {
-                          const found = entries.find((x) => x.id === h.entry_id);
-                          if (found) openEditEntry(found);
-                        }}
-                      >
-                        编辑此条目
-                      </button>
+                  <li key={h.entry_id} className="app-card p-3">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="app-text-primary font-medium text-sm">{h.title}</p>
+                      <div className="flex shrink-0 gap-2 text-[11px] text-app-muted">
+                        {"vector_dist" in h && <span>向量距离 {(h as Record<string, unknown>).vector_dist as number}</span>}
+                        {"bm25_rank" in h && <span>BM25 {(h as Record<string, unknown>).bm25_rank as number}</span>}
+                        {"rrf_score" in h && <span className="text-indigo-600 font-medium">RRF {(h as Record<string, unknown>).rrf_score as number}</span>}
+                      </div>
                     </div>
+                    {h.summary && <p className="app-text-secondary mt-1 text-xs">{h.summary}</p>}
+                    <pre className="mt-2 whitespace-pre-wrap break-words rounded bg-app-hover p-2 text-xs text-app-secondary">{h.snippet}</pre>
                   </li>
                 ))}
               </ul>
             )}
           </section>
+          )}
 
+          {/* ── 文档 Tab ── */}
+          {activeTab === "documents" && (
+          <section className="mt-6 space-y-3">
+            <div className="flex items-center justify-between">
+              <h2 className="app-section-title">文档流水线</h2>
+              <button className="app-button-secondary text-sm" type="button" onClick={loadDocuments}>刷新</button>
+            </div>
+            <p className="app-text-muted text-xs">每个导入的文件/页面对应一个文档，经过提取→清洗→分块→向量化后进入索引。</p>
+            {docsLoading && <p className="app-text-muted text-sm">加载中…</p>}
+            {!docsLoading && documents.length === 0 && (
+              <p className="app-text-muted text-sm">暂无文档。通过「导入资料」上传文件后，文档会出现在此处。</p>
+            )}
+            {documents.map((doc) => {
+              const chip = docStatusChip(doc.status);
+              return (
+                <div key={doc.id} className="app-card p-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <p className="app-text-primary font-medium text-sm truncate">{doc.title}</p>
+                      <p className="app-text-muted text-xs mt-0.5">
+                        {doc.source_type} · {doc.char_count != null ? `${doc.char_count.toLocaleString()} 字符` : "—"} · {new Date(doc.created_at).toLocaleString()}
+                      </p>
+                      {doc.error_message && (
+                        <p className="mt-1 text-xs text-rose-600">{doc.error_message}</p>
+                      )}
+                      {doc.status === "indexed" && Object.keys(doc.stage_timings).length > 0 && (
+                        <p className="mt-1 text-[11px] text-app-muted">
+                          {Object.entries(doc.stage_timings).map(([k, v]) => `${k}: ${v}ms`).join(" · ")}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-2">
+                      <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${chip.className}`}>{chip.text}</span>
+                      {doc.status === "indexed" && (
+                        <button className="app-button-secondary text-xs" type="button" onClick={() => { setActiveTab("chunks"); loadChunks(doc.id); }}>
+                          查看分块
+                        </button>
+                      )}
+                      {doc.status === "failed" && (
+                        <button className="app-button text-xs" type="button" onClick={() => retryDocument(doc.id)}>重试</button>
+                      )}
+                      <button className="app-button-danger text-xs" type="button" onClick={() => deleteDocumentRow(doc.id)}>删除</button>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </section>
+          )}
+
+          {/* ── 分块浏览器 Tab ── */}
+          {activeTab === "chunks" && (
+          <section className="mt-6 space-y-3">
+            <h2 className="app-section-title">分块浏览器</h2>
+            <p className="app-text-muted text-xs">查看实际进入向量索引的最小检索单元。在「文档」Tab 点击「查看分块」可跳转到此处。</p>
+            {selectedDocId == null && (
+              <p className="app-text-muted text-sm">请先在「文档」Tab 选择一个已索引的文档。</p>
+            )}
+            {selectedDocId != null && chunksLoading && <p className="app-text-muted text-sm">加载中…</p>}
+            {selectedDocId != null && !chunksLoading && chunks.length === 0 && (
+              <p className="app-text-muted text-sm">该文档暂无分块数据。</p>
+            )}
+            {chunks.map((c) => (
+              <div key={c.id} className="app-card p-3">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <span className="text-xs text-app-muted">块 #{c.chunk_index + 1}</span>
+                  {c.quality_score != null && (
+                    <span className={`text-[11px] font-medium ${c.quality_score >= 0.7 ? "text-emerald-600" : c.quality_score >= 0.4 ? "text-amber-600" : "text-rose-500"}`}>
+                      质量 {c.quality_score.toFixed(2)}
+                    </span>
+                  )}
+                </div>
+                <pre className="whitespace-pre-wrap break-words text-xs text-app-secondary">{c.content}</pre>
+              </div>
+            ))}
+          </section>
+          )}
+
+          {/* ── 知识条目 Tab（原有内容，含 Git/API 导入区） ── */}
+          {activeTab === "entries" && (
+          <>
           <section className="app-card mt-6 p-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
               <div>
@@ -1045,6 +1197,8 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
               </div>
             ))}
           </section>
+          </>
+          )}
         </>
       )}
 

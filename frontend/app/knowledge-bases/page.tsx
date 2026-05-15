@@ -99,9 +99,9 @@ export default function KnowledgeBasesPage() {
   return (
     <main className="app-page">
       <PageHeader
-        breadcrumbs={[{ label: "首页", href: "/" }, { label: "知识库" }]}
-        title="知识库"
-        subtitle="按主题维护 Markdown 条目，支持向量语义检索，便于协作者编辑与大模型/RAG 引用。"
+        breadcrumbs={[{ label: "首页", href: "/" }, { label: "语义知识库" }]}
+        title="语义知识库"
+        subtitle="文档经过清洗、分块、向量化后进入语义索引，支持混合检索（向量 + 关键词），供 Copilot 和 RAG 引用。"
         actionsBelowSubtitle
         actions={
           <div className="app-toolbar !flex-nowrap w-full min-w-0 md:w-auto">
@@ -128,7 +128,7 @@ export default function KnowledgeBasesPage() {
       />
 
       <section className="mt-6 space-y-3">
-        <h2 className="app-section-title">已创建知识库</h2>
+        <h2 className="app-section-title">已创建语义知识库</h2>
         {loading && <LoadingSkeletonList count={3} />}
         {paged.map((k) => (
           <div key={k.id} className="app-card app-card-interactive app-list-item p-4">

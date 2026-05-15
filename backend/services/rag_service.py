@@ -22,7 +22,8 @@ from models import (
     TableMeta,
     TableSummary,
 )
-from services.embedding_service import embed_and_store_async, search_knowledge_semantic, search_similar_async
+from services.embedding_service import embed_and_store_async, search_similar_async
+from services.retrieval_service import search_entries_hybrid, search_entries_hybrid_async
 from services.llm_service import (
     SqlCopilotContext,
     _heuristic_intent,
@@ -244,7 +245,7 @@ def _candidate_table_ids_from_domain_knowledge(
 
     merged_hits: dict[int, dict[str, Any]] = {}
     for kb_id in kb_ids:
-        for hit in search_knowledge_semantic(db, kb_id, question.strip(), top_k=top_k_per_kb):
+        for hit in search_entries_hybrid(db, kb_id, question.strip(), top_k=top_k_per_kb):
             eid = int(hit["entry_id"])
             merged_hits.setdefault(eid, hit)
 
@@ -518,7 +519,7 @@ def _collect_knowledge_context_text(
         sem_lines = ["[知识库语义检索 — 与问题相关的片段]"]
         merged_hits: dict[int, dict[str, Any]] = {}
         for kb_id in kb_ids:
-            for hit in search_knowledge_semantic(db, kb_id, question.strip(), top_k=6):
+            for hit in search_entries_hybrid(db, kb_id, question.strip(), top_k=6):
                 eid = int(hit["entry_id"])
                 if eid in pinned_set:
                     continue

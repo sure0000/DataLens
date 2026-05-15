@@ -1,6 +1,7 @@
-"""知识库 API：集合管理 + Markdown 条目 + 向量语义检索（复用 embeddings 表）。"""
+"""知识库 API：集合管理 + Markdown 条目 + 语义知识库流水线 + 混合检索。"""
 
 import re
+import threading
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -8,12 +9,11 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from database import get_db
-from models import KnowledgeBase, KnowledgeEntry
+from database import SessionLocal, get_db
+from models import Document, KnowledgeBase, KnowledgeEntry
 from services.embedding_service import (
     KNOWLEDGE_EMBEDDING_REF,
     delete_embeddings_for_knowledge_entries,
-    search_knowledge_semantic,
 )
 from services.entry_service import create_entry as create_entry_svc
 from services.knowledge_ingest import (
@@ -22,6 +22,15 @@ from services.knowledge_ingest import (
     normalize_filename,
     title_from_filename,
 )
+from services.knowledge_pipeline_service import (
+    create_document,
+    delete_document,
+    get_document_chunks,
+    get_document_list,
+    retry_document,
+    run_pipeline,
+)
+from services.retrieval_service import search_entries_hybrid
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["knowledge-bases"])
 
@@ -186,17 +195,36 @@ async def import_entry_from_file(kb_id: int, file: UploadFile = File(...), db: S
     if len(raw) > MAX_INGEST_BYTES:
         raise HTTPException(status_code=400, detail=f"文件超过 {MAX_INGEST_BYTES // (1024 * 1024)}MB 上限")
     try:
-        text = file_to_plain(fname, raw)
+        plain = file_to_plain(fname, raw)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if not text.strip():
+    if not plain.strip():
         raise HTTPException(status_code=400, detail="文件解析结果为空")
     title = title_from_filename(fname)
     meta = {"kind": "file", "ref": fname, "label": "上传文件"}
-    entry = create_entry_svc(db, kb_id, title, text, source_meta=meta)
+
+    # 同时创建 KnowledgeEntry（向后兼容）和 Document（新流水线）
+    entry = create_entry_svc(db, kb_id, title, plain, source_meta=meta)
     db.commit()
     db.refresh(entry)
-    return {"entry": _entry_row(entry)}
+
+    doc = create_document(db, kb_id, title, source_type="file", source_meta=meta, knowledge_entry_id=entry.id)
+    db.commit()
+
+    # 在后台线程运行流水线，不阻塞响应
+    doc_id = doc.id
+    raw_text = plain
+    def _bg():
+        bg_db = SessionLocal()
+        try:
+            bg_doc = bg_db.get(Document, doc_id)
+            if bg_doc:
+                run_pipeline(bg_db, bg_doc, raw_text)
+        finally:
+            bg_db.close()
+    threading.Thread(target=_bg, daemon=True).start()
+
+    return {"entry": _entry_row(entry), "document_id": doc.id}
 
 
 @router.put("/{kb_id}/entries/{entry_id}")
@@ -258,5 +286,57 @@ def semantic_search(kb_id: int, body: SearchBody, db: Session = Depends(get_db))
     kb = db.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    hits = search_knowledge_semantic(db, kb_id, body.query.strip(), top_k=body.top_k)
-    return {"hits": hits, "ref_type": KNOWLEDGE_EMBEDDING_REF}
+    hits = search_entries_hybrid(db, kb_id, body.query.strip(), top_k=body.top_k)
+    return {"hits": hits}
+
+
+# ---------------------------------------------------------------------------
+# 文档流水线 API
+# ---------------------------------------------------------------------------
+
+@router.get("/{kb_id}/documents")
+def list_documents(kb_id: int, db: Session = Depends(get_db)) -> dict:
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    return {"documents": get_document_list(db, kb_id)}
+
+
+@router.delete("/{kb_id}/documents/{doc_id}")
+def remove_document(kb_id: int, doc_id: int, db: Session = Depends(get_db)) -> dict:
+    doc = db.get(Document, doc_id)
+    if not doc or doc.knowledge_base_id != kb_id:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    delete_document(db, doc_id)
+    return {"ok": True}
+
+
+@router.post("/{kb_id}/documents/{doc_id}/retry")
+def retry_doc(kb_id: int, doc_id: int, db: Session = Depends(get_db)) -> dict:
+    doc = db.get(Document, doc_id)
+    if not doc or doc.knowledge_base_id != kb_id:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if doc.status != "failed":
+        raise HTTPException(status_code=400, detail="只有失败的文档可以重试")
+    if not doc.raw_text:
+        raise HTTPException(status_code=400, detail="原始文本已丢失，无法重试")
+    retry_document(db, doc_id)
+    raw_text = doc.raw_text
+    def _bg():
+        bg_db = SessionLocal()
+        try:
+            bg_doc = bg_db.get(Document, doc_id)
+            if bg_doc:
+                run_pipeline(bg_db, bg_doc, raw_text)
+        finally:
+            bg_db.close()
+    threading.Thread(target=_bg, daemon=True).start()
+    return {"ok": True}
+
+
+@router.get("/{kb_id}/documents/{doc_id}/chunks")
+def list_chunks(kb_id: int, doc_id: int, db: Session = Depends(get_db)) -> dict:
+    doc = db.get(Document, doc_id)
+    if not doc or doc.knowledge_base_id != kb_id:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    return {"chunks": get_document_chunks(db, doc_id)}
