@@ -296,6 +296,26 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     }
   }
 
+  function handleHitClick(hit: Hit) {
+    const entry = entries.find((e) => e.id === hit.entry_id);
+    if (!entry) return;
+    const meta = entry.source_meta || {};
+    const batchId = meta.import_batch && String(meta.import_batch).trim() && String(meta.import_batch) !== "None" ? String(meta.import_batch) : null;
+    if (batchId) {
+      const colId = `batch-${batchId}`;
+      setExpandedCollections((prev) => {
+        const next = new Set(prev);
+        next.add(colId);
+        return next;
+      });
+      setTimeout(() => {
+        document.getElementById(`col-${colId}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 100);
+    } else {
+      setViewEntry(entry);
+    }
+  }
+
   async function deleteDocumentRow(docId: number) {
     try {
       await api(`/api/knowledge-bases/${kbId}/documents/${docId}`, { method: "DELETE" });
@@ -726,7 +746,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
           {hits.length > 0 && (
             <div className="divide-y divide-app-border rounded-lg border border-app-border">
               {hits.map((hit) => (
-                <div key={hit.entry_id} className="p-3 space-y-1">
+                <div key={hit.entry_id} className="p-3 space-y-1 cursor-pointer hover:bg-app-hover transition-colors" onClick={() => handleHitClick(hit)}>
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-sm font-medium text-app-primary truncate">{hit.title}</p>
                     <span className="shrink-0 text-[11px] text-app-muted">
@@ -900,7 +920,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                     {cols.length > 0 && cols.map((col) => {
                       const expanded = expandedCollections.has(col.id);
                       return (
-                        <div key={col.id} className="app-card overflow-hidden">
+                        <div key={col.id} id={`col-${col.id}`} className="app-card overflow-hidden">
                           <button
                             type="button"
                             className="flex w-full items-center gap-3 p-4 text-left hover:bg-app-hover transition-colors"
