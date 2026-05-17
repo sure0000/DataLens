@@ -1,9 +1,12 @@
 """知识条目摄取：常见办公文档 → 正文文本（Markdown 近似）。"""
 from __future__ import annotations
 
+import contextlib
 import html
 import json
 import re
+import socket
+import time
 from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import PurePosixPath
@@ -11,6 +14,85 @@ from pathlib import PurePosixPath
 import httpx
 
 MAX_INGEST_BYTES = 12 * 1024 * 1024
+
+
+def _request_with_retry(
+    client: httpx.Client,
+    method: str,
+    url: str,
+    *,
+    max_retries: int = 3,
+    retry_delay: float = 1.0,
+    **kwargs,
+) -> httpx.Response:
+    """带指数退避重试的 HTTP 请求，用于处理 Notion API 偶发的 SSL/网络错误。"""
+    last_exc: Exception | None = None
+    for attempt in range(max_retries):
+        try:
+            r = client.request(method, url, **kwargs)
+            r.raise_for_status()
+            return r
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout, httpx.ReadError) as exc:
+            last_exc = exc
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay * (2**attempt))
+                continue
+            raise
+    # 不应到达这里，但类型检查需要
+    raise last_exc  # type: ignore[misc]
+
+
+_NOTION_REAL_IPS: list[str] | None = None
+
+
+def _resolve_notion_dns() -> list[str]:
+    """通过 DNS-over-HTTPS 解析 api.notion.com 的真实 IP，绕过本地 DNS 劫持。"""
+    global _NOTION_REAL_IPS
+    if _NOTION_REAL_IPS is not None:
+        return _NOTION_REAL_IPS
+    # 通过 8.8.8.8（Google DoH）直连，绕过本地 TUN/DNS 劫持
+    for doh_ip in ("8.8.8.8", "8.8.4.4"):
+        try:
+            r = httpx.get(
+                f"https://{doh_ip}/resolve?name=api.notion.com&type=A",
+                headers={"Host": "dns.google"},
+                timeout=10,
+                proxy={},
+            )
+            r.raise_for_status()
+            data = r.json()
+            ips = [a["data"] for a in data.get("Answer", []) if a.get("type") == 1]
+            if ips:
+                _NOTION_REAL_IPS = ips
+                return ips
+        except Exception:
+            continue
+    return []
+
+
+@contextlib.contextmanager
+def _use_notion_real_ip():
+    """绕过本地 TUN/VPN 的 DNS 劫持，使用 api.notion.com 的真实 IP 直连。"""
+    ips = _resolve_notion_dns()
+    if not ips:
+        yield
+        return
+
+    real_ip = ips[0]
+    original_getaddrinfo = socket.getaddrinfo
+
+    def patched_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        if host == "api.notion.com":
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (real_ip, port or 443))]
+        return original_getaddrinfo(host, port, family, type, proto, flags)
+
+    socket.getaddrinfo = patched_getaddrinfo
+    try:
+        yield
+    finally:
+        socket.getaddrinfo = original_getaddrinfo
+
+
 # 静态 HTML 抽字极少时，尝试从内嵌 SPA 状态（如 __NEXT_DATA__）补全
 _MIN_BODY_BEFORE_SPA_FALLBACK = 500
 _MAX_SPA_STRINGS = 450
@@ -423,23 +505,30 @@ _NOTION_ID_RE = re.compile(r"[0-9a-fA-F]{32}")
 def _extract_notion_id(raw: str) -> str:
     """从 Notion URL 或原始 ID 中提取 32 位 hex 标识符（返回无横线格式）。"""
     s = (raw or "").strip()
+    if not s:
+        raise ValueError("输入为空")
+
+    # 剥离查询参数和锚点
+    s = s.split("?")[0].split("#")[0]
+
     if "notion.so" in s.lower() or "notion.site" in s.lower():
-        # 取 URL 最后一个路径段
-        path = s.rstrip("/").split("/")[-1] if "/" in s else s
-        # 标准格式: title-uuidwithoutdashes — 按最后一段横线拆分
-        dash_parts = path.split("-")
-        if len(dash_parts) > 1:
-            candidate = dash_parts[-1]
-            if _NOTION_ID_RE.fullmatch(candidate):
-                return candidate.lower()
-        # 非标准格式（无横线分隔）：从末尾反向收集 32 位 hex 字符
-        hex_chars: list[str] = []
-        for ch in reversed(path):
-            if ch in "0123456789abcdefABCDEF":
-                hex_chars.append(ch)
-                if len(hex_chars) == 32:
-                    return "".join(reversed(hex_chars)).lower()
+        # 扫描所有路径段，找包含 32 位 hex 的段
+        parts = s.rstrip("/").split("/")
+        for part in reversed(parts):
+            # 标准格式: title-uuid-without-dashes — 按最后一段横线拆分
+            dash_parts = part.split("-")
+            for candidate in reversed(dash_parts):
+                if _NOTION_ID_RE.fullmatch(candidate):
+                    return candidate.lower()
+            # 非标准格式：从末尾反向收集 32 位 hex
+            hex_chars: list[str] = []
+            for ch in reversed(part):
+                if ch in "0123456789abcdefABCDEF":
+                    hex_chars.append(ch)
+                    if len(hex_chars) == 32:
+                        return "".join(reversed(hex_chars)).lower()
         raise ValueError(f"无法从 URL 中提取 Notion 页面/数据库 ID：{raw}")
+
     # 纯 ID（含或不合横线）
     clean = s.replace("-", "").replace(" ", "")
     m = _NOTION_ID_RE.fullmatch(clean)
@@ -563,7 +652,7 @@ def _notion_block_to_lines(block: dict, indent: int = 0) -> list[str]:
         lines.append(f"{prefix}![{alt}]({src})")
 
     elif t == "callout":
-        emoji = (b.get("callout", {}) or {}).get("icon", {}).get("emoji", "")
+        emoji = (block.get("callout", {}) or {}).get("icon", {}).get("emoji", "")
         text = _notion_rich_text_to_md(val.get("rich_text", []))
         prefix_icon = f"{emoji} " if emoji else ""
         lines.append(f"{prefix}> {prefix_icon}{text}")
@@ -608,10 +697,9 @@ def fetch_official_notion_page(api_key: str, page_id: str) -> tuple[str, str]:
     # Notion API pages 端点要求带横线的 UUID
     dashed_id = f"{clean_id[:8]}-{clean_id[8:12]}-{clean_id[12:16]}-{clean_id[16:20]}-{clean_id[20:32]}"
 
-    with httpx.Client(timeout=90.0, follow_redirects=True) as client:
+    with _use_notion_real_ip(), httpx.Client(proxy={}, timeout=90.0, follow_redirects=True) as client:
         # 获取页面属性
-        r = client.get(f"{NOTION_BASE}/pages/{dashed_id}", headers=headers)
-        r.raise_for_status()
+        r = _request_with_retry(client, "GET", f"{NOTION_BASE}/pages/{dashed_id}", headers=headers)
         page = r.json()
         if not isinstance(page, dict):
             raise ValueError(f"Notion API 返回了非预期的数据格式: {type(page).__name__}")
@@ -633,12 +721,13 @@ def fetch_official_notion_page(api_key: str, page_id: str) -> tuple[str, str]:
                 params: dict[str, str | int] = {"page_size": 100}
                 if cursor:
                     params["start_cursor"] = cursor
-                rr = client.get(
+                rr = _request_with_retry(
+                    client,
+                    "GET",
                     f"{NOTION_BASE}/blocks/{block_id}/children",
                     headers=headers,
                     params=params,
                 )
-                rr.raise_for_status()
                 data = rr.json()
                 for b in data.get("results", []):
                     kids: list[dict] = []
@@ -704,19 +793,20 @@ def fetch_official_notion_database(
     dashed_id = f"{clean_id[:8]}-{clean_id[8:12]}-{clean_id[12:16]}-{clean_id[16:20]}-{clean_id[20:32]}"
     results: list[tuple[str, str]] = []
 
-    with httpx.Client(timeout=120.0) as client:
+    with _use_notion_real_ip(), httpx.Client(proxy={}, timeout=120.0) as client:
         cursor = None
         fetched = 0
         while fetched < max_pages:
             params: dict[str, str | int] = {"page_size": 10}
             if cursor:
                 params["start_cursor"] = cursor
-            r = client.post(
+            r = _request_with_retry(
+                client,
+                "POST",
                 f"{NOTION_BASE}/databases/{dashed_id}/query",
                 headers=headers,
                 json=params,
             )
-            r.raise_for_status()
             data = r.json()
             for page in data.get("results", []):
                 pid = page.get("id", "")
