@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 import GitFileBrowser from "../../../components/GitFileBrowser";
 import PageHeader from "../../../components/PageHeader";
@@ -821,7 +821,10 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
             <div className="flex items-center justify-between">
               <h2 className="app-section-title">全部内容</h2>
               <div className="flex items-center gap-2">
-                <span className="text-xs text-app-muted">{documents.length + entries.length + gitSources.length} 项</span>
+                <span className="text-xs text-app-muted">{documents.length + entries.filter((e) => e.source_meta?.kind !== "git_file").length + gitSources.length} 项</span>
+                <button className="app-button-secondary text-xs" type="button" disabled={githubDiagBusy} onClick={runGithubConnectivityCheck}>
+                  {githubDiagBusy ? "检测中…" : "连通性检测"}
+                </button>
                 <button className="app-button-secondary text-sm" type="button" onClick={() => { loadDocuments(); load(); }}>刷新</button>
               </div>
             </div>
@@ -833,7 +836,9 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
               type UnifiedItem = { kind: "doc"; data: DocRow; cat: string } | { kind: "entry"; data: Entry; cat: string };
               const combined: UnifiedItem[] = [
                 ...documents.map((d) => ({ kind: "doc" as const, data: d, cat: (d.source_meta?.category || "").trim() || "__uncategorized__" })),
-                ...entries.map((e) => ({ kind: "entry" as const, data: e, cat: (e.source_meta?.category || "").trim() || "__uncategorized__" })),
+                ...entries
+                  .filter((e) => e.source_meta?.kind !== "git_file")
+                  .map((e) => ({ kind: "entry" as const, data: e, cat: (e.source_meta?.category || "").trim() || "__uncategorized__" })),
               ];
 
               // 1. 按分类整理 Git 源
@@ -1062,90 +1067,139 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                       );
                     })}
 
-                    {/* — Tier 3: 单文档列表（分页） — */}
-                    {paged.length > 0 && paged.map((item) => {
-                      if (item.kind === "doc") {
-                        const doc = item.data;
-                        const chip = docStatusChip(doc.status);
-                        const isExpanded = expandedDocId === doc.id;
-                        return (
-                          <div key={`doc-${doc.id}`} className="app-card">
-                            <div className="flex items-start justify-between gap-3 p-4">
-                              <label className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer">
-                                <input type="checkbox" className="shrink-0 accent-indigo-500" checked={selectedIds.has(`doc-${doc.id}`)} onChange={() => toggleSelect("doc", doc.id)} />
-                                <div className="min-w-0 flex-1">
-                                  <p className="app-text-primary font-medium text-sm truncate">{doc.title}</p>
-                                  <p className="app-text-muted text-xs mt-0.5">
-                                    {doc.source_meta?.label || doc.source_type} · {doc.char_count != null ? `${doc.char_count.toLocaleString()} 字符` : "—"} · {new Date(doc.created_at).toLocaleString()}
-                                  </p>
-                                  {doc.error_message && <p className="mt-1 text-xs text-rose-600">{doc.error_message}</p>}
-                                {doc.status === "indexed" && Object.keys(doc.stage_timings).length > 0 && (
-                                  <p className="mt-1 text-[11px] text-app-muted">
-                                    {Object.entries(doc.stage_timings).map(([k, v]) => `${k}: ${v}ms`).join(" · ")}
-                                  </p>
-                                )}
-                              </div></label>
-                              <div className="flex shrink-0 items-center gap-2">
-                                <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${chip.className}`}>{chip.text}</span>
-                                {doc.status === "indexed" && (
-                                  <button className="app-button-secondary text-xs" type="button" onClick={() => loadChunks(doc.id)}>
-                                    {isExpanded ? "收起分块" : "查看分块"}
-                                  </button>
-                                )}
-                                {doc.status === "failed" && <button className="app-button text-xs" type="button" onClick={() => retryDocument(doc.id)}>重试</button>}
-                                <button className="app-button-danger text-xs" type="button" onClick={() => confirmDeleteDocument(doc)}>删除</button>
-                              </div>
-                            </div>
-                            {isExpanded && (
-                              <div className="border-t border-app-border px-4 pb-4 pt-3 space-y-2">
-                                {chunksLoading && selectedDocId === doc.id && <p className="app-text-muted text-sm">加载中…</p>}
-                                {!chunksLoading && chunks.length === 0 && <p className="app-text-muted text-sm">该文档暂无分块数据。</p>}
-                                {chunks.map((c) => (
-                                  <div key={c.id} className="rounded-lg border border-app-border bg-app-hover p-3">
-                                    <div className="flex items-center justify-between gap-2 mb-1">
-                                      <span className="text-xs text-app-muted">块 #{c.chunk_index + 1}</span>
-                                      {c.quality_score != null && (
-                                        <span className={`text-[11px] font-medium ${c.quality_score >= 0.7 ? "text-emerald-600" : c.quality_score >= 0.4 ? "text-amber-600" : "text-rose-500"}`}>
-                                          质量 {c.quality_score.toFixed(2)}
-                                        </span>
+                    {/* — Tier 3: 单文档列表（表格） — */}
+                    {paged.length > 0 && (() => {
+                      const pagedKeys = new Set(paged.map(item => item.kind === "doc" ? `doc-${item.data.id}` : `entry-${item.data.id}`));
+                      const allPagedSelected = pagedKeys.size > 0 && pagedKeys.size === new Set(Array.from(selectedIds).filter(k => pagedKeys.has(k))).size;
+
+                      return (
+                        <div className="overflow-hidden rounded-xl border border-app-border bg-white shadow-sm">
+                          <table className="app-table">
+                            <thead>
+                              <tr>
+                                <th className="w-10 px-3 py-2.5">
+                                  <input type="checkbox" className="accent-indigo-500" checked={allPagedSelected} onChange={() => {
+                                    if (allPagedSelected) {
+                                      setSelectedIds(prev => { const n = new Set(prev); for (const k of pagedKeys) n.delete(k); return n; });
+                                    } else {
+                                      setSelectedIds(prev => { const n = new Set(prev); for (const k of pagedKeys) n.add(k); return n; });
+                                    }
+                                  }} />
+                                </th>
+                                <th className="px-3 py-2.5">标题</th>
+                                <th className="w-44 px-3 py-2.5">创建时间</th>
+                                <th className="w-52 px-3 py-2.5">操作</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {paged.map((item) => {
+                                const key = item.kind === "doc" ? `doc-${item.data.id}` : `entry-${item.data.id}`;
+                                const isSelected = selectedIds.has(key);
+
+                                if (item.kind === "doc") {
+                                  const doc = item.data;
+                                  const chip = docStatusChip(doc.status);
+                                  const isExpanded = expandedDocId === doc.id;
+                                  return (
+                                    <Fragment key={key}>
+                                      <tr className={`transition-colors ${isSelected ? "bg-indigo-50/70 ring-1 ring-inset ring-indigo-200" : "hover:bg-app-hover"}`}>
+                                        <td className="px-3 py-2.5">
+                                          <input type="checkbox" className="accent-indigo-500" checked={isSelected} onChange={() => toggleSelect("doc", doc.id)} />
+                                        </td>
+                                        <td className="px-3 py-2.5">
+                                          <div>
+                                            <p className="text-sm font-medium text-app-primary truncate" title={doc.title}>{doc.title}</p>
+                                            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+                                              <span className="text-xs text-app-muted">{doc.source_meta?.label || doc.source_type}</span>
+                                              {doc.char_count != null && <span className="text-xs text-app-muted">{doc.char_count.toLocaleString()} 字符</span>}
+                                              <span className={`inline-flex items-center rounded-full border px-1.5 py-0 text-[11px] font-medium ${chip.className}`}>{chip.text}</span>
+                                              {doc.status === "failed" && <button className="app-button text-xs leading-none" type="button" onClick={(e) => { e.stopPropagation(); retryDocument(doc.id); }}>重试</button>}
+                                            </div>
+                                            {doc.error_message && <p className="text-xs text-rose-600 mt-0.5 truncate" title={doc.error_message}>{doc.error_message}</p>}
+                                            {doc.status === "indexed" && Object.keys(doc.stage_timings).length > 0 && (
+                                              <p className="text-[11px] text-app-muted mt-0.5">
+                                                {Object.entries(doc.stage_timings).map(([k, v]) => `${k}: ${v}ms`).join(" · ")}
+                                              </p>
+                                            )}
+                                          </div>
+                                        </td>
+                                        <td className="px-3 py-2.5 text-xs text-app-muted whitespace-nowrap align-top">{new Date(doc.created_at).toLocaleString()}</td>
+                                        <td className="px-3 py-2.5 align-top">
+                                          <div className="flex items-center gap-1.5">
+                                            {doc.status === "indexed" && (
+                                              <button className="app-button-secondary text-xs" type="button" onClick={(e) => { e.stopPropagation(); loadChunks(doc.id); }}>
+                                                {isExpanded ? "收起分块" : "查看分块"}
+                                              </button>
+                                            )}
+                                            <button className="app-button-danger text-xs" type="button" onClick={(e) => { e.stopPropagation(); confirmDeleteDocument(doc); }}>删除</button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                      {isExpanded && (
+                                        <tr>
+                                          <td colSpan={4} className="px-4 pb-3 pt-2 border-b border-app-border">
+                                            <div className="space-y-2 max-h-80 overflow-y-auto">
+                                              {chunksLoading && selectedDocId === doc.id && <p className="text-sm text-app-muted">加载中…</p>}
+                                              {!chunksLoading && chunks.length === 0 && <p className="text-sm text-app-muted">该文档暂无分块数据。</p>}
+                                              {chunks.map((c) => (
+                                                <div key={c.id} className="rounded-lg border border-app-border bg-white p-3">
+                                                  <div className="flex items-center justify-between gap-2 mb-1">
+                                                    <span className="text-xs text-app-muted">块 #{c.chunk_index + 1}</span>
+                                                    {c.quality_score != null && (
+                                                      <span className={`text-[11px] font-medium ${c.quality_score >= 0.7 ? "text-emerald-600" : c.quality_score >= 0.4 ? "text-amber-600" : "text-rose-500"}`}>
+                                                        质量 {c.quality_score.toFixed(2)}
+                                                      </span>
+                                                    )}
+                                                  </div>
+                                                  <pre className="whitespace-pre-wrap break-words text-xs text-app-secondary">{c.content}</pre>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </td>
+                                        </tr>
                                       )}
-                                    </div>
-                                    <pre className="whitespace-pre-wrap break-words text-xs text-app-secondary">{c.content}</pre>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      } else {
-                        const entry = item.data;
-                        const label = entry.source_meta?.label || entry.source_meta?.kind || "API";
-                        return (
-                          <div key={`entry-${entry.id}`} className="app-card" id={`entry-${entry.id}`}>
-                            <div className="flex items-start justify-between gap-3 p-4">
-                              <label className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer">
-                                <input type="checkbox" className="shrink-0 accent-indigo-500" checked={selectedIds.has(`entry-${entry.id}`)} onChange={() => toggleSelect("entry", entry.id)} />
-                                <div className="min-w-0 flex-1">
-                                  <p className="app-text-primary font-medium text-sm truncate">{entry.title}</p>
-                                  <p className="app-text-muted text-xs mt-0.5">
-                                    {label} · {new Date(entry.created_at).toLocaleString()}
-                                    {entry.source_url && <> · <a className="app-link" href={entry.source_url} target="_blank" rel="noreferrer">源链接</a></>}
-                                  </p>
-                                  {entry.summary && <p className="app-text-muted text-xs mt-1 line-clamp-2">{entry.summary}</p>}
-                                </div></label>
-                              <div className="flex shrink-0 items-center gap-2">
-                                <button className="app-button-secondary text-xs" type="button" onClick={() => setViewEntry(entry)}>查看</button>
-                                <button className="app-button-danger text-xs" type="button" onClick={() => confirmDeleteEntry(entry)}>删除</button>
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      }
-                    })}
+                                    </Fragment>
+                                  );
+                                } else {
+                                  const entry = item.data;
+                                  const label = entry.source_meta?.label || entry.source_meta?.kind || "API";
+                                  return (
+                                    <tr key={key} id={key} className={`transition-colors ${isSelected ? "bg-indigo-50/70 ring-1 ring-inset ring-indigo-200" : "hover:bg-app-hover"}`}>
+                                      <td className="px-3 py-2.5">
+                                        <input type="checkbox" className="accent-indigo-500" checked={isSelected} onChange={() => toggleSelect("entry", entry.id)} />
+                                      </td>
+                                      <td className="px-3 py-2.5">
+                                        <div>
+                                          <p className="text-sm font-medium text-app-primary truncate" title={entry.title}>{entry.title}</p>
+                                          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+                                            <span className="text-xs text-app-muted">{label}</span>
+                                            {entry.source_url && <a className="app-link text-xs" href={entry.source_url} target="_blank" rel="noreferrer">源链接</a>}
+                                          </div>
+                                          {entry.summary && <p className="text-xs text-app-muted mt-0.5 line-clamp-2" title={entry.summary}>{entry.summary}</p>}
+                                        </div>
+                                      </td>
+                                      <td className="px-3 py-2.5 text-xs text-app-muted whitespace-nowrap align-top">
+                                        {new Date(entry.created_at).toLocaleString()}
+                                      </td>
+                                      <td className="px-3 py-2.5 align-top">
+                                        <div className="flex items-center gap-1.5">
+                                          <button className="app-button-secondary text-xs" type="button" onClick={(e) => { e.stopPropagation(); setViewEntry(entry); }}>查看</button>
+                                          <button className="app-button-danger text-xs" type="button" onClick={(e) => { e.stopPropagation(); confirmDeleteEntry(entry); }}>删除</button>
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  );
+                                }
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      );
+                    })()}
 
                     {/* — 分页 — */}
                     {totalPages > 1 && (
-                      <div className="flex items-center justify-center gap-2 px-1 py-2">
+                      <div className="flex items-center justify-center gap-2 px-1 py-3">
                         <button
                           type="button"
                           className={`app-button-secondary text-xs ${pg <= 1 ? "opacity-40 cursor-not-allowed" : ""}`}
@@ -1165,41 +1219,6 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                         </button>
                       </div>
                     )}
-                    {catSelected.size > 0 && (
-                      <div className="flex items-center gap-3 rounded-lg border border-app-border bg-app-hover px-3 py-2">
-                        <span className="text-xs text-app-primary font-medium">已选 {catSelected.size} 项</span>
-                        <button className="app-button-secondary text-xs" type="button" onClick={() => {
-                          setSelectedIds(prev => { const n = new Set(prev); for (const k of catSelected) n.delete(k); return n; });
-                        }}>取消选择</button>
-                        <button className="app-button-danger text-xs ml-auto" type="button" onClick={async () => {
-                          const entryIds: number[] = [];
-                          const docIds: number[] = [];
-                          for (const key of catSelected) {
-                            if (key.startsWith("entry-")) entryIds.push(Number(key.slice(6)));
-                            else if (key.startsWith("doc-")) docIds.push(Number(key.slice(4)));
-                          }
-                          setConfirmState({
-                            title: "批量删除",
-                            description: `确认删除该分类下选中的 ${catSelected.size} 项？`,
-                            confirmText: "删除",
-                            danger: true,
-                            action: async () => {
-                              await Promise.all([
-                                entryIds.length > 0 ? api(`/api/knowledge-bases/${kbId}/entries/batch-delete`, {
-                                  method: "POST", body: JSON.stringify({ entry_ids: entryIds }),
-                                }) : Promise.resolve(),
-                                docIds.length > 0 ? api(`/api/knowledge-bases/${kbId}/documents/batch-delete`, {
-                                  method: "POST", body: JSON.stringify({ document_ids: docIds }),
-                                }) : Promise.resolve(),
-                              ]);
-                              setSelectedIds(prev => { const n = new Set(prev); for (const k of catSelected) n.delete(k); return n; });
-                              notifyUser(`已删除 ${catSelected.size} 项`, "success");
-                              load();
-                            }
-                          });
-                        }}>删除选中</button>
-                      </div>
-                    )}
                   </div>
                 );
               });
@@ -1207,6 +1226,60 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
           </section>
 
         </>
+      )}
+
+      {/* ── 浮动多选操作栏 ── */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-0 left-0 right-0 z-40 flex items-center justify-center pb-6 pt-4 bg-gradient-to-t from-white/90 to-transparent pointer-events-none">
+          <div className="pointer-events-auto flex items-center gap-4 rounded-xl border border-app-border bg-white px-5 py-3 shadow-lg shadow-black/10">
+            <span className="text-sm text-app-primary font-medium whitespace-nowrap">
+              已选 {selectedIds.size} 项
+            </span>
+            <div className="h-4 w-px bg-app-border"></div>
+            <button
+              className="text-sm text-app-muted hover:text-app-primary transition-colors"
+              onClick={() => setSelectedIds(new Set())}
+            >
+              取消选择
+            </button>
+            <button
+              className="app-button-danger text-xs"
+              onClick={async () => {
+                const entryIds: number[] = [];
+                const docIds: number[] = [];
+                for (const key of selectedIds) {
+                  if (key.startsWith("entry-")) entryIds.push(Number(key.slice(6)));
+                  else if (key.startsWith("doc-")) docIds.push(Number(key.slice(4)));
+                }
+                setConfirmState({
+                  title: "批量删除",
+                  description: `确认删除选中的 ${selectedIds.size} 项？删除后无法恢复。`,
+                  confirmText: "删除",
+                  danger: true,
+                  action: async () => {
+                    await Promise.all([
+                      entryIds.length > 0
+                        ? api(`/api/knowledge-bases/${kbId}/entries/batch-delete`, {
+                            method: "POST", body: JSON.stringify({ entry_ids: entryIds }),
+                          })
+                        : Promise.resolve(),
+                      docIds.length > 0
+                        ? api(`/api/knowledge-bases/${kbId}/documents/batch-delete`, {
+                            method: "POST", body: JSON.stringify({ document_ids: docIds }),
+                          })
+                        : Promise.resolve(),
+                    ]);
+                    setSelectedIds(new Set());
+                    notifyUser(`已删除 ${selectedIds.size} 项`, "success");
+                    load();
+                  },
+                });
+              }}
+            >
+              删除选中
+            </button>
+          </div>
+        </div>
       )}
 
       {/* ── 统一导入 Modal ── */}
