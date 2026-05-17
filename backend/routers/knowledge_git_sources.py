@@ -48,6 +48,7 @@ def _mask_row(r: KnowledgeGitSource) -> dict:
         "max_files": r.max_files,
         "cron_expression": (r.cron_expression or "").strip() or None,
         "enabled": bool(r.enabled),
+        "category": (r.category or "").strip() or None,
         "last_sync_at": r.last_sync_at.isoformat() if r.last_sync_at else None,
         "last_sync_status": r.last_sync_status,
         "last_error": r.last_error,
@@ -77,6 +78,7 @@ class GitSourceCreate(BaseModel):
     max_files: int = Field(default=200, ge=1, le=5000)
     cron_expression: str | None = Field(default=None, max_length=120)
     enabled: bool = True
+    category: str = Field(default="", max_length=200)
 
     @field_validator("provider")
     @classmethod
@@ -101,6 +103,7 @@ class GitSourceUpdate(BaseModel):
     max_files: int | None = Field(default=None, ge=1, le=5000)
     cron_expression: str | None = Field(default=None, max_length=120)
     enabled: bool | None = None
+    category: str | None = None
 
     @field_validator("provider")
     @classmethod
@@ -118,6 +121,18 @@ def _get_kb(db: Session, kb_id: int) -> KnowledgeBase:
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
     return kb
+
+
+@router.get("/git-sources")
+def list_all_git_sources(db: Session = Depends(get_db)) -> dict:
+    rows = (
+        db.execute(
+            select(KnowledgeGitSource).order_by(KnowledgeGitSource.knowledge_base_id.asc(), KnowledgeGitSource.id.asc())
+        )
+        .scalars()
+        .all()
+    )
+    return {"git_sources": [_mask_row(r) for r in rows]}
 
 
 @router.get("/{kb_id}/git-sources")
@@ -158,6 +173,7 @@ def create_git_source(kb_id: int, body: GitSourceCreate, db: Session = Depends(g
         max_files=body.max_files,
         cron_expression=(body.cron_expression or "").strip() or None,
         enabled=body.enabled,
+        category=(body.category or "").strip() or None,
         updated_at=datetime.utcnow(),
     )
     db.add(row)
@@ -211,6 +227,8 @@ def update_git_source(
         row.cron_expression = (body.cron_expression or "").strip() or None
     if body.enabled is not None:
         row.enabled = body.enabled
+    if body.category is not None:
+        row.category = (body.category or "").strip() or None
     row.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(row)

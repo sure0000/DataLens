@@ -43,6 +43,7 @@ def init_db() -> None:
         conn.execute(text("ALTER TABLE IF EXISTS knowledge_entries ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT '';"))
         conn.execute(text("ALTER TABLE IF EXISTS knowledge_entries ADD COLUMN IF NOT EXISTS source_url TEXT;"))
         conn.execute(text("ALTER TABLE IF EXISTS knowledge_entries ADD COLUMN IF NOT EXISTS semantic_role TEXT;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS category TEXT;"))
         conn.execute(
             text(
                 "UPDATE knowledge_entries SET summary = trim(substring(regexp_replace(trim(body), '[\\n\\r\\t]+', ' ', 'g') from 1 for 420)) "
@@ -213,4 +214,7 @@ def init_db() -> None:
         ))
         conn.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_document_chunks_embedding ON document_chunks USING hnsw(embedding vector_cosine_ops);"
+        ))
+        conn.execute(text(
+            "ALTER TABLE knowledge_git_sources ADD COLUMN IF NOT EXISTS category TEXT;"
         ))

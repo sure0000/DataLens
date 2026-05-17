@@ -138,6 +138,7 @@ def delete_api_source(kb_id: int, source_id: int, db: Session = Depends(get_db))
 
 class ImportRequest(BaseModel):
     object_id: str = Field(default="", max_length=2000)
+    category: str = Field(default="", max_length=200)
 
 
 @router.post("/{source_id}/import")
@@ -167,14 +168,14 @@ def import_from_api_source(kb_id: int, source_id: int, body: ImportRequest = Imp
             try:
                 title_hint, text = fetch_official_notion_page(api_key, object_id)
             except httpx.HTTPStatusError as exc:
-                if exc.response.status_code == 404:
+                if exc.response.status_code in (400, 404):
                     pages = fetch_official_notion_database(api_key, object_id)
                     if not pages:
                         raise ValueError("该对象既不是可访问的 Page，也不是可查询的 Database")
                     for idx, (t, txt) in enumerate(pages):
                         create_entry_svc(
                             db, kb_id, t or f"Notion Database 页面 {idx + 1}", txt,
-                            source_meta={"kind": "notion_api", "ref": object_id, "label": "Notion 官方 API（Database）"},
+                            source_meta={"kind": "notion_api", "ref": object_id, "label": "Notion 官方 API（Database）", "category": body.category.strip()},
                         )
                         entries_created += 1
                     db.commit()
@@ -183,7 +184,7 @@ def import_from_api_source(kb_id: int, source_id: int, body: ImportRequest = Imp
                 raise
             create_entry_svc(
                 db, kb_id, title_hint or object_id[:80], text,
-                source_meta={"kind": "notion_api", "ref": object_id, "label": "Notion 官方 API"},
+                source_meta={"kind": "notion_api", "ref": object_id, "label": "Notion 官方 API", "category": body.category.strip()},
             )
             entries_created = 1
 
@@ -198,7 +199,7 @@ def import_from_api_source(kb_id: int, source_id: int, body: ImportRequest = Imp
             src_url = f"https://{domain}/wiki/pages/viewpage.action?pageId={object_id.strip()}"
             create_entry_svc(
                 db, kb_id, title_hint, text,
-                source_meta={"kind": "confluence_api", "ref": object_id, "label": "Confluence 官方 API"},
+                source_meta={"kind": "confluence_api", "ref": object_id, "label": "Confluence 官方 API", "category": body.category.strip()},
                 source_url=src_url,
             )
             entries_created = 1
@@ -212,7 +213,7 @@ def import_from_api_source(kb_id: int, source_id: int, body: ImportRequest = Imp
             title_hint, text = fetch_official_feishu_doc(app_id, api_key, object_id)
             create_entry_svc(
                 db, kb_id, title_hint, text,
-                source_meta={"kind": "feishu_api", "ref": object_id[:500], "label": "飞书官方 API"},
+                source_meta={"kind": "feishu_api", "ref": object_id[:500], "label": "飞书官方 API", "category": body.category.strip()},
             )
             entries_created = 1
 
@@ -235,6 +236,12 @@ def import_from_api_source(kb_id: int, source_id: int, body: ImportRequest = Imp
         complete_import(db, log, error_message=f"官方 API 调用失败：{exc}")
         db.commit()
         raise HTTPException(status_code=502, detail=f"官方 API 调用失败：{exc}") from exc
+    except httpx.RequestError as exc:
+        db.rollback()
+        msg = f"网络请求失败（{type(exc).__name__}），可能是网络不稳定或 SSL 连接异常，请重试"
+        complete_import(db, log, error_message=msg)
+        db.commit()
+        raise HTTPException(status_code=502, detail=msg) from exc
     except Exception as exc:
         db.rollback()
         complete_import(db, log, error_message=str(exc))

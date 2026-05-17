@@ -140,6 +140,7 @@ class KnowledgeBase(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    category: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     pipeline_config: Mapped["PipelineConfig | None"] = relationship(back_populates="knowledge_base", uselist=False)
@@ -268,6 +269,7 @@ class KnowledgeGitSource(Base):
     max_files: Mapped[int] = mapped_column(Integer, default=200)
     cron_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    category: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_sync_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_sync_status: Mapped[str | None] = mapped_column(Text, nullable=True)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
