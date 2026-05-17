@@ -825,13 +825,6 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                 <button className="app-button-secondary text-sm" type="button" onClick={() => { loadDocuments(); load(); }}>刷新</button>
               </div>
             </div>
-            {selectedIds.size > 0 && (
-              <div className="flex items-center gap-3 rounded-xl border border-app-border bg-app-hover px-4 py-2.5">
-                <span className="text-sm text-app-primary font-medium">已选 {selectedIds.size} 项</span>
-                <button className="app-button-secondary text-xs" type="button" onClick={clearSelection}>取消选择</button>
-                <button className="app-button-danger text-xs ml-auto" type="button" onClick={handleBatchDelete}>删除选中</button>
-              </div>
-            )}
             {docsLoading && <p className="app-text-muted text-sm">加载中…</p>}
             {!docsLoading && documents.length === 0 && entries.length === 0 && gitSources.length === 0 && (
               <p className="app-text-muted text-sm">暂无内容。通过「导入」上传文件或接入代码/API 源来添加。</p>
@@ -887,9 +880,17 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
               }
 
               // 4. 剩余未归集条目 → 单文档列表
+              // 同时建立条目 Key → 分类 映射
+              const keyToCat: Record<string, string> = {};
               for (const item of combined) {
                 const key = item.kind === "doc" ? `doc-${item.data.id}` : `entry-${item.data.id}`;
                 if (!assigned.has(key)) catSingles[item.cat].push(item);
+                keyToCat[key] = item.cat;
+              }
+              // 已归集的条目也加入映射
+              for (const item of combined) {
+                const key = item.kind === "doc" ? `doc-${item.data.id}` : `entry-${item.data.id}`;
+                if (!keyToCat[key]) keyToCat[key] = item.cat;
               }
 
               // 5. 分类排序（未分类在最后）
@@ -921,12 +922,33 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                 const totalPages = Math.max(1, Math.ceil(singles.length / perPage));
                 const paged = singles.slice((pg - 1) * perPage, pg * perPage);
 
+                // 计算当前分类下已选中的条目
+                const catItemKeys = new Set<string>();
+                for (const col of cols) for (const item of col.items) catItemKeys.add(item.kind === "doc" ? `doc-${item.data.id}` : `entry-${item.data.id}`);
+                for (const item of singles) catItemKeys.add(item.kind === "doc" ? `doc-${item.data.id}` : `entry-${item.data.id}`);
+                const catSelected = new Set(Array.from(selectedIds).filter(k => catItemKeys.has(k)));
+                const allInCatSelected = catItemKeys.size > 0 && catItemKeys.size === catSelected.size;
+
                 return (
                   <div key={cat} className="space-y-2">
-                    <h3 className="text-sm font-semibold text-app-primary px-1">
-                      {cat === "__uncategorized__" ? "未分类" : cat}
-                      <span className="ml-1.5 text-xs text-app-muted font-normal">({totalInCat})</span>
-                    </h3>
+                    <div className="flex items-center justify-between px-1">
+                      <h3 className="text-sm font-semibold text-app-primary">
+                        {cat === "__uncategorized__" ? "未分类" : cat}
+                        <span className="ml-1.5 text-xs text-app-muted font-normal">({totalInCat})</span>
+                      </h3>
+                      {catItemKeys.size > 0 && (
+                        <label className="flex items-center gap-1.5 text-xs text-app-muted cursor-pointer select-none">
+                          <input type="checkbox" className="accent-indigo-500" checked={allInCatSelected} onChange={() => {
+                            if (allInCatSelected) {
+                              setSelectedIds(prev => { const n = new Set(prev); for (const k of catItemKeys) n.delete(k); return n; });
+                            } else {
+                              setSelectedIds(prev => { const n = new Set(prev); for (const k of catItemKeys) n.add(k); return n; });
+                            }
+                          }} />
+                          全选
+                        </label>
+                      )}
+                    </div>
 
                     {/* — Tier 1: Git 源卡片 — */}
                     {gsList.length > 0 && (
@@ -1141,6 +1163,41 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                         >
                           下一页
                         </button>
+                      </div>
+                    )}
+                    {catSelected.size > 0 && (
+                      <div className="flex items-center gap-3 rounded-lg border border-app-border bg-app-hover px-3 py-2">
+                        <span className="text-xs text-app-primary font-medium">已选 {catSelected.size} 项</span>
+                        <button className="app-button-secondary text-xs" type="button" onClick={() => {
+                          setSelectedIds(prev => { const n = new Set(prev); for (const k of catSelected) n.delete(k); return n; });
+                        }}>取消选择</button>
+                        <button className="app-button-danger text-xs ml-auto" type="button" onClick={async () => {
+                          const entryIds: number[] = [];
+                          const docIds: number[] = [];
+                          for (const key of catSelected) {
+                            if (key.startsWith("entry-")) entryIds.push(Number(key.slice(6)));
+                            else if (key.startsWith("doc-")) docIds.push(Number(key.slice(4)));
+                          }
+                          setConfirmState({
+                            title: "批量删除",
+                            description: `确认删除该分类下选中的 ${catSelected.size} 项？`,
+                            confirmText: "删除",
+                            danger: true,
+                            action: async () => {
+                              await Promise.all([
+                                entryIds.length > 0 ? api(`/api/knowledge-bases/${kbId}/entries/batch-delete`, {
+                                  method: "POST", body: JSON.stringify({ entry_ids: entryIds }),
+                                }) : Promise.resolve(),
+                                docIds.length > 0 ? api(`/api/knowledge-bases/${kbId}/documents/batch-delete`, {
+                                  method: "POST", body: JSON.stringify({ document_ids: docIds }),
+                                }) : Promise.resolve(),
+                              ]);
+                              setSelectedIds(prev => { const n = new Set(prev); for (const k of catSelected) n.delete(k); return n; });
+                              notifyUser(`已删除 ${catSelected.size} 项`, "success");
+                              load();
+                            }
+                          });
+                        }}>删除选中</button>
                       </div>
                     )}
                   </div>
