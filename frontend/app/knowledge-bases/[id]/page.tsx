@@ -232,6 +232,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   const [chunksLoading, setChunksLoading] = useState(false);
   const [expandedCollections, setExpandedCollections] = useState<Set<string>>(new Set());
   const [singleDocPages, setSingleDocPages] = useState<Record<string, number>>({});
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   // 检索测试
   const [searchQuery, setSearchQuery] = useState("");
@@ -314,6 +315,49 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     } else {
       setViewEntry(entry);
     }
+  }
+
+  function toggleSelect(kind: "doc" | "entry", id: number) {
+    const key = `${kind}-${id}`;
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  }
+
+  function clearSelection() { setSelectedIds(new Set()); }
+
+  async function handleBatchDelete() {
+    if (selectedIds.size === 0) return;
+    setConfirmState({
+      title: "批量删除",
+      description: `确认删除选中的 ${selectedIds.size} 项？删除后无法恢复。`,
+      confirmText: "删除",
+      danger: true,
+      action: async () => {
+        const entryIds: number[] = [];
+        const docIds: number[] = [];
+        for (const key of selectedIds) {
+          if (key.startsWith("entry-")) entryIds.push(Number(key.slice(6)));
+          else if (key.startsWith("doc-")) docIds.push(Number(key.slice(4)));
+        }
+        await Promise.all([
+          entryIds.length > 0 ? api(`/api/knowledge-bases/${kbId}/entries/batch-delete`, {
+            method: "POST",
+            body: JSON.stringify({ entry_ids: entryIds }),
+          }) : Promise.resolve(),
+          docIds.length > 0 ? api(`/api/knowledge-bases/${kbId}/documents/batch-delete`, {
+            method: "POST",
+            body: JSON.stringify({ document_ids: docIds }),
+          }) : Promise.resolve(),
+        ]);
+        clearSelection();
+        notifyUser(`已删除 ${selectedIds.size} 项`, "success");
+        load();
+      }
+    });
   }
 
   async function deleteDocumentRow(docId: number) {
@@ -781,6 +825,13 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                 <button className="app-button-secondary text-sm" type="button" onClick={() => { loadDocuments(); load(); }}>刷新</button>
               </div>
             </div>
+            {selectedIds.size > 0 && (
+              <div className="flex items-center gap-3 rounded-xl border border-app-border bg-app-hover px-4 py-2.5">
+                <span className="text-sm text-app-primary font-medium">已选 {selectedIds.size} 项</span>
+                <button className="app-button-secondary text-xs" type="button" onClick={clearSelection}>取消选择</button>
+                <button className="app-button-danger text-xs ml-auto" type="button" onClick={handleBatchDelete}>删除选中</button>
+              </div>
+            )}
             {docsLoading && <p className="app-text-muted text-sm">加载中…</p>}
             {!docsLoading && documents.length === 0 && entries.length === 0 && gitSources.length === 0 && (
               <p className="app-text-muted text-sm">暂无内容。通过「导入」上传文件或接入代码/API 源来添加。</p>
@@ -947,12 +998,15 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                                   const chip = docStatusChip(doc.status);
                                   return (
                                     <div key={`doc-${doc.id}`} className="flex items-start justify-between gap-3 px-4 py-3 pl-10">
-                                      <div className="min-w-0 flex-1">
-                                        <p className="text-sm text-app-primary truncate">{doc.title}</p>
-                                        <p className="text-xs text-app-muted mt-0.5">
-                                          {doc.char_count != null ? `${doc.char_count.toLocaleString()} 字符` : "—"} · {new Date(doc.created_at).toLocaleString()}
-                                        </p>
-                                      </div>
+                                      <label className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer">
+                                        <input type="checkbox" className="shrink-0 accent-indigo-500" checked={selectedIds.has(`doc-${doc.id}`)} onChange={() => toggleSelect("doc", doc.id)} />
+                                        <div className="min-w-0 flex-1">
+                                          <p className="text-sm text-app-primary truncate">{doc.title}</p>
+                                          <p className="text-xs text-app-muted mt-0.5">
+                                            {doc.char_count != null ? `${doc.char_count.toLocaleString()} 字符` : "—"} · {new Date(doc.created_at).toLocaleString()}
+                                          </p>
+                                        </div>
+                                      </label>
                                       <div className="flex shrink-0 items-center gap-2">
                                         <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${chip.className}`}>{chip.text}</span>
                                         {doc.status === "failed" && <button className="app-button text-xs" type="button" onClick={() => retryDocument(doc.id)}>重试</button>}
@@ -965,10 +1019,13 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                                   const label = entry.source_meta?.label || entry.source_meta?.kind || "API";
                                   return (
                                     <div key={`entry-${entry.id}`} className="flex items-start justify-between gap-3 px-4 py-3 pl-10">
-                                      <div className="min-w-0 flex-1">
-                                        <p className="text-sm text-app-primary truncate">{entry.title}</p>
-                                        <p className="text-xs text-app-muted mt-0.5">{label} · {new Date(entry.created_at).toLocaleString()}</p>
-                                      </div>
+                                      <label className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer">
+                                        <input type="checkbox" className="shrink-0 accent-indigo-500" checked={selectedIds.has(`entry-${entry.id}`)} onChange={() => toggleSelect("entry", entry.id)} />
+                                        <div className="min-w-0 flex-1">
+                                          <p className="text-sm text-app-primary truncate">{entry.title}</p>
+                                          <p className="text-xs text-app-muted mt-0.5">{label} · {new Date(entry.created_at).toLocaleString()}</p>
+                                        </div>
+                                      </label>
                                       <div className="flex shrink-0 items-center gap-2">
                                         <button className="app-button-secondary text-xs" type="button" onClick={() => setViewEntry(entry)}>查看</button>
                                         <button className="app-button-danger text-xs" type="button" onClick={() => confirmDeleteEntry(entry)}>删除</button>
@@ -992,18 +1049,20 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                         return (
                           <div key={`doc-${doc.id}`} className="app-card">
                             <div className="flex items-start justify-between gap-3 p-4">
-                              <div className="min-w-0 flex-1">
-                                <p className="app-text-primary font-medium text-sm truncate">{doc.title}</p>
-                                <p className="app-text-muted text-xs mt-0.5">
-                                  {doc.source_meta?.label || doc.source_type} · {doc.char_count != null ? `${doc.char_count.toLocaleString()} 字符` : "—"} · {new Date(doc.created_at).toLocaleString()}
-                                </p>
-                                {doc.error_message && <p className="mt-1 text-xs text-rose-600">{doc.error_message}</p>}
+                              <label className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer">
+                                <input type="checkbox" className="shrink-0 accent-indigo-500" checked={selectedIds.has(`doc-${doc.id}`)} onChange={() => toggleSelect("doc", doc.id)} />
+                                <div className="min-w-0 flex-1">
+                                  <p className="app-text-primary font-medium text-sm truncate">{doc.title}</p>
+                                  <p className="app-text-muted text-xs mt-0.5">
+                                    {doc.source_meta?.label || doc.source_type} · {doc.char_count != null ? `${doc.char_count.toLocaleString()} 字符` : "—"} · {new Date(doc.created_at).toLocaleString()}
+                                  </p>
+                                  {doc.error_message && <p className="mt-1 text-xs text-rose-600">{doc.error_message}</p>}
                                 {doc.status === "indexed" && Object.keys(doc.stage_timings).length > 0 && (
                                   <p className="mt-1 text-[11px] text-app-muted">
                                     {Object.entries(doc.stage_timings).map(([k, v]) => `${k}: ${v}ms`).join(" · ")}
                                   </p>
                                 )}
-                              </div>
+                              </div></label>
                               <div className="flex shrink-0 items-center gap-2">
                                 <span className={`inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] font-medium ${chip.className}`}>{chip.text}</span>
                                 {doc.status === "indexed" && (
@@ -1042,14 +1101,16 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                         return (
                           <div key={`entry-${entry.id}`} className="app-card" id={`entry-${entry.id}`}>
                             <div className="flex items-start justify-between gap-3 p-4">
-                              <div className="min-w-0 flex-1">
-                                <p className="app-text-primary font-medium text-sm truncate">{entry.title}</p>
-                                <p className="app-text-muted text-xs mt-0.5">
-                                  {label} · {new Date(entry.created_at).toLocaleString()}
-                                  {entry.source_url && <> · <a className="app-link" href={entry.source_url} target="_blank" rel="noreferrer">源链接</a></>}
-                                </p>
-                                {entry.summary && <p className="app-text-muted text-xs mt-1 line-clamp-2">{entry.summary}</p>}
-                              </div>
+                              <label className="flex items-center gap-3 min-w-0 flex-1 cursor-pointer">
+                                <input type="checkbox" className="shrink-0 accent-indigo-500" checked={selectedIds.has(`entry-${entry.id}`)} onChange={() => toggleSelect("entry", entry.id)} />
+                                <div className="min-w-0 flex-1">
+                                  <p className="app-text-primary font-medium text-sm truncate">{entry.title}</p>
+                                  <p className="app-text-muted text-xs mt-0.5">
+                                    {label} · {new Date(entry.created_at).toLocaleString()}
+                                    {entry.source_url && <> · <a className="app-link" href={entry.source_url} target="_blank" rel="noreferrer">源链接</a></>}
+                                  </p>
+                                  {entry.summary && <p className="app-text-muted text-xs mt-1 line-clamp-2">{entry.summary}</p>}
+                                </div></label>
                               <div className="flex shrink-0 items-center gap-2">
                                 <button className="app-button-secondary text-xs" type="button" onClick={() => setViewEntry(entry)}>查看</button>
                                 <button className="app-button-danger text-xs" type="button" onClick={() => confirmDeleteEntry(entry)}>删除</button>

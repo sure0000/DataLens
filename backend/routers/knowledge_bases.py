@@ -4,7 +4,7 @@ import re
 import threading
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
@@ -56,11 +56,13 @@ def _resolved_summary(explicit_summary: str, body: str) -> str:
 class KnowledgeBaseCreate(BaseModel):
     name: str = Field(min_length=1, max_length=500)
     description: str = ""
+    category: str = ""
 
 
 class KnowledgeBaseUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=500)
     description: str | None = None
+    category: str | None = None
 
 
 class EntryCreate(BaseModel):
@@ -90,6 +92,7 @@ def _kb_row(kb: KnowledgeBase) -> dict:
         "id": kb.id,
         "name": kb.name,
         "description": kb.description or "",
+        "category": (kb.category or "").strip(),
         "created_at": kb.created_at.isoformat() if kb.created_at else "",
     }
 
@@ -110,6 +113,17 @@ def _entry_row(e: KnowledgeEntry) -> dict:
     }
 
 
+@router.get("/categories")
+def list_categories(db: Session = Depends(get_db)) -> dict:
+    rows = db.execute(
+        select(KnowledgeBase.category)
+        .where(KnowledgeBase.category.isnot(None), KnowledgeBase.category != "")
+        .distinct()
+        .order_by(KnowledgeBase.category)
+    ).scalars().all()
+    return {"categories": [r for r in rows if r]}
+
+
 @router.get("")
 def list_knowledge_bases(db: Session = Depends(get_db)) -> dict:
     rows = db.execute(select(KnowledgeBase).order_by(KnowledgeBase.created_at.desc())).scalars().all()
@@ -118,7 +132,11 @@ def list_knowledge_bases(db: Session = Depends(get_db)) -> dict:
 
 @router.post("")
 def create_knowledge_base(body: KnowledgeBaseCreate, db: Session = Depends(get_db)) -> dict:
-    kb = KnowledgeBase(name=body.name.strip(), description=body.description.strip() or None)
+    kb = KnowledgeBase(
+        name=body.name.strip(),
+        description=body.description.strip() or None,
+        category=body.category.strip() or None,
+    )
     db.add(kb)
     db.commit()
     db.refresh(kb)
@@ -151,6 +169,8 @@ def update_knowledge_base(kb_id: int, body: KnowledgeBaseUpdate, db: Session = D
         kb.name = body.name.strip()
     if body.description is not None:
         kb.description = body.description.strip() or None
+    if body.category is not None:
+        kb.category = body.category.strip() or None
     db.commit()
     db.refresh(kb)
     return {"knowledge_base": _kb_row(kb)}
@@ -186,7 +206,13 @@ def create_entry(kb_id: int, body: EntryCreate, db: Session = Depends(get_db)) -
 
 
 @router.post("/{kb_id}/entries/import-file")
-async def import_entry_from_file(kb_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)) -> dict:
+async def import_entry_from_file(
+    kb_id: int,
+    file: UploadFile = File(...),
+    category: str = Form(default=""),
+    import_batch: str = Form(default=""),
+    db: Session = Depends(get_db),
+) -> dict:
     kb = db.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
@@ -201,7 +227,11 @@ async def import_entry_from_file(kb_id: int, file: UploadFile = File(...), db: S
     if not plain.strip():
         raise HTTPException(status_code=400, detail="文件解析结果为空")
     title = title_from_filename(fname)
-    meta = {"kind": "file", "ref": fname, "label": "上传文件"}
+    meta = {
+        "kind": "file", "ref": fname, "label": "上传文件",
+        "category": category.strip(),
+        "import_batch": import_batch.strip() or None,
+    }
 
     # 同时创建 KnowledgeEntry（向后兼容）和 Document（新流水线）
     entry = create_entry_svc(db, kb_id, title, plain, source_meta=meta)
@@ -300,6 +330,29 @@ def list_documents(kb_id: int, db: Session = Depends(get_db)) -> dict:
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
     return {"documents": get_document_list(db, kb_id)}
+
+
+class DocumentBatchDeleteBody(BaseModel):
+    document_ids: list[int] = Field(min_length=1, max_length=500)
+
+
+@router.post("/{kb_id}/documents/batch-delete")
+def batch_delete_documents(kb_id: int, body: DocumentBatchDeleteBody, db: Session = Depends(get_db)) -> dict:
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    # Only delete documents that belong to this kb
+    docs = db.execute(
+        select(Document).where(
+            Document.id.in_(body.document_ids),
+            Document.knowledge_base_id == kb_id,
+        )
+    ).scalars().all()
+    deleted = 0
+    for doc in docs:
+        delete_document(db, doc.id)
+        deleted += 1
+    return {"ok": True, "deleted": deleted}
 
 
 @router.delete("/{kb_id}/documents/{doc_id}")
