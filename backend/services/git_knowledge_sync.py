@@ -46,6 +46,27 @@ def _trigger_codebase_analysis(knowledge_base_id: int) -> None:
     t.start()
 
 
+def _trigger_semantic_extraction(knowledge_base_id: int) -> None:
+    """在后台线程中触发语义提取（术语、指标、血缘），不阻塞同步响应。"""
+    import asyncio
+
+    def _run():
+        from database import SessionLocal
+
+        db2 = SessionLocal()
+        try:
+            from services.semantic_extraction import run_semantic_pipeline
+
+            asyncio.run(run_semantic_pipeline(db2, knowledge_base_id, source_type="git"))
+        except Exception:
+            _logger.warning("Semantic extraction failed after git sync for kb=%s", knowledge_base_id, exc_info=True)
+        finally:
+            db2.close()
+
+    t = threading.Thread(target=_run, daemon=True, name=f"semantic-extraction-kb-{knowledge_base_id}")
+    t.start()
+
+
 def _plain_excerpt(body: str, max_len: int = 420) -> str:
     s = (body or "").strip()
     if not s:
@@ -499,6 +520,7 @@ def run_git_source_sync(db: Session, source_id: int) -> dict[str, Any]:
         total = created + updated
         if total > 0:
             _trigger_codebase_analysis(kb_id)
+            _trigger_semantic_extraction(kb_id)
         if total == 0 and deleted == 0:
             msg = "所有文件均为最新，无需同步。"
         else:

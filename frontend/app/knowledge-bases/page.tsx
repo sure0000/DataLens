@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import PageHeader from "../../components/PageHeader";
 import Toast from "../../components/Toast";
-import { api } from "../../lib/api";
+import { api, ApiError, formatApiError } from "../../lib/api";
 
 type KnowledgeBase = { id: number; name: string; description: string; created_at: string };
 
@@ -25,9 +25,9 @@ export default function KnowledgeBasesPage() {
     try {
       const res = await api<{ knowledge_bases: KnowledgeBase[] }>("/api/knowledge-bases");
       setList(res.knowledge_bases);
-    } catch {
+    } catch (e: unknown) {
       setToastTone("error");
-      setMessage("加载失败");
+      setMessage(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "加载失败");
     } finally {
       setLoading(false);
     }
@@ -54,9 +54,9 @@ export default function KnowledgeBasesPage() {
       setNewName(""); setNewDesc("");
       setToastTone("success"); setMessage("知识库创建成功");
       load();
-    } catch {
+    } catch (e: unknown) {
       setToastTone("error");
-      setMessage("创建失败");
+      setMessage(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "创建失败");
     } finally {
       setSaving(false);
     }

@@ -16,6 +16,7 @@ from routers.knowledge_api_sources import router as knowledge_api_sources_router
 from routers.api_sources import router as api_sources_router
 
 from routers.diagnostics import router as diagnostics_router
+from routers.knowledge_semantic import router as knowledge_semantic_router
 from routers.llm_settings import router as llm_settings_router
 from routers.tables import router as tables_router
 
@@ -69,4 +70,5 @@ app.include_router(knowledge_api_sources_router)
 app.include_router(api_sources_router)
 
 app.include_router(diagnostics_router)
+app.include_router(knowledge_semantic_router)
 app.include_router(llm_settings_router)

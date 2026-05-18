@@ -218,3 +218,77 @@ def init_db() -> None:
         conn.execute(text(
             "ALTER TABLE knowledge_git_sources ADD COLUMN IF NOT EXISTS category TEXT;"
         ))
+        # ── 语义层模型（术语、指标、血缘、流水线运行记录） ──
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS business_terms (
+                id SERIAL PRIMARY KEY,
+                knowledge_base_id INT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                type TEXT NOT NULL,
+                definition TEXT NOT NULL,
+                source_entry_id INT REFERENCES knowledge_entries(id) ON DELETE SET NULL,
+                related_fields JSONB DEFAULT '[]',
+                confidence FLOAT NOT NULL DEFAULT 0.0,
+                status TEXT NOT NULL DEFAULT 'pending_review',
+                created_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+                updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+            );
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_business_terms_kb ON business_terms(knowledge_base_id);"
+        ))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS metric_definitions (
+                id SERIAL PRIMARY KEY,
+                knowledge_base_id INT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                formula TEXT NOT NULL,
+                caliber TEXT,
+                source_entry_id INT REFERENCES knowledge_entries(id) ON DELETE SET NULL,
+                related_terms JSONB DEFAULT '[]',
+                confidence FLOAT NOT NULL DEFAULT 0.0,
+                status TEXT NOT NULL DEFAULT 'pending_review',
+                created_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+                updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+            );
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_metric_definitions_kb ON metric_definitions(knowledge_base_id);"
+        ))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS data_lineage (
+                id SERIAL PRIMARY KEY,
+                knowledge_base_id INT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                git_source_id INT REFERENCES knowledge_git_sources(id) ON DELETE SET NULL,
+                source_table TEXT NOT NULL,
+                target_table TEXT NOT NULL,
+                source_field TEXT,
+                target_field TEXT,
+                layer TEXT NOT NULL,
+                transform_logic TEXT,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+                updated_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+            );
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_data_lineage_kb ON data_lineage(knowledge_base_id);"
+        ))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_data_lineage_git ON data_lineage(git_source_id);"
+        ))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS pipeline_runs (
+                id SERIAL PRIMARY KEY,
+                knowledge_base_id INT NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'running',
+                source_type TEXT,
+                steps JSONB,
+                started_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc'),
+                completed_at TIMESTAMP,
+                created_at TIMESTAMP NOT NULL DEFAULT (NOW() AT TIME ZONE 'utc')
+            );
+        """))
+        conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_pipeline_runs_kb ON pipeline_runs(knowledge_base_id);"
+        ))

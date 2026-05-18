@@ -368,3 +368,78 @@ class KnowledgeApiSource(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+
+# ---------------------------------------------------------------------------
+# 语义层模型 — 清洗流水线产出（术语、指标、血缘）
+# ---------------------------------------------------------------------------
+
+
+class BusinessTerm(Base):
+    """AI 从文档中提取的业务术语，支持人工审核。"""
+
+    __tablename__ = "business_terms"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    type: Mapped[str] = mapped_column(Text, nullable=False)  # metric | enum | time | dimension | other
+    definition: Mapped[str] = mapped_column(Text, nullable=False)
+    source_entry_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_entries.id", ondelete="SET NULL"), nullable=True)
+    related_fields: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending_review")  # pending_review | approved | rejected
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class MetricDefinition(Base):
+    """AI 从文档中提取的指标口径定义，支持人工审核。"""
+
+    __tablename__ = "metric_definitions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    formula: Mapped[str] = mapped_column(Text, nullable=False)
+    caliber: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_entry_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_entries.id", ondelete="SET NULL"), nullable=True)
+    related_terms: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending_review")  # pending_review | approved | rejected
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class DataLineage(Base):
+    """数据血缘关系 — 从代码库（dbt/SQL/ORM）自动解析的表间依赖。"""
+
+    __tablename__ = "data_lineage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    git_source_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_git_sources.id", ondelete="SET NULL"), nullable=True)
+    source_table: Mapped[str] = mapped_column(Text, nullable=False)
+    target_table: Mapped[str] = mapped_column(Text, nullable=False)
+    source_field: Mapped[str | None] = mapped_column(Text, nullable=True)
+    target_field: Mapped[str | None] = mapped_column(Text, nullable=True)
+    layer: Mapped[str] = mapped_column(Text, nullable=False)  # ODS | DWD | DWS | ADS
+    transform_logic: Mapped[str | None] = mapped_column(Text, nullable=True)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")  # done | processing | pending
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PipelineRun(Base):
+    """记录每次语义清洗流水线的执行状态。"""
+
+    __tablename__ = "pipeline_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="running")  # running | completed | failed
+    source_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    steps: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
