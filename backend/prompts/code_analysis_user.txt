@@ -1,0 +1,9 @@
+文件: {entry_title}
+
+内容:
+```
+{truncated_body}
+```
+
+输出 JSON:
+{{"table_references":[{{"table_name":"表名","columns":["列名"],"enum_values":{{"列名":["值"]}},"aggregation_hints":{{"列名":"sum|avg|count|max|min"}},"join_with":["表名"],"usage_summary":"描述"}}],"irrelevant":false}}

@@ -59,53 +59,38 @@ class MetricUpdate(BaseModel):
 # ── Helper ───────────────────────────────────────────────────────────────
 
 
-def _term_row(t: BusinessTerm) -> dict:
-    return {
-        "id": t.id,
-        "knowledge_base_id": t.knowledge_base_id,
-        "name": t.name,
-        "type": t.type,
-        "definition": t.definition,
-        "source_entry_id": t.source_entry_id,
-        "related_fields": t.related_fields or [],
-        "confidence": t.confidence,
-        "status": t.status,
-        "created_at": t.created_at.isoformat() if t.created_at else None,
-        "updated_at": t.updated_at.isoformat() if t.updated_at else None,
-    }
+def _list_semantic(db: Session, model: type, kb_id: int, status: str | None = None):
+    """通用列表查询：按 kb_id 过滤，可选 status，按 confidence desc + name 排序。"""
+    q = select(model).where(model.knowledge_base_id == kb_id)
+    if status:
+        q = q.where(model.status == status)
+    q = q.order_by(model.confidence.desc().nulls_last(), model.name)
+    return db.execute(q).scalars().all()
 
 
-def _metric_row(m: MetricDefinition) -> dict:
-    return {
-        "id": m.id,
-        "knowledge_base_id": m.knowledge_base_id,
-        "name": m.name,
-        "formula": m.formula,
-        "caliber": m.caliber,
-        "source_entry_id": m.source_entry_id,
-        "related_terms": m.related_terms or [],
-        "confidence": m.confidence,
-        "status": m.status,
-        "created_at": m.created_at.isoformat() if m.created_at else None,
-        "updated_at": m.updated_at.isoformat() if m.updated_at else None,
-    }
+def _delete_semantic(db: Session, model: type, entity_id: int, kb_id: int, label: str) -> dict:
+    """通用删除：校验归属后删除并返回 {"ok": true}。"""
+    entity = db.get(model, entity_id)
+    if not entity or entity.knowledge_base_id != kb_id:
+        raise HTTPException(status_code=404, detail=f"{label}不存在")
+    db.delete(entity)
+    db.commit()
+    return {"ok": True}
 
 
-def _lineage_row(l: DataLineage) -> dict:
-    return {
-        "id": l.id,
-        "knowledge_base_id": l.knowledge_base_id,
-        "git_source_id": l.git_source_id,
-        "source_table": l.source_table,
-        "target_table": l.target_table,
-        "source_field": l.source_field,
-        "target_field": l.target_field,
-        "layer": l.layer,
-        "transform_logic": l.transform_logic,
-        "status": l.status,
-        "created_at": l.created_at.isoformat() if l.created_at else None,
-        "updated_at": l.updated_at.isoformat() if l.updated_at else None,
-    }
+def _count_grouped(db: Session, model: type, kb_id: int):
+    """通用分组计数：返回 (total, {status: count})。"""
+    total = db.execute(
+        select(func.count(model.id)).where(model.knowledge_base_id == kb_id)
+    ).scalar() or 0
+    by_status = dict(
+        db.execute(
+            select(model.status, func.count(model.id))
+            .where(model.knowledge_base_id == kb_id)
+            .group_by(model.status)
+        ).all()
+    )
+    return total, by_status
 
 
 # ── Terms ────────────────────────────────────────────────────────────────
@@ -113,12 +98,8 @@ def _lineage_row(l: DataLineage) -> dict:
 
 @router.get("/{kb_id}/terms")
 def list_terms(kb_id: int, status: str | None = None, db: Session = Depends(get_db)):
-    q = select(BusinessTerm).where(BusinessTerm.knowledge_base_id == kb_id)
-    if status:
-        q = q.where(BusinessTerm.status == status)
-    q = q.order_by(BusinessTerm.confidence.desc().nulls_last(), BusinessTerm.name)
-    terms = db.execute(q).scalars().all()
-    return {"terms": [_term_row(t) for t in terms]}
+    terms = _list_semantic(db, BusinessTerm, kb_id, status)
+    return {"terms": [t.to_dict() for t in terms]}
 
 
 @router.post("/{kb_id}/terms")
@@ -141,7 +122,7 @@ def create_term(kb_id: int, body: TermCreate, db: Session = Depends(get_db)):
     )
     db.add(term)
     db.commit()
-    return {"term": _term_row(term)}
+    return {"term": term.to_dict()}
 
 
 @router.put("/{kb_id}/terms/{term_id}")
@@ -154,17 +135,12 @@ def update_term(kb_id: int, term_id: int, body: TermUpdate, db: Session = Depend
         if val is not None:
             setattr(term, key, val)
     db.commit()
-    return {"term": _term_row(term)}
+    return {"term": term.to_dict()}
 
 
 @router.delete("/{kb_id}/terms/{term_id}")
 def delete_term(kb_id: int, term_id: int, db: Session = Depends(get_db)):
-    term = db.get(BusinessTerm, term_id)
-    if not term or term.knowledge_base_id != kb_id:
-        raise HTTPException(status_code=404, detail="术语不存在")
-    db.delete(term)
-    db.commit()
-    return {"ok": True}
+    return _delete_semantic(db, BusinessTerm, term_id, kb_id, "术语")
 
 
 # ── Metrics ──────────────────────────────────────────────────────────────
@@ -172,12 +148,8 @@ def delete_term(kb_id: int, term_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{kb_id}/metrics")
 def list_metrics(kb_id: int, status: str | None = None, db: Session = Depends(get_db)):
-    q = select(MetricDefinition).where(MetricDefinition.knowledge_base_id == kb_id)
-    if status:
-        q = q.where(MetricDefinition.status == status)
-    q = q.order_by(MetricDefinition.confidence.desc().nulls_last(), MetricDefinition.name)
-    metrics = db.execute(q).scalars().all()
-    return {"metrics": [_metric_row(m) for m in metrics]}
+    metrics = _list_semantic(db, MetricDefinition, kb_id, status)
+    return {"metrics": [m.to_dict() for m in metrics]}
 
 
 @router.post("/{kb_id}/metrics")
@@ -200,7 +172,7 @@ def create_metric(kb_id: int, body: MetricCreate, db: Session = Depends(get_db))
     )
     db.add(metric)
     db.commit()
-    return {"metric": _metric_row(metric)}
+    return {"metric": metric.to_dict()}
 
 
 @router.put("/{kb_id}/metrics/{metric_id}")
@@ -213,17 +185,12 @@ def update_metric(kb_id: int, metric_id: int, body: MetricUpdate, db: Session = 
         if val is not None:
             setattr(metric, key, val)
     db.commit()
-    return {"metric": _metric_row(metric)}
+    return {"metric": metric.to_dict()}
 
 
 @router.delete("/{kb_id}/metrics/{metric_id}")
 def delete_metric(kb_id: int, metric_id: int, db: Session = Depends(get_db)):
-    metric = db.get(MetricDefinition, metric_id)
-    if not metric or metric.knowledge_base_id != kb_id:
-        raise HTTPException(status_code=404, detail="指标不存在")
-    db.delete(metric)
-    db.commit()
-    return {"ok": True}
+    return _delete_semantic(db, MetricDefinition, metric_id, kb_id, "指标")
 
 
 # ── Lineage ──────────────────────────────────────────────────────────────
@@ -237,28 +204,22 @@ def get_lineage(kb_id: int, db: Session = Depends(get_db)):
         .order_by(DataLineage.layer, DataLineage.source_table)
     ).scalars().all()
 
-    # Build layered graph structure
     layers_map: dict[str, list[dict]] = {}
     for edge in edges:
-        row = _lineage_row(edge)
         for table_name in (edge.source_table, edge.target_table):
-            layer = row["layer"]
-            if layer not in layers_map:
-                layers_map[layer] = []
-            if not any(n["name"] == table_name for n in layers_map[layer]):
-                layers_map[layer].append({
+            if edge.layer not in layers_map:
+                layers_map[edge.layer] = []
+            if not any(n["name"] == table_name for n in layers_map[edge.layer]):
+                layers_map[edge.layer].append({
                     "id": table_name,
                     "name": table_name,
-                    "layer": layer,
+                    "layer": edge.layer,
                     "status": edge.status,
                 })
 
     return {
-        "layers": [
-            {"name": k, "nodes": v}
-            for k, v in layers_map.items()
-        ],
-        "edges": [_lineage_row(e) for e in edges],
+        "layers": [{"name": k, "nodes": v} for k, v in layers_map.items()],
+        "edges": [e.to_dict() for e in edges],
         "stats": {
             "done": sum(1 for e in edges if e.status == "done"),
             "processing": sum(1 for e in edges if e.status == "processing"),
@@ -272,31 +233,10 @@ def get_lineage(kb_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{kb_id}/pipeline-stats")
 def get_pipeline_stats(kb_id: int, db: Session = Depends(get_db)):
-    # Term stats
-    term_count = db.execute(
-        select(func.count(BusinessTerm.id)).where(BusinessTerm.knowledge_base_id == kb_id)
-    ).scalar() or 0
-    terms_by_status = dict(
-        db.execute(
-            select(BusinessTerm.status, func.count(BusinessTerm.id))
-            .where(BusinessTerm.knowledge_base_id == kb_id)
-            .group_by(BusinessTerm.status)
-        ).all()
-    )
+    term_count, terms_by_status = _count_grouped(db, BusinessTerm, kb_id)
+    metric_count, metrics_by_status = _count_grouped(db, MetricDefinition, kb_id)
+    lineage_count, lineage_by_status = _count_grouped(db, DataLineage, kb_id)
 
-    # Metric stats
-    metric_count = db.execute(
-        select(func.count(MetricDefinition.id)).where(MetricDefinition.knowledge_base_id == kb_id)
-    ).scalar() or 0
-    metrics_by_status = dict(
-        db.execute(
-            select(MetricDefinition.status, func.count(MetricDefinition.id))
-            .where(MetricDefinition.knowledge_base_id == kb_id)
-            .group_by(MetricDefinition.status)
-        ).all()
-    )
-
-    # Document stats
     doc_counts = dict(
         db.execute(
             select(Document.status, func.count(Document.id))
@@ -305,31 +245,11 @@ def get_pipeline_stats(kb_id: int, db: Session = Depends(get_db)):
         ).all()
     )
     total_docs = sum(doc_counts.values())
-    indexed_docs = doc_counts.get("indexed", 0)
 
-    # Git sources
     git_sources = db.execute(
         select(KnowledgeGitSource).where(KnowledgeGitSource.knowledge_base_id == kb_id)
     ).scalars().all()
 
-    # Lineage stats
-    lineage_done = db.execute(
-        select(func.count(DataLineage.id)).where(
-            DataLineage.knowledge_base_id == kb_id, DataLineage.status == "done"
-        )
-    ).scalar() or 0
-    lineage_processing = db.execute(
-        select(func.count(DataLineage.id)).where(
-            DataLineage.knowledge_base_id == kb_id, DataLineage.status == "processing"
-        )
-    ).scalar() or 0
-    lineage_pending = db.execute(
-        select(func.count(DataLineage.id)).where(
-            DataLineage.knowledge_base_id == kb_id, DataLineage.status == "pending"
-        )
-    ).scalar() or 0
-
-    # Last pipeline run — auto-detect stuck runs (>5 min)
     last_run = db.execute(
         select(PipelineRun)
         .where(PipelineRun.knowledge_base_id == kb_id)
@@ -355,7 +275,7 @@ def get_pipeline_stats(kb_id: int, db: Session = Depends(get_db)):
         "metrics_by_status": metrics_by_status,
         "documents_by_status": doc_counts,
         "total_documents": total_docs,
-        "indexed_documents": indexed_docs,
+        "indexed_documents": doc_counts.get("indexed", 0),
         "git_sources": [
             {
                 "id": gs.id,
@@ -368,9 +288,9 @@ def get_pipeline_stats(kb_id: int, db: Session = Depends(get_db)):
             for gs in git_sources
         ],
         "lineage_stats": {
-            "done": lineage_done,
-            "processing": lineage_processing,
-            "pending": lineage_pending,
+            "done": lineage_by_status.get("done", 0),
+            "processing": lineage_by_status.get("processing", 0),
+            "pending": lineage_by_status.get("pending", 0),
         },
         "last_pipeline_run": {
             "id": last_run.id,

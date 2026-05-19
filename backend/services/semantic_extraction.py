@@ -35,68 +35,7 @@ _logger = logging.getLogger(__name__)
 
 # ── LLM Prompt Templates ──────────────────────────────────────────────
 
-_TERM_EXTRACTION_SYSTEM = """你是数据语义分析专家。从给定的文档内容中提取业务术语（Business Terms）。
-
-业务术语是企业日常使用的、有明确业务含义的词汇，例如：GMV（成交总额）、实收金额、订单状态、客户等级等。
-
-输出严格 JSON 对象，键为 terms（数组），每个元素包含：
-- name: 术语名称（简洁，2-8个汉字或英文缩写）
-- type: 类型，必须是 metric（度量）/ enum（枚举）/ time（时间）/ dimension（维度）/ other（其他）
-- definition: 一句话定义该术语的业务含义（中文，20-120字）
-- related_fields: 相关的数据库字段名数组（从文档中推断，无则空数组）
-- confidence: AI 置信度 0-100 的整数
-
-规则：
-1. 只提取明确的业务术语，不要提取通用词汇或技术术语
-2. 置信度根据文档描述的清晰程度判断：清晰定义 80+，间接提及 50-70，不确定则跳过
-3. 如果文档中没有可提取的业务术语，返回 {"terms": []}
-4. 每个术语必须 unique，不要重复提取同义词（选择最常用的名称）
-"""
-
-_METRIC_EXTRACTION_SYSTEM = """你是数据分析专家。从给定的文档内容中提取指标口径定义（Metric Definitions）。
-
-指标口径是「这个数怎么算」的明确定义，包含计算逻辑和统计规则，例如：
-- 日GMV = SUM(orders.amount) WHERE orders.status = 'paid' AND date = today
-- 付费率 = COUNT(DISTINCT paid_users) / COUNT(DISTINCT active_users) * 100%
-
-输出严格 JSON 对象，键为 metrics（数组），每个元素包含：
-- name: 指标名称（简洁，如「日GMV」「月活用户数」）
-- formula: 计算公式（SQL/MDX 或文字描述，50-300字）
-- caliber: 统计口径说明（包含/不包含的边界条件，30-200字）
-- related_terms: 依赖的业务术语名称数组（从文档中推断）
-- confidence: AI 置信度 0-100 的整数
-
-规则：
-1. 只提取有明确计算逻辑的指标，不要提取仅有名称没有公式的指标
-2. 公式优先使用 SQL 风格表达
-3. 口径说明要明确「包含」与「不包含」的边界
-4. 如果文档中没有可提取的指标定义，返回 {"metrics": []}
-"""
-
-_LINEAGE_EXTRACTION_SYSTEM = """你是数据工程专家。从给定的代码文件中提取数据血缘关系（Data Lineage）。
-
-数据血缘描述表之间的依赖关系：哪些表从哪些表派生而来，以及它们的数据分层（ODS/DWD/DWS/ADS）。
-
-分层参考：
-- ODS：贴源层，直接从业务系统同步的原始数据
-- DWD：明细数据层，经过清洗和标准化的明细数据
-- DWS：汇总数据层，按主题/维度汇总的轻度聚合数据
-- ADS：应用数据层，面向具体报表/看板的宽表或指标表
-
-输出严格 JSON 对象，键为 edges（数组），每个元素包含：
-- source_table: 上游表名
-- target_table: 下游表名
-- source_field: 上游关联字段（可选）
-- target_field: 下游关联字段（可选）
-- source_layer: 上游表的层级（ODS/DWD/DWS/ADS，根据命名或上下文推断）
-- target_layer: 下游表的层级
-- transform_logic: 转换逻辑的简要描述（中文，20-100字）
-
-规则：
-1. 从 SQL 的 FROM/JOIN、dbt 的 ref()/source()、ORM 的 relationship 等模式识别表依赖
-2. 如果文件不包含表间依赖关系，返回 {"edges": []}
-3. 表名只保留名称部分，去掉 schema 前缀
-"""
+from prompts import load_prompt as _load_prompt
 
 # ── Pipeline orchestration ────────────────────────────────────────────
 
@@ -202,7 +141,7 @@ async def extract_terms_from_kb(db: Session, kb_id: int) -> int:
 
     for chunk in chunks:
         try:
-            result = await _call_llm_json(client, model_name, _TERM_EXTRACTION_SYSTEM, chunk.content)
+            result = await _call_llm_json(client, model_name, _load_prompt("term_extraction_system"), chunk.content)
             terms_data = result.get("terms", [])
         except Exception:
             _logger.warning("LLM term extraction failed for chunk %s", chunk.id, exc_info=True)
@@ -286,7 +225,7 @@ async def extract_metrics_from_kb(db: Session, kb_id: int) -> int:
 
     for chunk in chunks:
         try:
-            result = await _call_llm_json(client, model_name, _METRIC_EXTRACTION_SYSTEM, chunk.content)
+            result = await _call_llm_json(client, model_name, _load_prompt("metric_extraction_system"), chunk.content)
             metrics_data = result.get("metrics", [])
         except Exception:
             _logger.warning("LLM metric extraction failed for chunk %s", chunk.id, exc_info=True)
@@ -380,7 +319,7 @@ async def extract_lineage_from_kb(db: Session, kb_id: int) -> int:
         text = body[:8000]
 
         try:
-            result = await _call_llm_json(client, model_name, _LINEAGE_EXTRACTION_SYSTEM, text)
+            result = await _call_llm_json(client, model_name, _load_prompt("lineage_extraction_system"), text)
             edges_data = result.get("edges", [])
         except Exception:
             _logger.warning("LLM lineage extraction failed for entry %s", entry.id, exc_info=True)
@@ -522,7 +461,7 @@ def trigger_semantic_pipeline_background(kb_id: int, source_type: str = "auto", 
         try:
             asyncio.run(run_semantic_pipeline(db2, kb_id, source_type=source_type, skip_if_running=skip_if_running))
         except Exception:
-            _logger.warning("Background semantic pipeline failed for kb=%s", kb_id, exc_info=True)
+            _logger.exception("Background semantic pipeline failed for kb=%s", kb_id)
         finally:
             db2.close()
 

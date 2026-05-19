@@ -18,26 +18,12 @@ from services.runtime_llm_config import (
     get_effective_openai_api_key,
     get_effective_openai_base_url,
 )
+from prompts import load_prompt as _load_prompt
 
 TABLE_DESC_SECTIONS = ["业务描述", "数据定位", "核心口径", "使用建议", "风险边界"]
 
-SQL_GENERATION_SYSTEM = """你是 DataLens ChatBI 的 SQL 生成器。只输出一条只读业务查询的 JSON。
-
-硬性规则：
-1) 仅生成只读查询：允许 SELECT、WITH（公共表表达式）及只读子查询。禁止 INSERT/UPDATE/DELETE/DDL、管理类语句与多语句批次。
-2) 优先采信「数据源与表分析」「结构化字段」中的真实库表与字段；仅在信息不足时参考 FEW-SHOT。若上下文注明「业务域候选表」且为「知识检索筛选」结果，必须先结合业务域知识片段理解用户意图，再仅在该候选表集合及其字段范围内生成 SQL；若为未筛中的全量域表清单，仍须在清单内选表。不得使用未出现在候选/清单或结构化字段中的表名与列名。
-3) 时间语义：若用户表达「最近7天」「上周」「本月」「T+1」等，必须在 SQL 中体现为明确的日期或时间过滤条件。
-4) SQL 关键字大写，SELECT/FROM/WHERE/JOIN/GROUP BY/ORDER BY/HAVING/LIMIT 等子句分行书写，保证可读性。
-5) explanation 需简要说明你依据哪些 BUSINESS CONTEXT 选择了表与字段。
-6) 输出严格 JSON 对象，键为：sql（字符串）、explanation（字符串）、referenced_columns（字符串数组）。禁止 Markdown 代码块与 JSON 外多余文字。"""
-
-SQL_REPAIR_SYSTEM = """你是 DataLens ChatBI 的 SQL 修复助手。在保持只读前提下修复 SQL，只输出 JSON。
-
-硬性规则：
-1) 仅输出 JSON，键为 sql（字符串）、reason（字符串）。
-2) sql 必须为单条只读语句（SELECT / WITH / SHOW / DESCRIBE / EXPLAIN），禁止写操作与多语句。
-3) 优先根据 error_message 与现有 schema 修正，不要臆造上下文中不存在的表或字段。
-4) SQL 关键字大写、子句分行，禁止 Markdown 代码块。"""
+SQL_GENERATION_SYSTEM = _load_prompt("sql_generation_system")
+SQL_REPAIR_SYSTEM = _load_prompt("sql_repair_system")
 
 
 @dataclass(frozen=True)
@@ -241,19 +227,7 @@ async def classify_question_intent(question: str, db: Session, chat_model: str |
     if not model_ref:
         intent = _heuristic_intent(question)
         return {"intent": intent, "reason": "无可用模型，使用规则进行意图识别"}
-    prompt = f"""你是 ChatBI 助手的意图分类器。
-请判断用户问题是否需要"生成并执行SQL"。
-
-分类规则：
-1) 若用户明确要查数、统计、趋势、明细、排行、对比、筛选，返回 sql_query
-2) 若用户是解释概念、系统使用帮助、闲聊、写作润色、策略建议且不依赖即时查数，返回 general_qa
-3) 不确定时，优先返回 general_qa（避免误触发SQL）
-
-用户问题: {question}
-
-仅输出JSON，键为: intent,reason
-intent 只能是 sql_query 或 general_qa
-"""
+    prompt = _load_prompt("intent_classification").format(question=question)
     data = await _chat_json(prompt, model_ref, db)
     intent = str(data.get("intent") or "").strip()
     if intent not in {"sql_query", "general_qa"}:
@@ -346,28 +320,7 @@ async def answer_general_question(
             "下一步\n"
             "- 请在偏好设置中填写 API URL 与 Key，或配置环境变量。"
         )
-    prompt = f"""你是 DataLens 的 ChatBI 助手。
-请直接回答用户问题，不要生成 SQL。
-回答要求：
-- 使用固定中文结构，严格按以下模板输出，不要添加其他标题：
-结论
-- <1-2 条要点>
-
-说明
-- <2-4 条要点，必要时给示例>
-
-下一步
-- <1-2 条可执行建议>
-- 每条以 "- " 开头
-- 不要使用 Markdown 代码块
-- 不要输出 SQL
-
-上下文提示（可为空）:
-{context_hint}
-
-用户问题:
-{question}
-"""
+    prompt = _load_prompt("general_qa").format(context_hint=context_hint, question=question)
     text = await _chat_text(prompt, model_ref, db, temperature=0.4)
     if not text:
         return (
@@ -442,15 +395,12 @@ async def analyze_column(
         if knowledge_parts:
             domain_hint += f"\n关联业务知识条目:\n" + "\n".join(knowledge_parts)
 
-    prompt = f"""你是一个数据分析专家，请根据字段信息理解其业务含义。
-表名: {table_name}
-字段信息: {json.dumps(column_info, ensure_ascii=False)}
-统计信息: {json.dumps(profiling_result, ensure_ascii=False)}{domain_hint}
-若统计信息的 quality_metrics.enum 存在且含 values 数组：该列为离散枚举类字段。desc 开头必须用一句话标明枚举类型（MySQL ENUM / SET 或「样本中观测到的离散取值」），并列出全部或已给出的取值；type 填 enum。
-若无枚举信息，按常规划分 type（dimension/metric/time/id 等），不要编造枚举取值。
-若 type 为 metric：推断该度量的可加性（additive=可直接SUM，如金额/数量；semi_additive=不可跨时间SUM但可分组内SUM，如余额/库存；non_additive=不可SUM仅可COUNT/AVG，如比率/单价）。输出 aggregation 字段，值为 sum / avg / latest / count 之一，作为 SQL 生成时的默认聚合建议。
-若提供了业务域知识，请将业务域知识与字段含义结合，使 desc 更加精准、贴合实际业务场景。desc 应为完整的中文自然语言描述，可适当引用业务域知识中的术语和口径定义。
-输出JSON键: desc,type,is_usable,reason；若type为metric则额外输出 aggregation"""
+    prompt = _load_prompt("analyze_column").format(
+        table_name=table_name,
+        column_info_json=json.dumps(column_info, ensure_ascii=False),
+        profiling_json=json.dumps(profiling_result, ensure_ascii=False),
+        domain_hint=domain_hint,
+    )
     return await _chat_json(prompt, semantic_model_ref, db)
 
 
@@ -507,20 +457,15 @@ async def _normalize_summary_async(
         domain_hint = ""
         for d in (context.get("domain_contexts") or [])[:2]:
             domain_hint += f"业务域「{d.get('domain_name','')}」：{d.get('domain_description','')}；"
-        fill_prompt = f"""你是一个数据表分析助手。已有部分章节的描述草稿，请仅补全以下缺失章节的内容。
-表名: {table_name}
-关键字段: {col_summary}
-业务背景: {domain_hint}
-
-已有描述:
-{raw[:800]}
-
-需要补全的章节: {'、'.join(missing_sections)}
-
-请严格按照以下格式输出仅缺失章节的内容（每条以 "- " 开头）：
-{chr(10).join(f'{s}\n- …' for s in missing_sections)}
-
-只输出上述章节，不输出已有内容。输出JSON键: {','.join(missing_sections)}"""
+        fill_prompt = _load_prompt("normalize_summary").format(
+            table_name=table_name,
+            col_summary=col_summary,
+            domain_hint=domain_hint,
+            raw=raw[:800],
+            missing_sections="、".join(missing_sections),
+            section_format=chr(10).join(f"{s}\n- …" for s in missing_sections),
+            section_keys=",".join(missing_sections),
+        )
         try:
             fill_result = await _chat_json(fill_prompt, semantic_model_ref, db)
             for section in missing_sections:
@@ -603,40 +548,12 @@ async def analyze_table(
             "key_columns": [c["column_name"] for c in columns_with_semantic[:3]],
             "warnings": "未配置LLM Key，当前为规则生成结果，仅用于本地联调",
         }
-    prompt = f"""你是资深数据分析师，请总结数据表用途。
-表名: {table_name}
-字段: {json.dumps(prompt_cols, ensure_ascii=False)}
-总行数: {row_count}
-业务上下文（必须充分考虑）: {json.dumps(context, ensure_ascii=False)}
-
-输出要求：
-1) summary 必须严格使用下面固定模板输出，不要新增/删减标题：
-业务描述
-- <3-5条；必须覆盖以下内容，让读者一眼看懂表的用途：
-  第1条：行粒度 — 每行代表什么（如"一条订单记录"、"一笔交易的某次状态变更"、"一天的汇总快照"），这是聚合策略的关键依据
-  第2条：表角色与用途 — 该表是事实表/维度表/汇总表/快照表/日志表，解决什么业务问题，主要使用者是谁
-  第3条：数据范围 — 覆盖的时间周期、业务主体范围、数据量级特征
-  第4-5条（可选）：关键特征 — 与其他表的上下游关系、更新频率特征、核心区分字段>
-
-数据定位
-- <2-4条，覆盖业务域/数据源/数据库/表自身描述，说明表所在的数据环境>
-
-核心口径
-- <3-5条，给出关键口径、关键维度、关键指标；若某度量不可直接 SUM（如余额、比率），请注明推荐聚合方式；若存在枚举字段，列出取值>
-
-使用建议
-- <2-4条，给出最适合的分析用法和典型联动表>
-
-风险边界
-- <2-4条，给出限制、风险与明确不适用场景>
-
-2) 每一条都必须以 "- " 开头
-2) use_cases 给出 3-5 个高价值分析场景
-3) key_columns 只列最关键字段（3-8个）
-4) warnings 明确风险/歧义/缺失信息
-5) 若字段列表中某列含 enum 对象（含 kind、values），在「核心口径」中简要列出该类字段及主要取值，便于下游 SQL 使用正确字面量
-
-输出JSON键: summary,use_cases,key_columns,warnings"""
+    prompt = _load_prompt("analyze_table").format(
+        table_name=table_name,
+        prompt_cols_json=json.dumps(prompt_cols, ensure_ascii=False),
+        row_count=row_count,
+        context_json=json.dumps(context, ensure_ascii=False),
+    )
     result = await _chat_json(prompt, semantic_model_ref, db)
 
     # Validate key_columns against real column names

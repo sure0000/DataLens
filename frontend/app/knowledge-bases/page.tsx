@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import PageHeader from "../../components/PageHeader";
 import Toast from "../../components/Toast";
+import { useToast } from "../../hooks/useToast";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { api, ApiError, formatApiError } from "../../lib/api";
 
 type KnowledgeBase = { id: number; name: string; description: string; created_at: string };
@@ -11,10 +13,8 @@ type KnowledgeBase = { id: number; name: string; description: string; created_at
 export default function KnowledgeBasesPage() {
   const [list, setList] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
-  const [toastTone, setToastTone] = useState<"success" | "error">("success");
+  const { toast, notify, dismiss } = useToast();
 
-  // 新建 Modal
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [newDesc, setNewDesc] = useState("");
@@ -26,8 +26,7 @@ export default function KnowledgeBasesPage() {
       const res = await api<{ knowledge_bases: KnowledgeBase[] }>("/api/knowledge-bases");
       setList(res.knowledge_bases);
     } catch (e: unknown) {
-      setToastTone("error");
-      setMessage(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "加载失败");
+      notify(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "加载失败", "error");
     } finally {
       setLoading(false);
     }
@@ -35,15 +34,10 @@ export default function KnowledgeBasesPage() {
 
   useEffect(() => { load(); }, []);
 
-  useEffect(() => {
-    if (!isCreateOpen) return;
-    const onKeyDown = (e: KeyboardEvent) => { if (e.key === "Escape") setIsCreateOpen(false); };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isCreateOpen]);
+  useEscapeKey(() => setIsCreateOpen(false), isCreateOpen);
 
   async function createKb() {
-    if (!newName.trim()) { setToastTone("error"); setMessage("请填写知识库名称"); return; }
+    if (!newName.trim()) { notify("请填写知识库名称", "error"); return; }
     setSaving(true);
     try {
       await api("/api/knowledge-bases", {
@@ -52,11 +46,10 @@ export default function KnowledgeBasesPage() {
       });
       setIsCreateOpen(false);
       setNewName(""); setNewDesc("");
-      setToastTone("success"); setMessage("知识库创建成功");
+      notify("知识库创建成功", "success");
       load();
     } catch (e: unknown) {
-      setToastTone("error");
-      setMessage(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "创建失败");
+      notify(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "创建失败", "error");
     } finally {
       setSaving(false);
     }
@@ -78,10 +71,10 @@ export default function KnowledgeBasesPage() {
       />
 
       <Toast
-        message={message}
-        tone={toastTone}
-        duration={toastTone === "error" ? 8000 : 4000}
-        onClose={() => { setMessage(""); setToastTone("success"); }}
+        message={toast.message}
+        tone={toast.tone}
+        duration={toast.tone === "error" ? 8000 : toast.durationMs}
+        onClose={dismiss}
       />
 
       {loading && <p className="app-text-muted mt-6 text-sm">加载中…</p>}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 
 interface EditKbModalProps {
   open: boolean;
@@ -22,14 +23,7 @@ export default function EditKbModal({ open, kbName, kbDescription, onSave, onClo
     }
   }, [open, kbName, kbDescription]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  useEscapeKey(onClose, open);
 
   if (!open) return null;
 

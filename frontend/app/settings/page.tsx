@@ -1,12 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import Breadcrumbs from "../../components/Breadcrumbs";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import PageHeader from "../../components/PageHeader";
 import Toast from "../../components/Toast";
+import ApiSourcesTab from "../../components/settings/ApiSourcesTab";
+import ModelsTab from "../../components/settings/ModelsTab";
+import SemanticTab from "../../components/settings/SemanticTab";
 import { api } from "../../lib/api";
+import { useToast } from "../../hooks/useToast";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 
 type Catalog = {
   auto_id: string;
@@ -43,10 +48,6 @@ function tripletForModelRef(catalog: Catalog, ref: string): { name: string; vend
   return { name: "—", vendor: "—", model: ref || "—" };
 }
 
-function formatTripletLine(t: { name: string; vendor: string; model: string }) {
-  return `${t.name} · ${t.vendor} · ${t.model}`;
-}
-
 type LlmConfig = {
   semantic_llm_model: string;
   semantic_llm_model_resolved: string;
@@ -65,22 +66,6 @@ type LlmConnPublic = {
 };
 
 type LlmConnDetail = LlmConnPublic & { api_key_configured?: boolean; api_key?: string };
-
-type ApiSource = {
-  id: number;
-  knowledge_base_id: number | null;
-  name: string;
-  integration: string;
-  object_id: string;
-  extra: Record<string, string>;
-  has_key: boolean;
-  enabled: boolean;
-  last_sync_at?: string | null;
-  last_sync_status?: string | null;
-  last_error?: string | null;
-  created_at: string;
-  updated_at: string;
-};
 
 type Channel = "openai" | "deepseek";
 
@@ -203,7 +188,7 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingConn, setSavingConn] = useState(false);
-  const [toast, setToast] = useState<{ message: string; tone?: "success" | "error" | "info" } | null>(null);
+  const { toast, notify, dismiss } = useToast();
 
   const [addOpen, setAddOpen] = useState(false);
   const [addVendorId, setAddVendorId] = useState(LLM_VENDORS[0].id);
@@ -221,26 +206,6 @@ export default function SettingsPage() {
   const [deleteConnId, setDeleteConnId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  // API Sources state
-  const [apiSources, setApiSources] = useState<ApiSource[]>([]);
-  const [apiSourcesLoading, setApiSourcesLoading] = useState(false);
-  const [apiModalOpen, setApiModalOpen] = useState(false);
-  const [apiEditingId, setApiEditingId] = useState<number | null>(null);
-  const [apiSaving, setApiSaving] = useState(false);
-  const [apiName, setApiName] = useState("");
-  const [apiIntegration, setApiIntegration] = useState<"notion" | "confluence" | "feishu">("notion");
-  const [apiKey, setApiKey] = useState("");
-  const [apiExtraEmail, setApiExtraEmail] = useState("");
-  const [apiExtraDomain, setApiExtraDomain] = useState("");
-  const [apiExtraAppId, setApiExtraAppId] = useState("");
-  const [apiShowKey, setApiShowKey] = useState(false);
-  const [apiEnabled, setApiEnabled] = useState(true);
-  const [apiDeleteId, setApiDeleteId] = useState<number | null>(null);
-  const [apiDeleting, setApiDeleting] = useState(false);
-  const [apiKeyLoading, setApiKeyLoading] = useState(false);
-
-  const connectRef = useRef<HTMLElement>(null);
-
   const addVendor = useMemo(() => LLM_VENDORS.find((v) => v.id === addVendorId) ?? LLM_VENDORS[0], [addVendorId]);
   const addChannel = addVendor.channel;
   const modelIdOptions = useMemo(() => {
@@ -253,27 +218,8 @@ export default function SettingsPage() {
     setAddModelId((prev) => (modelIdOptions.some((o) => o.id === prev) ? prev : modelIdOptions[0].id));
   }, [modelIdOptions]);
 
-  useEffect(() => {
-    if (!addOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setAddOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [addOpen]);
-
-  useEffect(() => {
-    if (!viewConnId) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setViewConnId(null);
-        setViewDetail(null);
-        setViewKeyVisible(false);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [viewConnId]);
+  useEscapeKey(() => setAddOpen(false), addOpen);
+  useEscapeKey(() => { setViewConnId(null); setViewDetail(null); setViewKeyVisible(false); }, viewConnId !== null);
 
   async function load() {
     setLoading(true);
@@ -289,183 +235,15 @@ export default function SettingsPage() {
       setSavedSemantic(c.semantic_llm_model_resolved || "");
       setConnections(connRes.connections || []);
     } catch {
-      setToast({ message: "加载失败，请确认后端已启动", tone: "error" });
+      notify("加载失败，请确认后端已启动", "error");
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function loadApiSources() {
-    setApiSourcesLoading(true);
-    try {
-      const res = await api<{ api_sources: ApiSource[] }>("/api/api-sources");
-      setApiSources(res.api_sources ?? []);
-    } catch {
-      // 静默失败，切换 tab 时会自动重试
-    } finally {
-      setApiSourcesLoading(false);
     }
   }
 
   useEffect(() => {
     load();
   }, []);
-
-  useEffect(() => {
-    if (!apiModalOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setApiModalOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [apiModalOpen]);
-
-  function openApiCreateModal() {
-    setApiEditingId(null);
-    setApiName("");
-    setApiIntegration("notion");
-    setApiKey("");
-    setApiExtraEmail("");
-    setApiExtraDomain("");
-    setApiExtraAppId("");
-    setApiShowKey(false);
-    setApiEnabled(true);
-    setApiModalOpen(true);
-  }
-
-  async function openApiEditModal(s: ApiSource) {
-    setApiEditingId(s.id);
-    setApiName(s.name);
-    setApiIntegration(s.integration as "notion" | "confluence" | "feishu");
-    setApiKey("");
-    setApiShowKey(false);
-    setApiKeyLoading(true);
-    const extra = s.extra || {};
-    setApiExtraEmail((extra as Record<string, string>).email ?? "");
-    setApiExtraDomain((extra as Record<string, string>).domain ?? "");
-    setApiExtraAppId((extra as Record<string, string>).app_id ?? "");
-    setApiEnabled(s.enabled);
-    setApiModalOpen(true);
-    try {
-      const res = await api<{ api_source: ApiSource & { api_key?: string } }>(`/api/api-sources/${s.id}?reveal_secret=true`);
-      setApiKey(res.api_source.api_key || "");
-    } catch {
-      // key fetch failed, leave empty — user can still toggle manually
-    } finally {
-      setApiKeyLoading(false);
-    }
-  }
-
-  async function saveApiSource() {
-    if (!apiName.trim()) {
-      setToast({ message: "请填写名称", tone: "error" });
-      return;
-    }
-    if (!apiEditingId && !apiKey.trim()) {
-      setToast({ message: "新建 API 源时必须填写 API Key / Token", tone: "error" });
-      return;
-    }
-    if (apiIntegration === "confluence") {
-      if (!apiExtraEmail.trim() || !apiExtraDomain.trim()) {
-        setToast({ message: "Confluence 需要填写邮箱与域名", tone: "error" });
-        return;
-      }
-    }
-    if (apiIntegration === "feishu") {
-      if (!apiExtraAppId.trim()) {
-        setToast({ message: "飞书需要填写 App ID", tone: "error" });
-        return;
-      }
-    }
-    setApiSaving(true);
-    try {
-      const extra: Record<string, string> = {};
-      if (apiIntegration === "confluence") {
-        extra.email = apiExtraEmail.trim();
-        extra.domain = apiExtraDomain.trim();
-      }
-      if (apiIntegration === "feishu") {
-        extra.app_id = apiExtraAppId.trim();
-      }
-      const body: Record<string, unknown> = {
-        name: apiName.trim(),
-        integration: apiIntegration,
-        extra,
-        enabled: apiEnabled,
-      };
-      if (apiEditingId) {
-        if (apiKey.trim()) body.api_key = apiKey.trim();
-        await api(`/api/api-sources/${apiEditingId}`, {
-          method: "PUT",
-          body: JSON.stringify(body),
-        });
-        setToast({ message: "API 源已更新", tone: "success" });
-      } else {
-        body.api_key = apiKey.trim();
-        await api("/api/api-sources", {
-          method: "POST",
-          body: JSON.stringify(body),
-        });
-        setToast({ message: "API 源已添加", tone: "success" });
-      }
-      setApiModalOpen(false);
-      await loadApiSources();
-    } catch {
-      setToast({ message: "保存失败", tone: "error" });
-    } finally {
-      setApiSaving(false);
-    }
-  }
-
-  async function toggleApiKeyVisibility() {
-    if (apiShowKey) {
-      setApiShowKey(false);
-      return;
-    }
-    // 如果已经有明文密钥（用户手动输入），直接切换显示
-    if (apiKey.trim()) {
-      setApiShowKey(true);
-      return;
-    }
-    // 编辑模式下从后端拉取
-    if (!apiEditingId) {
-      setApiShowKey(true);
-      return;
-    }
-    setApiKeyLoading(true);
-    try {
-      const res = await api<{ api_source: ApiSource & { api_key?: string } }>(`/api/api-sources/${apiEditingId}?reveal_secret=true`);
-      setApiKey(res.api_source.api_key || "");
-      setApiShowKey(true);
-    } catch {
-      setToast({ message: "无法获取密钥", tone: "error" });
-    } finally {
-      setApiKeyLoading(false);
-    }
-  }
-
-  async function confirmDeleteApiSource() {
-    const id = apiDeleteId;
-    if (!id) return;
-    setApiDeleting(true);
-    try {
-      await api(`/api/api-sources/${id}`, { method: "DELETE" });
-      setApiDeleteId(null);
-      setToast({ message: "API 源已删除", tone: "success" });
-      await loadApiSources();
-    } catch {
-      setToast({ message: "删除失败", tone: "error" });
-    } finally {
-      setApiDeleting(false);
-    }
-  }
-
-  function integrationLabel(s: ApiSource): string {
-    if (s.integration === "notion") return "Notion";
-    if (s.integration === "confluence") return "Confluence";
-    if (s.integration === "feishu") return "飞书";
-    return s.integration;
-  }
 
   async function saveSemantic() {
     setSaving(true);
@@ -478,9 +256,9 @@ export default function SettingsPage() {
       setCfg(res);
       const cat = await api<Catalog>("/api/llm/catalog");
       setCatalog(cat);
-      setToast({ message: "已保存语义分析模型", tone: "success" });
+      notify("已保存语义分析模型");
     } catch {
-      setToast({ message: "保存失败，请从可用模型中选择或选择自动", tone: "error" });
+      notify("保存失败，请从可用模型中选择或选择自动", "error");
     } finally {
       setSaving(false);
     }
@@ -504,7 +282,7 @@ export default function SettingsPage() {
 
   async function submitNewConnection() {
     if (!addName.trim() || !addUrl.trim() || !addKey.trim()) {
-      setToast({ message: "请填写自定义名称、Endpoint 与 API Key", tone: "error" });
+      notify("请填写自定义名称、Endpoint 与 API Key", "error");
       return;
     }
     setSavingConn(true);
@@ -524,9 +302,9 @@ export default function SettingsPage() {
       setAddOpen(false);
       setAddKey("");
       await load();
-      setToast({ message: "已保存接入", tone: "success" });
+      notify("已保存接入");
     } catch {
-      setToast({ message: "保存失败，请检查 Endpoint 与模型名是否与厂商一致", tone: "error" });
+      notify("保存失败，请检查 Endpoint 与模型名是否与厂商一致", "error");
     } finally {
       setSavingConn(false);
     }
@@ -541,7 +319,7 @@ export default function SettingsPage() {
       const d = await api<LlmConnDetail>(`/api/llm/connections/${id}`);
       setViewDetail(d);
     } catch {
-      setToast({ message: "加载详情失败", tone: "error" });
+      notify("加载详情失败", "error");
       setViewConnId(null);
     } finally {
       setViewLoading(false);
@@ -564,7 +342,7 @@ export default function SettingsPage() {
       setViewDetail(d);
       setViewKeyVisible(true);
     } catch {
-      setToast({ message: "无法获取密钥", tone: "error" });
+      notify("无法获取密钥", "error");
     } finally {
       setViewKeyLoading(false);
     }
@@ -592,9 +370,9 @@ export default function SettingsPage() {
       setSavedSemantic(res.semantic_llm_model_resolved || "");
       const connRes = await api<{ connections: LlmConnPublic[] }>("/api/llm/connections");
       setConnections(connRes.connections || []);
-      setToast({ message: "已从列表中删除该接入", tone: "success" });
+      notify("已从列表中删除该接入");
     } catch {
-      setToast({ message: "删除失败", tone: "error" });
+      notify("删除失败", "error");
     } finally {
       setDeleting(false);
     }
@@ -658,7 +436,7 @@ export default function SettingsPage() {
             <button
               role="tab"
               aria-selected={activeTab === "api_sources"}
-              onClick={() => { setActiveTab("api_sources"); void loadApiSources(); }}
+              onClick={() => setActiveTab("api_sources")}
               className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-left transition-colors ${
                 activeTab === "api_sources"
                   ? "bg-app-activeBg text-app-primary border border-app-primary/20"
@@ -676,226 +454,32 @@ export default function SettingsPage() {
           {/* ── 右侧内容面板 ── */}
           <div className="min-w-0 flex-1">
             {activeTab === "models" && (
-              <section ref={connectRef} className="app-card rounded-2xl p-5 sm:p-6">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-app-primary">
-                      <IconPlug />
-                    </span>
-                    <div>
-                      <h2 className="app-card-title text-base">大模型接入</h2>
-                      <p className="mt-1 text-[11px] text-app-muted">新增后写入数据库，并出现在下方「可用大模型」与语义分析/Copilot 可选列表中。</p>
-                    </div>
-                  </div>
-                  <button type="button" className="app-button shrink-0 rounded-xl px-4 py-2 text-sm font-medium" onClick={() => openAddModal()}>
-                    新增接入
-                  </button>
-                </div>
-
-                {loading ? (
-                  <div className="mt-6 flex items-center gap-2 text-sm text-app-muted" role="status">
-                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-app-border border-t-app-primary" />
-                    加载中
-                  </div>
-                ) : (
-                  <div className="mt-5">
-                    <h3 className="text-xs font-semibold uppercase tracking-wide text-app-muted">可用大模型</h3>
-                    {connections.length === 0 ? (
-                      <div className="mt-3 rounded-xl border border-dashed border-app-border bg-app-hover/30 px-4 py-8 text-center text-sm text-app-muted">
-                        暂无接入，请点击右上角「新增接入」。
-                      </div>
-                    ) : (
-                      <ul className="mt-3 divide-y divide-app-border overflow-hidden rounded-xl border border-app-border bg-white">
-                        {connections.map((row) => (
-                          <li key={row.id} className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4">
-                            <div className="min-w-0 flex-1 space-y-1">
-                              <p className="truncate text-sm font-semibold text-app-ink">{row.custom_name}</p>
-                              <p className="text-[11px] text-app-secondary">
-                                <span className="text-app-muted">厂商</span> {row.vendor_label}
-                                <span className="mx-1.5 text-app-border">·</span>
-                                <span className="text-app-muted">模型</span>{" "}
-                                <span className="font-mono text-app-ink">{row.model_id}</span>
-                              </p>
-                              <p className="truncate font-mono text-[10px] text-app-muted" title={row.base_url}>
-                                {row.base_url}
-                              </p>
-                            </div>
-                            <div className="flex shrink-0 flex-wrap gap-2">
-                              <button
-                                type="button"
-                                className="app-button-secondary rounded-lg px-3 py-1.5 text-xs font-medium"
-                                onClick={() => void openViewConnection(row.id)}
-                              >
-                                查看
-                              </button>
-                              <button
-                                type="button"
-                                className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50"
-                                onClick={() => setDeleteConnId(row.id)}
-                              >
-                                删除
-                              </button>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
-                  </div>
-                )}
-              </section>
+              <ModelsTab
+                loading={loading}
+                connections={connections}
+                onAdd={() => openAddModal()}
+                onView={(id) => { void openViewConnection(id); }}
+                onDelete={setDeleteConnId}
+              />
             )}
 
             {activeTab === "semantic" && (
-              <section className="app-card rounded-2xl p-5 sm:p-6">
-                <div className="flex items-start gap-3">
-                  <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-app-primary">
-                    <IconColumns />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <h2 className="app-card-title text-base">语义分析</h2>
-                  </div>
-                </div>
-
-                {loading ? (
-                  <div className="mt-6 flex items-center gap-2 text-sm text-app-muted" role="status">
-                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-app-border border-t-app-primary" />
-                    加载中
-                  </div>
-                ) : !hasSemanticConnections ? (
-                  <div className="mt-6 flex flex-col items-center gap-4 rounded-2xl border border-dashed border-app-border bg-app-hover/30 px-4 py-10">
-                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100/80 text-amber-700">
-                      <IconColumns className="h-7 w-7" />
-                    </div>
-                    <p className="text-center text-sm text-app-secondary">尚未配置可用大模型，请先新增一条接入。</p>
-                    <button type="button" className="app-button rounded-xl px-4 py-2 text-sm font-medium" onClick={() => openAddModal()}>
-                      新增接入
-                    </button>
-                  </div>
-                ) : !catalog ? (
-                  <p className="mt-6 text-sm text-app-muted">模型目录加载中…</p>
-                ) : (
-                  <div className="mt-5 space-y-4">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
-                      <label className="flex min-w-0 flex-1 flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                        可选模型
-                        <select
-                          className="app-input rounded-xl px-3 py-2.5 text-sm focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1"
-                          value={semantic}
-                          onChange={(e) => setSemantic(e.target.value)}
-                        >
-                          <option value={catalog.auto_id}>自动</option>
-                          {semanticOrphanOption ? (
-                            <option value={semantic} disabled>
-                              （已不在列表）{formatTripletLine(tripletForModelRef(catalog, semantic))}
-                            </option>
-                          ) : null}
-                          {semanticCustomModels.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {formatTripletLine(tripletFromCatalogModel(m))}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <button
-                        type="button"
-                        className="app-button shrink-0 rounded-xl px-4 py-2.5 text-sm font-medium"
-                        disabled={saving}
-                        onClick={() => void saveSemantic()}
-                      >
-                        {saving ? "保存中…" : "保存"}
-                      </button>
-                    </div>
-                    {effectiveTriplet ? (
-                      <div className="rounded-xl border border-app-border bg-app-hover/40 px-3 py-3 text-sm">
-                        <p className="text-[11px] font-medium text-app-muted">当前生效</p>
-                        <dl className="mt-2 grid gap-2 sm:grid-cols-3">
-                          <div>
-                            <dt className="text-[10px] font-medium uppercase tracking-wide text-app-muted">名称</dt>
-                            <dd className="mt-0.5 font-medium text-app-ink">{effectiveTriplet.name}</dd>
-                          </div>
-                          <div>
-                            <dt className="text-[10px] font-medium uppercase tracking-wide text-app-muted">厂商</dt>
-                            <dd className="mt-0.5 text-app-ink">{effectiveTriplet.vendor}</dd>
-                          </div>
-                          <div>
-                            <dt className="text-[10px] font-medium uppercase tracking-wide text-app-muted">模型</dt>
-                            <dd className="mt-0.5 font-mono text-xs text-app-ink">{effectiveTriplet.model}</dd>
-                          </div>
-                        </dl>
-                      </div>
-                    ) : null}
-                  </div>
-                )}
-              </section>
+              <SemanticTab
+                loading={loading}
+                catalog={catalog}
+                semantic={semantic}
+                onSemanticChange={setSemantic}
+                saving={saving}
+                hasSemanticConnections={hasSemanticConnections}
+                semanticCustomModels={semanticCustomModels}
+                semanticOrphanOption={!!semanticOrphanOption}
+                effectiveTriplet={effectiveTriplet}
+                onSave={() => { void saveSemantic(); }}
+                onAdd={() => openAddModal()}
+              />
             )}
 
-            {activeTab === "api_sources" && (
-              <section className="app-card rounded-2xl p-5 sm:p-6">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="flex items-start gap-3">
-                    <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-app-hover text-app-primary">
-                      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
-                        <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
-                        <polyline points="22,6 12,13 2,6" />
-                      </svg>
-                    </span>
-                    <div>
-                      <h2 className="app-card-title text-base">API 源</h2>
-                      <p className="mt-1 text-[11px] text-app-muted">全局 API 源，可在各个知识库中复用导入。配置与导入分离，支持重复使用。</p>
-                    </div>
-                  </div>
-                  <button type="button" className="app-button shrink-0 rounded-xl px-4 py-2 text-sm font-medium" onClick={openApiCreateModal}>
-                    新增 API 源
-                  </button>
-                </div>
-
-                {apiSourcesLoading ? (
-                  <div className="mt-6 flex items-center gap-2 text-sm text-app-muted" role="status">
-                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-app-border border-t-app-primary" />
-                    加载中
-                  </div>
-                ) : apiSources.length === 0 ? (
-                  <div className="mt-6 rounded-xl border border-dashed border-app-border bg-app-hover/30 px-4 py-8 text-center text-sm text-app-muted">
-                    暂无 API 源，请点击右上角「新增 API 源」。
-                  </div>
-                ) : (
-                  <ul className="mt-5 divide-y divide-app-border overflow-hidden rounded-xl border border-app-border bg-white">
-                    {apiSources.map((s) => (
-                      <li key={s.id} className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4">
-                        <div className="min-w-0 flex-1 space-y-1">
-                          <p className="truncate text-sm font-semibold text-app-ink">{s.name}</p>
-                          <p className="text-[11px] text-app-secondary">
-                            <span className="text-app-muted">集成</span> {integrationLabel(s)}
-                            <span className="mx-1.5 text-app-border">·</span>
-                            <span className="text-app-muted">密钥</span>{" "}
-                            {s.has_key ? <span className="text-emerald-600 font-medium">已配置</span> : <span className="text-rose-500">未配置</span>}
-                          </p>
-                          <p className="text-[10px] text-app-muted">
-                            上次导入：{s.last_sync_at ? new Date(s.last_sync_at).toLocaleString() : "—"}
-                          </p>
-                        </div>
-                        <div className="flex shrink-0 flex-wrap gap-2">
-                          <button
-                            type="button"
-                            className="app-button-secondary rounded-lg px-3 py-1.5 text-xs font-medium"
-                            onClick={() => openApiEditModal(s)}
-                          >
-                            编辑
-                          </button>
-                          <button
-                            type="button"
-                            className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50"
-                            onClick={() => setApiDeleteId(s.id)}
-                          >
-                            删除
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </section>
-            )}
+            {activeTab === "api_sources" && <ApiSourcesTab />}
 
           </div>
         </div>
@@ -1095,199 +679,6 @@ export default function SettingsPage() {
           document.body
         )}
 
-      {apiModalOpen &&
-        typeof document !== "undefined" &&
-        createPortal(
-          <div className="app-modal-backdrop app-modal-backdrop--front" role="presentation" onClick={() => !apiSaving && setApiModalOpen(false)}>
-            <div
-              className="app-modal-surface app-chatgpt-dialog mx-4 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-2xl p-5 sm:p-6"
-              role="dialog"
-              aria-modal="true"
-              aria-labelledby="api-source-modal-title"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <h3 id="api-source-modal-title" className="text-base font-semibold text-app-ink">
-                {apiEditingId ? "编辑 API 源" : "新增 API 源"}
-              </h3>
-              <div className="mt-4 space-y-3">
-                <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                  显示名称
-                  <input className="app-input rounded-xl px-3 py-2 text-sm" value={apiName} onChange={(e) => setApiName(e.target.value)} disabled={apiSaving} />
-                </label>
-                <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                  平台
-                  <select
-                    className="app-input rounded-xl px-3 py-2 text-sm"
-                    value={apiIntegration}
-                    onChange={(e) => setApiIntegration(e.target.value as "notion" | "confluence" | "feishu")}
-                    disabled={apiSaving || !!apiEditingId}
-                  >
-                    <option value="notion">Notion</option>
-                    <option value="confluence">Confluence</option>
-                    <option value="feishu">飞书</option>
-                  </select>
-                  {!!apiEditingId && <p className="text-[11px] text-app-muted">编辑时不可切换平台类型</p>}
-                </label>
-                {apiEditingId && (
-                  <p className="text-[11px] text-app-muted">
-                    密钥留空则不修改；当前已配置密钥将保留。
-                  </p>
-                )}
-                {apiIntegration === "notion" && (
-                  <>
-                    <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                      Integration Token
-                      <div className="relative">
-                        <input
-                          className="app-input rounded-xl px-3 py-2 text-sm font-mono pr-9"
-                          type={apiShowKey ? "text" : "password"}
-                          autoComplete="off"
-                          placeholder="secret_…"
-                          value={apiKey}
-                          onChange={(e) => setApiKey(e.target.value)}
-                          disabled={apiSaving}
-                        />
-                        <button
-                          type="button"
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-app-muted hover:text-app-ink"
-                          tabIndex={-1}
-                          onClick={() => void toggleApiKeyVisibility()}
-                          disabled={apiKeyLoading}
-                          aria-label={apiShowKey ? "隐藏" : "显示"}
-                          aria-pressed={apiShowKey}
-                        >
-                          {apiKeyLoading ? (
-                            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-app-border border-t-app-primary" />
-                          ) : apiShowKey ? (
-                            <IconEyeOff className="h-4 w-4" />
-                          ) : (
-                            <IconEye className="h-4 w-4" />
-                          )}
-                        </button>
-                      </div>
-                    </label>
-                  </>
-                )}
-                {apiIntegration === "confluence" && (
-                  <>
-                    <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                      API Token
-                      <div className="relative">
-                        <input
-                          className="app-input rounded-xl px-3 py-2 text-sm font-mono pr-9"
-                          type={apiShowKey ? "text" : "password"}
-                          autoComplete="off"
-                          placeholder="Confluence API Token"
-                          value={apiKey}
-                          onChange={(e) => setApiKey(e.target.value)}
-                          disabled={apiSaving}
-                        />
-                        <button
-                          type="button"
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-app-muted hover:text-app-ink"
-                          tabIndex={-1}
-                          onClick={() => void toggleApiKeyVisibility()}
-                          disabled={apiKeyLoading}
-                          aria-label={apiShowKey ? "隐藏" : "显示"}
-                          aria-pressed={apiShowKey}
-                        >
-                          {apiKeyLoading ? (
-                            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-app-border border-t-app-primary" />
-                          ) : apiShowKey ? (
-                            <IconEyeOff className="h-4 w-4" />
-                          ) : (
-                            <IconEye className="h-4 w-4" />
-                          )}
-                        </button>
-                      </div>
-                    </label>
-                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                      <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                        邮箱
-                        <input
-                          className="app-input rounded-xl px-3 py-2 text-sm font-mono"
-                          placeholder="Confluence 账号邮箱"
-                          value={apiExtraEmail}
-                          onChange={(e) => setApiExtraEmail(e.target.value)}
-                          disabled={apiSaving}
-                        />
-                      </label>
-                      <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                        域名
-                        <input
-                          className="app-input rounded-xl px-3 py-2 text-sm font-mono"
-                          placeholder="example.atlassian.net"
-                          value={apiExtraDomain}
-                          onChange={(e) => setApiExtraDomain(e.target.value)}
-                          disabled={apiSaving}
-                        />
-                      </label>
-                    </div>
-                  </>
-                )}
-                {apiIntegration === "feishu" && (
-                  <>
-                    <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                      App Secret
-                      <div className="relative">
-                        <input
-                          className="app-input rounded-xl px-3 py-2 text-sm font-mono pr-9"
-                          type={apiShowKey ? "text" : "password"}
-                          autoComplete="off"
-                          placeholder="飞书应用 Secret"
-                          value={apiKey}
-                          onChange={(e) => setApiKey(e.target.value)}
-                          disabled={apiSaving}
-                        />
-                        <button
-                          type="button"
-                          className="absolute right-2 top-1/2 -translate-y-1/2 text-app-muted hover:text-app-ink"
-                          tabIndex={-1}
-                          onClick={() => void toggleApiKeyVisibility()}
-                          disabled={apiKeyLoading}
-                          aria-label={apiShowKey ? "隐藏" : "显示"}
-                          aria-pressed={apiShowKey}
-                        >
-                          {apiKeyLoading ? (
-                            <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-app-border border-t-app-primary" />
-                          ) : apiShowKey ? (
-                            <IconEyeOff className="h-4 w-4" />
-                          ) : (
-                            <IconEye className="h-4 w-4" />
-                          )}
-                        </button>
-                      </div>
-                    </label>
-                    <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
-                      App ID
-                      <input
-                        className="app-input rounded-xl px-3 py-2 text-sm font-mono"
-                        placeholder="飞书应用 App ID"
-                        value={apiExtraAppId}
-                        onChange={(e) => setApiExtraAppId(e.target.value)}
-                        disabled={apiSaving}
-                      />
-                    </label>
-                  </>
-                )}
-                <label className="flex cursor-pointer items-center gap-2 text-sm text-app-secondary">
-                  <input type="checkbox" checked={apiEnabled} onChange={(e) => setApiEnabled(e.target.checked)} disabled={apiSaving} />
-                  启用（禁用后无法从知识库手动导入）
-                </label>
-              </div>
-              <div className="mt-6 flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
-                <button type="button" className="app-dialog-btn app-dialog-btn-secondary w-full sm:w-auto" onClick={() => setApiModalOpen(false)} disabled={apiSaving}>
-                  取消
-                </button>
-                <button type="button" className="app-dialog-btn app-dialog-btn-primary w-full sm:w-auto" disabled={apiSaving} onClick={() => void saveApiSource()}>
-                  {apiSaving ? "保存中…" : "保存"}
-                </button>
-              </div>
-            </div>
-          </div>,
-          document.body
-        )}
-
       <ConfirmDialog
         open={deleteConnId !== null}
         title="删除该接入？"
@@ -1303,19 +694,9 @@ export default function SettingsPage() {
         }}
       />
 
-      <ConfirmDialog
-        open={apiDeleteId !== null}
-        title="删除该 API 源？"
-        description="将从全局列表中删除此 API 源，后续无法从知识库引用该源进行导入。"
-        confirmText="删除"
-        cancelText="取消"
-        danger
-        loading={apiDeleting}
-        onCancel={() => setApiDeleteId(null)}
-        onConfirm={() => void confirmDeleteApiSource()}
-      />
 
-      {toast && <Toast message={toast.message} tone={toast.tone} onClose={() => setToast(null)} />}
+
+      <Toast message={toast.message} tone={toast.tone} duration={toast.durationMs} onClose={dismiss} />
     </main>
   );
 }

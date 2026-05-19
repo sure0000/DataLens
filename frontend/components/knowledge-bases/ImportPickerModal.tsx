@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { api, apiForm, ApiError, formatApiError } from "../../lib/api";
 import GitSourceForm, { defaultGitFormData, type GitSourceFormData } from "./GitSourceForm";
 import type { ApiSource } from "./types";
@@ -35,14 +36,7 @@ export default function ImportPickerModal({
   const [apiImportObjectId, setApiImportObjectId] = useState("");
   const [apiImportingId, setApiImportingId] = useState<number | null>(null);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [open, onClose]);
+  useEscapeKey(onClose, open);
 
   useEffect(() => {
     if (open) {

@@ -4,10 +4,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../../lib/api";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { readUserPreferences, writeUserPreferences } from "../../lib/userPreferences";
 import Breadcrumbs from "../../components/Breadcrumbs";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import CopilotMessageThread from "../../components/copilot/CopilotMessageThread";
+import SessionList from "../../components/copilot/SessionList";
 import {
   CopilotGenerationDockStatus,
   CopilotGenerationProvider,
@@ -230,17 +232,7 @@ function CopilotPageContent() {
     return () => window.removeEventListener("datalens-user-prefs-updated", onPrefs);
   }, [llmCatalog, chatModelChoiceIds]);
 
-  useEffect(() => {
-    if (!chatModelMenuOpen && !bizDomainMenuOpen) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        setChatModelMenuOpen(false);
-        setBizDomainMenuOpen(false);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [chatModelMenuOpen, bizDomainMenuOpen]);
+  useEscapeKey(() => { setChatModelMenuOpen(false); setBizDomainMenuOpen(false); }, chatModelMenuOpen || bizDomainMenuOpen);
 
   useEffect(() => {
     if (!chatModelMenuOpen && !bizDomainMenuOpen) return;
@@ -683,38 +675,7 @@ function CopilotPageContent() {
 
                 <h2 className="mb-2 text-left text-[13px] font-medium text-app-secondary">历史会话</h2>
 
-                <div className="divide-y divide-app-subtle rounded-xl bg-white/60">
-                  {projectSessions.map((session) => (
-                    <div
-                      key={session.id}
-                      className="flex w-full items-stretch gap-1 px-2 py-2 transition hover:bg-app-hover sm:px-3 sm:py-3"
-                    >
-                      <button
-                        type="button"
-                        className="min-w-0 flex-1 px-1 py-1 text-left sm:px-2"
-                        onClick={() => openSessionFromProject(session.id)}
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="line-clamp-1 text-[18px] font-semibold text-app-primary sm:text-[20px]">{session.title}</p>
-                            <p className="mt-0.5 line-clamp-1 text-[13px] text-app-secondary sm:text-[14px]">{getSessionPreview(session)}</p>
-                          </div>
-                          <span className="shrink-0 pt-1 text-[13px] text-app-muted sm:text-[14px]">
-                            {new Date(session.updated_at).toLocaleDateString("zh-CN")}
-                          </span>
-                        </div>
-                      </button>
-                      <button
-                        type="button"
-                        className="shrink-0 self-center rounded-md px-2 py-1.5 text-xs text-[var(--app-danger)] hover:bg-red-50"
-                        onClick={() => setPendingDeleteSessionId(session.id)}
-                      >
-                        删除
-                      </button>
-                    </div>
-                  ))}
-                  {!projectSessions.length && <p className="px-3 py-10 text-center text-sm text-app-muted">该项目还没有历史对话</p>}
-                </div>
+                <SessionList sessions={projectSessions} getPreview={getSessionPreview} onOpen={openSessionFromProject} onDelete={setPendingDeleteSessionId} />
               </div>
             </section>
           </>

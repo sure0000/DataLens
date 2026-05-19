@@ -446,3 +446,29 @@ class PipelineRun(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
+
+class KnowledgeMcpSource(Base):
+    """MCP 工具源 — 通过 Model Context Protocol 导入外部工具的知识。"""
+
+    __tablename__ = "knowledge_mcp_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    knowledge_base_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    mcp_transport: Mapped[str] = mapped_column(Text, nullable=False)
+    mcp_command: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mcp_env: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    mcp_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mcp_tool_name: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mcp_tool_args: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    mcp_args: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    content_mode: Mapped[str] = mapped_column(Text, nullable=False)
+    max_entry_chars: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_import_status: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_import_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    last_import_entries: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    last_import_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_import_kb_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+

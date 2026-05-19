@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models import ColumnMeta, KnowledgeEntry, TableKnowledgeEntry, TableMeta
+from prompts import load_prompt as _load_prompt
 
 _logger = logging.getLogger(__name__)
 
@@ -97,29 +98,14 @@ def _truncate_for_llm(body: str, max_chars: int = _MAX_INPUT_CHARS) -> str:
 
 # ── LLM 分析 Prompt ──────────────────────────────────────────────────────
 
-_CODE_ANALYSIS_SYSTEM = """你是代码分析器。分析代码文件，提取其中引用的数据表及相关信息。
-
-规则：
-1. 只提取代码中明确引用的物理表名（不要猜测或推断）
-2. table_name 不要带 schema/database 前缀
-3. columns 列出代码中实际使用的列名
-4. enum_values 仅提取 WHERE col IN (...) / CASE WHEN / 枚举定义中明确出现的取值（至少2个不同值才输出）
-5. aggregation_hints 仅当代码中明确使用了 SUM/COUNT/AVG/MAX/MIN 等聚合函数时输出
-6. join_with 列出与该表 JOIN 的其他表名
-7. 如果文件完全不涉及数据表操作，设置 irrelevant=true"""
+_CODE_ANALYSIS_SYSTEM = _load_prompt("code_analysis_system")
 
 
 def _build_analysis_prompt(entry_title: str, body: str) -> str:
-    truncated = _truncate_for_llm(body)
-    return f"""文件: {entry_title}
-
-内容:
-```
-{truncated}
-```
-
-输出 JSON:
-{{"table_references":[{{"table_name":"表名","columns":["列名"],"enum_values":{{"列名":["值"]}},"aggregation_hints":{{"列名":"sum|avg|count|max|min"}},"join_with":["表名"],"usage_summary":"描述"}}],"irrelevant":false}}"""
+    return _load_prompt("code_analysis_user").format(
+        entry_title=entry_title,
+        truncated_body=_truncate_for_llm(body),
+    )
 
 
 # ── 主分析函数 ───────────────────────────────────────────────────────────

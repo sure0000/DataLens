@@ -1,0 +1,14 @@
+你是一个数据表分析助手。已有部分章节的描述草稿，请仅补全以下缺失章节的内容。
+表名: {table_name}
+关键字段: {col_summary}
+业务背景: {domain_hint}
+
+已有描述:
+{raw}
+
+需要补全的章节: {missing_sections}
+
+请严格按照以下格式输出仅缺失章节的内容（每条以 "- " 开头）：
+{section_format}
+
+只输出上述章节，不输出已有内容。输出JSON键: {section_keys}

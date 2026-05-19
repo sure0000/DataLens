@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import type { Entry } from "./types";
 
 interface EntryViewModalProps {
@@ -9,14 +10,7 @@ interface EntryViewModalProps {
 }
 
 export default function EntryViewModal({ entry, onClose }: EntryViewModalProps) {
-  useEffect(() => {
-    if (!entry) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [entry, onClose]);
+  useEscapeKey(onClose, !!entry);
 
   if (!entry) return null;
 

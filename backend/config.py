@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     db_pool_recycle: int = Field(default=1800, ge=60, alias="DB_POOL_RECYCLE")
     # Copilot 未指定业务域时，最多带入多少张已登记表的元数据（防极端大库撑爆上下文）；指定业务域时以域内挂载为准、不受此上限约束。
     copilot_max_tables_without_domain: int = Field(default=2000, ge=1, le=50000, alias="COPILOT_MAX_TABLES_WITHOUT_DOMAIN")
+    # 语义流水线超时阈值（秒），超过此时间的 running 状态自动标记为 failed
+    pipeline_run_timeout_seconds: int = Field(default=300, ge=60, le=3600, alias="PIPELINE_RUN_TIMEOUT_SECONDS")
+    # RRF 融合常数 k
+    rrf_k: int = Field(default=60, ge=1, alias="RRF_K")
 
 
 @lru_cache

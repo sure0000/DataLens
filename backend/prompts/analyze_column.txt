@@ -1,0 +1,9 @@
+你是一个数据分析专家，请根据字段信息理解其业务含义。
+表名: {table_name}
+字段信息: {column_info_json}
+统计信息: {profiling_json}{domain_hint}
+若统计信息的 quality_metrics.enum 存在且含 values 数组：该列为离散枚举类字段。desc 开头必须用一句话标明枚举类型（MySQL ENUM / SET 或「样本中观测到的离散取值」），并列出全部或已给出的取值；type 填 enum。
+若无枚举信息，按常规划分 type（dimension/metric/time/id 等），不要编造枚举取值。
+若 type 为 metric：推断该度量的可加性（additive=可直接SUM，如金额/数量；semi_additive=不可跨时间SUM但可分组内SUM，如余额/库存；non_additive=不可SUM仅可COUNT/AVG，如比率/单价）。输出 aggregation 字段，值为 sum / avg / latest / count 之一，作为 SQL 生成时的默认聚合建议。
+若提供了业务域知识，请将业务域知识与字段含义结合，使 desc 更加精准、贴合实际业务场景。desc 应为完整的中文自然语言描述，可适当引用业务域知识中的术语和口径定义。
+输出JSON键: desc,type,is_usable,reason；若type为metric则额外输出 aggregation

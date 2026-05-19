@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 type Entry = {
   id: number;
@@ -273,13 +274,7 @@ export default function GitFileBrowser({ source, entries, onClose, onViewEntry }
     setExpanded(new Set(topDirs));
   }, [tree]);
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onClose]);
+  useEscapeKey(onClose);
 
   function toggleDir(path: string) {
     setExpanded((prev) => {

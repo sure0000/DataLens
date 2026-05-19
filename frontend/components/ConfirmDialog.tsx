@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 type ConfirmDialogProps = {
   open: boolean;
@@ -48,14 +49,7 @@ export default function ConfirmDialog({
     };
   }, [open, confirmName]);
 
-  useEffect(() => {
-    if (!open) return;
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onCancel();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [open, onCancel]);
+  useEscapeKey(onCancel, open);
 
   if (!open) return null;
 

@@ -8,13 +8,14 @@ import PageHeader from "../components/PageHeader";
 import Toast from "../components/Toast";
 import { api, ApiError, formatApiError } from "../lib/api";
 import ListPagination from "../components/ListPagination";
+import { useToast } from "../hooks/useToast";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 
 type Domain = { id: number; name: string; description: string; created_at: string };
 
 export default function Home() {
   const [domains, setDomains] = useState<Domain[]>([]);
-  const [message, setMessage] = useState("");
-  const [toastTone, setToastTone] = useState<"success" | "error">("success");
+  const { toast, notify, dismiss } = useToast();
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -30,13 +31,13 @@ export default function Home() {
       const res = await api<{ domains: Domain[] }>("/api/business-domains");
       setDomains(res.domains);
     } catch (e: unknown) {
-      setToastTone("error");
-      setMessage(
+      notify(
         e instanceof ApiError
           ? formatApiError(e)
           : e instanceof Error
             ? e.message
-            : "加载业务域失败：请确认后端已启动（默认 http://127.0.0.1:8000）且 NEXT_PUBLIC_API_URL 配置正确。"
+            : "加载业务域失败：请确认后端已启动（默认 http://127.0.0.1:8000）且 NEXT_PUBLIC_API_URL 配置正确。",
+        "error"
       );
     } finally {
       setLoading(false);
@@ -51,19 +52,11 @@ export default function Home() {
     setPage(1);
   }, [keyword, pageSize]);
 
-  useEffect(() => {
-    if (!isCreateOpen) return;
-    const onKeyDown = (evt: KeyboardEvent) => {
-      if (evt.key === "Escape") setIsCreateOpen(false);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isCreateOpen]);
+  useEscapeKey(() => setIsCreateOpen(false), isCreateOpen);
 
   async function createDomain() {
     if (!newName.trim()) {
-      setToastTone("error");
-      setMessage("请先填写业务域名称");
+      notify("请先填写业务域名称", "error");
       return;
     }
     setSaving(true);
@@ -75,12 +68,10 @@ export default function Home() {
       setIsCreateOpen(false);
       setNewName("");
       setNewDesc("");
-      setToastTone("success");
-      setMessage("业务域创建成功");
+      notify("业务域创建成功");
       loadDomains();
     } catch (e: unknown) {
-      setToastTone("error");
-      setMessage(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "创建失败");
+      notify(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "创建失败", "error");
     } finally {
       setSaving(false);
     }
@@ -117,15 +108,7 @@ export default function Home() {
           </div>
         }
       />
-      <Toast
-        message={message}
-        tone={toastTone}
-        duration={toastTone === "error" ? 8000 : 4000}
-        onClose={() => {
-          setMessage("");
-          setToastTone("success");
-        }}
-      />
+      <Toast message={toast.message} tone={toast.tone} duration={toast.durationMs} onClose={dismiss} />
 
       <section className="mt-6 space-y-3">
         <h2 className="app-section-title">已创建业务域</h2>

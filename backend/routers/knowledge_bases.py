@@ -259,7 +259,7 @@ async def import_entry_from_file(
             bg_doc = bg_db.get(Document, doc_id)
             if bg_doc:
                 run_pipeline(bg_db, bg_doc, raw_text)
-            # 文档流水线完成后触发语义提取（术语、指标口径）
+            # 文档流水线完成后触发语义提取
             from services.semantic_extraction import trigger_semantic_pipeline_background
             trigger_semantic_pipeline_background(kb_id, source_type="auto")
         except Exception:
@@ -271,6 +271,7 @@ async def import_entry_from_file(
                     bg_doc.error_message = "后台流水线启动失败"
                     bg_db.commit()
             except Exception:
+                _logger.exception("Failed to update doc status after pipeline failure doc=%d", doc_id)
                 bg_db.rollback()
         finally:
             bg_db.close()
@@ -405,6 +406,8 @@ def retry_doc(kb_id: int, doc_id: int, db: Session = Depends(get_db)) -> dict:
             bg_doc = bg_db.get(Document, doc_id)
             if bg_doc:
                 run_pipeline(bg_db, bg_doc, raw_text)
+        except Exception:
+            _logger.exception("Document retry pipeline failed doc=%d", doc_id)
         finally:
             bg_db.close()
     threading.Thread(target=_bg, daemon=True).start()

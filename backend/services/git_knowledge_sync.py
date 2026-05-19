@@ -38,7 +38,7 @@ def _trigger_codebase_analysis(knowledge_base_id: int) -> None:
 
             asyncio.run(run_codebase_analysis_for_kb(db2, knowledge_base_id))
         except Exception:
-            _logger.warning("Codebase analysis failed after git sync for kb=%s", knowledge_base_id, exc_info=True)
+            _logger.exception("Codebase analysis failed after git sync for kb=%s", knowledge_base_id)
         finally:
             db2.close()
 

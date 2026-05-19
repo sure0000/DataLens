@@ -54,19 +54,17 @@ def _bm25_search_chunks(
     return [(r.id, float(r.rank)) for r in rows]
 
 
-def _rrf_merge(
-    vector_results: list[tuple[int, float]],
-    bm25_results: list[tuple[int, float]],
-    top_k: int,
-) -> list[int]:
-    """Reciprocal Rank Fusion：合并两路结果，返回 chunk_id 列表（按 RRF 分降序）。"""
+def _rrf_merge(*rankings: dict[int, int], top_k: int) -> list[int]:
+    """Reciprocal Rank Fusion：合并多路排名，返回 ID 列表（按 RRF 分降序）。"""
     scores: dict[int, float] = {}
-    for rank, (cid, _) in enumerate(vector_results):
-        scores[cid] = scores.get(cid, 0.0) + 1.0 / (_RRF_K + rank + 1)
-    for rank, (cid, _) in enumerate(bm25_results):
-        scores[cid] = scores.get(cid, 0.0) + 1.0 / (_RRF_K + rank + 1)
-    sorted_ids = sorted(scores.keys(), key=lambda x: scores[x], reverse=True)
-    return sorted_ids[:top_k]
+    for rank_map in rankings:
+        for eid, rank in rank_map.items():
+            scores[eid] = scores.get(eid, 0.0) + 1.0 / (_RRF_K + rank + 1)
+    return sorted(scores, key=scores.get, reverse=True)[:top_k]
+
+
+def _results_to_rank_map(results: list[tuple[int, float]]) -> dict[int, int]:
+    return {cid: i for i, (cid, _) in enumerate(results)}
 
 
 def search_chunks_hybrid(
@@ -84,7 +82,11 @@ def search_chunks_hybrid(
     vec_score_map = {cid: dist for cid, dist in vec_results}
     bm25_score_map = {cid: rank for cid, rank in bm25_results}
 
-    merged_ids = _rrf_merge(vec_results, bm25_results, top_k * 4)
+    merged_ids = _rrf_merge(
+        _results_to_rank_map(vec_results),
+        _results_to_rank_map(bm25_results),
+        top_k=top_k * 4,
+    )
 
     if not merged_ids:
         return []
@@ -182,17 +184,7 @@ def search_entries_hybrid(
     bm25_rank: dict[int, int] = {r.id: i for i, r in enumerate(bm25_rows)}
 
     # RRF 合并
-    all_ids = set(vec_rank.keys()) | set(bm25_rank.keys())
-    rrf_scores: dict[int, float] = {}
-    for eid in all_ids:
-        score = 0.0
-        if eid in vec_rank:
-            score += 1.0 / (_RRF_K + vec_rank[eid] + 1)
-        if eid in bm25_rank:
-            score += 1.0 / (_RRF_K + bm25_rank[eid] + 1)
-        rrf_scores[eid] = score
-
-    sorted_ids = sorted(rrf_scores.keys(), key=lambda x: rrf_scores[x], reverse=True)[:top_k]
+    sorted_ids = _rrf_merge(vec_rank, bm25_rank, top_k=top_k)
 
     # 加载 entry 详情
     entries = db.execute(
@@ -212,7 +204,11 @@ def search_entries_hybrid(
             "snippet": vec_snippet.get(eid, (entry.body or "")[:1200]),
             "vector_rank": vec_rank.get(eid),
             "bm25_rank": bm25_rank.get(eid),
-            "rrf_score": round(rrf_scores.get(eid, 0.0), 5),
+            "rrf_score": round(
+                (1.0 / (_RRF_K + vec_rank[eid] + 1) if eid in vec_rank else 0.0)
+                + (1.0 / (_RRF_K + bm25_rank[eid] + 1) if eid in bm25_rank else 0.0),
+                5,
+            ),
         })
     return results
 

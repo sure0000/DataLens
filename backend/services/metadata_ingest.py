@@ -1,7 +1,10 @@
 """数据库元数据自动导入：添加数据源时提取 TABLE/COLUMN COMMENT 为知识条目。"""
 
+import logging
 import threading
 from datetime import datetime
+
+_logger = logging.getLogger(__name__)
 
 from database import SessionLocal
 from models import DataSource, KnowledgeBase, KnowledgeEntry
@@ -130,6 +133,7 @@ def run_metadata_ingest_for_datasource(datasource_id: int) -> None:
 
             db.commit()
         except Exception:
+            _logger.exception("Metadata ingest background task failed for ds=%s", datasource_id)
             db.rollback()
         finally:
             db.close()

@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Icon, type NavIcon } from "./AppIcons";
 import ConfirmDialog from "./ConfirmDialog";
+import { useEscapeKey } from "../hooks/useEscapeKey";
 import {
   createProject,
   createSession,
@@ -23,129 +25,9 @@ import {
 const SIDEBAR_COLLAPSE_KEY = "datalens_sidebar_collapsed_v1";
 /** 侧栏每个项目分组下默认展示的会话条数 */
 const SIDEBAR_SESSION_PREVIEW_LIMIT = 5;
-
-type NavIcon =
-  | "domain"
-  | "database"
-  | "book"
-  | "spark"
-  | "plus"
-  | "search"
-  | "chevronLeft"
-  | "chevronRight"
-  | "brand"
-  | "more"
-  | "settings"
-  | "folder"
-  | "chevronDown";
-
 function isActive(pathname: string, href: string) {
   if (href === "/") return pathname === "/";
   return pathname.startsWith(href);
-}
-
-function Icon({ name, className = "h-4 w-4" }: { name: NavIcon; className?: string }) {
-  const common = { stroke: "currentColor", strokeWidth: 1.8, strokeLinecap: "round" as const, strokeLinejoin: "round" as const };
-  if (name === "plus") {
-    return (
-      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M12 5v14M5 12h14" {...common} />
-      </svg>
-    );
-  }
-  if (name === "search") {
-    return (
-      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <circle cx="11" cy="11" r="6" {...common} />
-        <path d="M16 16l4 4" {...common} />
-      </svg>
-    );
-  }
-  if (name === "chevronLeft") {
-    return (
-      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M15 6l-6 6 6 6" {...common} />
-      </svg>
-    );
-  }
-  if (name === "chevronRight") {
-    return (
-      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M9 6l6 6-6 6" {...common} />
-      </svg>
-    );
-  }
-  if (name === "chevronDown") {
-    return (
-      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M6 9l6 6 6-6" {...common} />
-      </svg>
-    );
-  }
-  if (name === "brand") {
-    return (
-      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <circle cx="12" cy="12" r="8" {...common} />
-        <circle cx="12" cy="12" r="3.2" {...common} />
-      </svg>
-    );
-  }
-  if (name === "more") {
-    return (
-      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <circle cx="6" cy="12" r="1.3" fill="currentColor" />
-        <circle cx="12" cy="12" r="1.3" fill="currentColor" />
-        <circle cx="18" cy="12" r="1.3" fill="currentColor" />
-      </svg>
-    );
-  }
-  if (name === "domain") {
-    return (
-      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M4 5h7v6H4zM13 5h7v4h-7zM13 11h7v8h-7zM4 13h7v6H4z" {...common} />
-      </svg>
-    );
-  }
-  if (name === "database") {
-    return (
-      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <ellipse cx="12" cy="6" rx="7" ry="3" {...common} />
-        <path d="M5 6v6c0 1.66 3.13 3 7 3s7-1.34 7-3V6M5 12v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6" {...common} />
-      </svg>
-    );
-  }
-  if (name === "book") {
-    return (
-      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path d="M6 4h5a2 2 0 012 2v14a2 2 0 00-2-2H6V4zM13 4h5v14h-5a2 2 0 00-2 2V6a2 2 0 012-2z" {...common} />
-      </svg>
-    );
-  }
-  if (name === "settings") {
-    return (
-      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path
-          d="M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7zM19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.6a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82 1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"
-          {...common}
-        />
-      </svg>
-    );
-  }
-  if (name === "folder") {
-    return (
-      <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-        <path
-          d="M4 7a2 2 0 012-2h3.343a2 2 0 011.414.586L11.828 7H19a2 2 0 012 2v9a2 2 0 01-2 2H6a2 2 0 01-2-2V7z"
-          {...common}
-        />
-      </svg>
-    );
-  }
-  return (
-    <svg className={className} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-      <path d="M12 3l2.1 4.56L19 10l-4.9 2.44L12 17l-2.1-4.56L5 10l4.9-2.44L12 3z" {...common} />
-    </svg>
-  );
 }
 
 export default function AppShell({ children }: { children: ReactNode }) {
@@ -337,15 +219,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
         evt.preventDefault();
         focusSessionSearch();
       }
-      if (evt.key === "Escape") {
-        setMenuProjectId("");
-        setSessionMenuId("");
-        if (searchMode) cancelSearchMode();
-      }
     };
     window.addEventListener("keydown", onKeydown);
     return () => window.removeEventListener("keydown", onKeydown);
-  }, [isCopilot, searchMode]);
+  }, [isCopilot]);
+
+  useEscapeKey(() => {
+    setMenuProjectId("");
+    setSessionMenuId("");
+    if (searchMode) cancelSearchMode();
+  });
 
   useEffect(() => {
     if (!creatingProject) return;

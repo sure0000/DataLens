@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Eye, EyeOff } from "lucide-react";
 import { useEffect, useState, type CSSProperties } from "react";
 import { api, ApiError, formatApiError } from "../../lib/api";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import EmptyState from "../../components/EmptyState";
 import ListPagination from "../../components/ListPagination";
@@ -186,14 +187,7 @@ export default function DataSourcesPage() {
     setPage(1);
   }, [keyword, pageSize]);
 
-  useEffect(() => {
-    if (!isModalOpen) return;
-    const onKeyDown = (evt: KeyboardEvent) => {
-      if (evt.key === "Escape") resetAndCloseModal();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isModalOpen]);
+  useEscapeKey(resetAndCloseModal, isModalOpen);
 
   function validateForm(): boolean {
     const errors: Record<string, string> = {};

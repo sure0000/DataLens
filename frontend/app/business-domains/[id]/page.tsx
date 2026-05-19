@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, formatApiError } from "../../../lib/api";
+import { useEscapeKey } from "../../../hooks/useEscapeKey";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 import EmptyState from "../../../components/EmptyState";
 import ListPagination from "../../../components/ListPagination";
@@ -109,17 +110,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
       .catch(() => setAllKnowledgeBases([]));
   }, []);
 
-  useEffect(() => {
-    const hasOpenModal = isDescModalOpen || isBatchModalOpen;
-    if (!hasOpenModal) return;
-    const onKeyDown = (evt: KeyboardEvent) => {
-      if (evt.key !== "Escape") return;
-      if (isDescModalOpen) setIsDescModalOpen(false);
-      if (isBatchModalOpen) setIsBatchModalOpen(false);
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [isDescModalOpen, isBatchModalOpen]);
+  useEscapeKey(() => { if (isDescModalOpen) setIsDescModalOpen(false); if (isBatchModalOpen) setIsBatchModalOpen(false); }, isDescModalOpen || isBatchModalOpen);
 
   function formatDesc(command: "bold" | "italic" | "insertUnorderedList") {
     if (typeof document !== "undefined") document.execCommand(command);
