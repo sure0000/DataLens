@@ -1,5 +1,6 @@
 """知识库 API：集合管理 + Markdown 条目 + 语义知识库流水线 + 混合检索。"""
 
+import logging
 import re
 import threading
 from datetime import datetime
@@ -31,6 +32,8 @@ from services.knowledge_pipeline_service import (
     run_pipeline,
 )
 from services.retrieval_service import search_entries_hybrid
+
+_logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["knowledge-bases"])
 
@@ -69,6 +72,7 @@ class EntryCreate(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     body: str = ""
     summary: str = Field(default="", max_length=2000)
+    tags: list[str] | None = None
 
 
 class EntryUpdate(BaseModel):
@@ -76,6 +80,7 @@ class EntryUpdate(BaseModel):
     body: str | None = None
     summary: str | None = Field(default=None, max_length=2000)
     sort_order: int | None = None
+    tags: list[str] | None = None
 
 
 class EntryBatchDeleteBody(BaseModel):
@@ -108,6 +113,7 @@ def _entry_row(e: KnowledgeEntry) -> dict:
         "sort_order": e.sort_order,
         "source_url": (e.source_url or "").strip() or None,
         "source_meta": sm,
+        "tags": e.tags if isinstance(e.tags, list) else [],
         "created_at": e.created_at.isoformat() if e.created_at else "",
         "updated_at": e.updated_at.isoformat() if e.updated_at else "",
     }
@@ -209,7 +215,7 @@ def create_entry(kb_id: int, body: EntryCreate, db: Session = Depends(get_db)) -
 async def import_entry_from_file(
     kb_id: int,
     file: UploadFile = File(...),
-    category: str = Form(default=""),
+    tags: str = Form(default=""),
     import_batch: str = Form(default=""),
     db: Session = Depends(get_db),
 ) -> dict:
@@ -227,14 +233,17 @@ async def import_entry_from_file(
     if not plain.strip():
         raise HTTPException(status_code=400, detail="文件解析结果为空")
     title = title_from_filename(fname)
+    parsed_tags = [t.strip() for t in tags.split(",") if t.strip()] if tags.strip() else []
     meta = {
-        "kind": "file", "ref": fname, "label": "上传文件",
-        "category": category.strip(),
+        "kind": "file", "ref": fname, "label": fname,
+        "tags": parsed_tags,
         "import_batch": import_batch.strip() or None,
     }
 
     # 同时创建 KnowledgeEntry（向后兼容）和 Document（新流水线）
     entry = create_entry_svc(db, kb_id, title, plain, source_meta=meta)
+    if parsed_tags:
+        entry.tags = parsed_tags
     db.commit()
     db.refresh(entry)
 
@@ -250,6 +259,19 @@ async def import_entry_from_file(
             bg_doc = bg_db.get(Document, doc_id)
             if bg_doc:
                 run_pipeline(bg_db, bg_doc, raw_text)
+            # 文档流水线完成后触发语义提取（术语、指标口径）
+            from services.semantic_extraction import trigger_semantic_pipeline_background
+            trigger_semantic_pipeline_background(kb_id, source_type="auto")
+        except Exception:
+            _logger.exception("Background pipeline failed for doc=%d kb=%d", doc_id, kb_id)
+            try:
+                bg_doc = bg_db.get(Document, doc_id)
+                if bg_doc and bg_doc.status == "pending":
+                    bg_doc.status = "failed"
+                    bg_doc.error_message = "后台流水线启动失败"
+                    bg_db.commit()
+            except Exception:
+                bg_db.rollback()
         finally:
             bg_db.close()
     threading.Thread(target=_bg, daemon=True).start()
@@ -270,6 +292,8 @@ def update_entry(kb_id: int, entry_id: int, body: EntryUpdate, db: Session = Dep
         entry.summary = _resolved_summary(body.summary, entry.body or "")
     if body.sort_order is not None:
         entry.sort_order = body.sort_order
+    if body.tags is not None:
+        entry.tags = body.tags if isinstance(body.tags, list) else None
     entry.updated_at = datetime.utcnow()
     db.flush()
     replace_knowledge_entry_embedding(db, entry.id, entry.title, entry.body, entry.summary)

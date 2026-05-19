@@ -16,7 +16,6 @@ interface GitSourceFormData {
   maxFiles: number;
   cron: string;
   enabled: boolean;
-  category: string;
 }
 
 interface GitSourceFormProps {
@@ -43,7 +42,6 @@ export function defaultGitFormData(): GitSourceFormData {
     maxFiles: 200,
     cron: "",
     enabled: true,
-    category: "",
   };
 }
 
@@ -199,17 +197,6 @@ export default function GitSourceForm({ data, onChange, disabled, isEditing }: G
           max={5000}
           value={data.maxFiles}
           onChange={(e) => f({ maxFiles: Number(e.target.value) || 200 })}
-          disabled={disabled}
-        />
-      </label>
-
-      <label className="app-form-label">
-        <span>分类（选填）</span>
-        <input
-          className="app-input"
-          placeholder="例如：API 文档、业务规范"
-          value={data.category}
-          onChange={(e) => f({ category: e.target.value })}
           disabled={disabled}
         />
       </label>

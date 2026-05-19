@@ -18,6 +18,7 @@ export type Entry = {
   updated_at: string;
   source_url?: string | null;
   source_meta?: Record<string, string>;
+  tags?: string[];
 };
 
 /** 与后端 Git 源响应对齐 */
@@ -39,7 +40,7 @@ export type GitSource = {
   max_files: number;
   cron_expression?: string | null;
   enabled: boolean;
-  category?: string | null;
+  tags?: string[];
   last_sync_at?: string | null;
   last_sync_status?: string | null;
   last_error?: string | null;
@@ -57,6 +58,7 @@ export type ApiSource = {
   extra: Record<string, string>;
   has_key: boolean;
   enabled: boolean;
+  tags?: string[];
   last_sync_at?: string | null;
   last_sync_status?: string | null;
   last_error?: string | null;
@@ -95,6 +97,7 @@ export type DocRow = {
   status: DocStatus;
   error_message: string | null;
   stage_timings: Record<string, number>;
+  knowledge_entry_id: number | null;
   created_at: string;
   updated_at: string;
 };
@@ -200,13 +203,13 @@ export interface PipelineStats {
     provider: string;
     last_sync_status: string | null;
     last_sync_at: string | null;
-    category: string | null;
+    tags: string[];
   }[];
   lineage_stats: { done: number; processing: number; pending: number };
   last_pipeline_run: {
     id: number;
     status: string;
-    steps: Record<string, unknown> | null;
+    steps: Record<string, { status?: string; count?: number }> | null;
     started_at: string | null;
     completed_at: string | null;
   } | null;

@@ -1,5 +1,7 @@
 """语义知识库 API：术语、指标、血缘的 CRUD + 流水线统计 + 触发清洗。"""
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
@@ -327,13 +329,24 @@ def get_pipeline_stats(kb_id: int, db: Session = Depends(get_db)):
         )
     ).scalar() or 0
 
-    # Last pipeline run
+    # Last pipeline run — auto-detect stuck runs (>5 min)
     last_run = db.execute(
         select(PipelineRun)
         .where(PipelineRun.knowledge_base_id == kb_id)
         .order_by(PipelineRun.id.desc())
         .limit(1)
     ).scalar_one_or_none()
+
+    if last_run and last_run.status == "running" and last_run.started_at:
+        elapsed = datetime.now(timezone.utc) - last_run.started_at
+        if elapsed.total_seconds() > 300:
+            last_run.status = "failed"
+            last_run.steps = {
+                k: (v if isinstance(v, dict) else {"status": "failed", "reason": "timeout"})
+                for k, v in (last_run.steps or {}).items()
+            }
+            last_run.completed_at = datetime.now(timezone.utc)
+            db.commit()
 
     return {
         "term_count": term_count,
@@ -350,7 +363,7 @@ def get_pipeline_stats(kb_id: int, db: Session = Depends(get_db)):
                 "provider": gs.provider,
                 "last_sync_status": gs.last_sync_status,
                 "last_sync_at": gs.last_sync_at.isoformat() if gs.last_sync_at else None,
-                "category": gs.category,
+                "tags": gs.tags if isinstance(gs.tags, list) else [],
             }
             for gs in git_sources
         ],
@@ -374,12 +387,29 @@ def get_pipeline_stats(kb_id: int, db: Session = Depends(get_db)):
 
 @router.post("/{kb_id}/semantic-pipeline/run")
 def trigger_semantic_pipeline(kb_id: int, db: Session = Depends(get_db)):
-    """手动触发语义清洗流水线（同步等待完成）。"""
-    import asyncio
-    from services.semantic_extraction import run_semantic_pipeline
+    """手动触发语义清洗流水线（后台执行，立即返回）。"""
+    from services.semantic_extraction import trigger_semantic_pipeline_background
 
-    try:
-        result = asyncio.run(run_semantic_pipeline(db, kb_id, source_type="manual"))
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"流水线执行失败: {e}") from e
+    # 检查是否已有正在运行的流水线
+    existing = db.execute(
+        select(PipelineRun).where(
+            PipelineRun.knowledge_base_id == kb_id,
+            PipelineRun.status == "running",
+        )
+    ).scalars().first()
+
+    if existing:
+        elapsed = datetime.now(timezone.utc) - existing.started_at
+        if elapsed.total_seconds() > 300:
+            existing.status = "failed"
+            existing.steps = {
+                k: (v if isinstance(v, dict) else {"status": "failed", "reason": "timeout"})
+                for k, v in (existing.steps or {}).items()
+            }
+            existing.completed_at = datetime.now(timezone.utc)
+            db.commit()
+        else:
+            return {"status": "skipped", "reason": "已有正在运行的流水线", "run_id": existing.id}
+
+    trigger_semantic_pipeline_background(kb_id, source_type="manual", skip_if_running=False)
+    return {"status": "started", "reason": "流水线已在后台启动"}

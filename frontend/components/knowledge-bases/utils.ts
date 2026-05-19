@@ -127,90 +127,120 @@ export function computeOutputCards(
 /** 根据知识库来源计算支持的流水线步骤 */
 export function computePipelineSteps(
   stats: PipelineStats | null,
-  hasGitSource: boolean
+  hasGitSource: boolean,
 ): {
   id: string;
   label: string;
   description: string;
-  status: "done" | "progress" | "waiting";
+  status: "done" | "progress" | "waiting" | "skipped";
   isExclusive: boolean;
   totalCount?: number;
   doneCount?: number;
 }[] {
   if (!stats) return [];
 
-  const steps = [];
+  const lastRun = stats.last_pipeline_run;
+  const lastSteps = (lastRun?.steps ?? {}) as Record<string, { status?: string; count?: number }>;
+  const steps: {
+    id: string;
+    label: string;
+    description: string;
+    status: "done" | "progress" | "waiting" | "skipped";
+    isExclusive: boolean;
+    totalCount?: number;
+    doneCount?: number;
+  }[] = [];
 
-  // 术语提取
-  const termDone = stats.terms_by_status?.["approved"] ?? 0;
-  const termTotal = stats.term_count;
+  // Step 1: 文档清洗 — always shown
+  const docTotal = stats.total_documents;
+  const docDone = stats.indexed_documents;
+  const docFailed = stats.documents_by_status?.["failed"] ?? 0;
+  const docPending = stats.documents_by_status?.["pending"] ?? 0;
+
+  let docStatus: "done" | "progress" | "waiting" | "skipped" = "waiting";
+  if (docTotal > 0) {
+    if (docDone >= docTotal) docStatus = "done";
+    else if (docPending > 0 || docTotal - docDone - docFailed - docPending > 0) docStatus = "progress";
+    else if (docFailed > 0) docStatus = "done";
+    else docStatus = "progress";
+  }
+
   steps.push({
-    id: "term_extraction",
+    id: "doc-cleaning",
+    label: "文档清洗",
+    description: docTotal === 0 ? "导入文件或 API 数据后自动开始" : `${docDone} / ${docTotal} 篇文档已索引`,
+    status: docTotal === 0 ? "waiting" : docStatus,
+    isExclusive: false,
+    totalCount: docTotal,
+    doneCount: docDone,
+  });
+
+  // Step 2: 术语提取
+  const termStep = lastSteps["term_extraction"];
+  const termCount = stats.term_count;
+  const termDone = typeof termStep?.count === "number" ? termStep.count : termCount;
+  const termStatus: "done" | "progress" | "waiting" | "skipped" =
+    termStep?.status === "done" ? "done" :
+    termStep?.status === "failed" ? "done" :
+    !lastRun ? "waiting" :
+    lastRun.status === "running" ? (termStep ? "progress" : "waiting") :
+    lastRun.status === "completed" ? "done" : "waiting";
+
+  steps.push({
+    id: "term-extraction",
     label: "术语提取",
-    description: "从文档中提取业务术语",
-    status: (termTotal > 0 ? "done" : stats.total_documents > 0 ? "progress" : "waiting") as "done" | "progress" | "waiting",
+    description: termStatus === "done" ? `${termDone} 个术语已识别` : "AI 识别业务术语（GMV、留存率等）",
+    status: termStatus,
     isExclusive: false,
-    totalCount: termTotal,
-    doneCount: termDone,
+    totalCount: termStatus === "done" ? termDone : undefined,
+    doneCount: termStatus === "done" ? termDone : undefined,
   });
 
-  // 指标口径
-  const metricDone = stats.metrics_by_status?.["approved"] ?? 0;
-  const metricTotal = stats.metric_count;
+  // Step 3: 指标口径
+  const metricStep = lastSteps["metric_caliber"];
+  const metricCount = stats.metric_count;
+  const metricDone = typeof metricStep?.count === "number" ? metricStep.count : metricCount;
+  const metricStatus: "done" | "progress" | "waiting" | "skipped" =
+    metricStep?.status === "done" ? "done" :
+    metricStep?.status === "failed" ? "done" :
+    !lastRun ? "waiting" :
+    lastRun.status === "running" ? (metricStep ? "progress" : "waiting") :
+    lastRun.status === "completed" ? "done" : "waiting";
+
   steps.push({
-    id: "metric_caliber",
+    id: "metric-caliber",
     label: "指标口径",
-    description: "从文档中提取指标计算口径",
-    status: (metricTotal > 0 ? "done" : stats.indexed_documents > 0 ? "progress" : "waiting") as "done" | "progress" | "waiting",
+    description: metricStatus === "done" ? `${metricDone} 个指标已定义` : "AI 提取计算公式与统计口径",
+    status: metricStatus,
     isExclusive: false,
-    totalCount: metricTotal,
-    doneCount: metricDone,
+    totalCount: metricStatus === "done" ? metricDone : undefined,
+    doneCount: metricStatus === "done" ? metricDone : undefined,
   });
 
-  // 表理解（仅 Git 源 / 数据库源）
-  if (hasGitSource) {
-    const indexed = stats.documents_by_status?.["indexed"] ?? 0;
-    steps.push({
-      id: "table_understanding",
-      label: "表理解",
-      description: "解析代码中的表结构和字段语义",
-      status: (indexed > 0 ? "done" : "waiting") as "done" | "progress" | "waiting",
-      isExclusive: false,
-      totalCount: indexed,
-      doneCount: indexed,
-    });
+  // Step 4: 数据血缘
+  const lineageStep = lastSteps["data_lineage"];
+  const lineageDone = stats.lineage_stats?.done ?? 0;
+  const lineageSkipped = lineageStep?.status === "skipped";
+  const lineageStatus: "done" | "progress" | "waiting" | "skipped" = hasGitSource
+    ? (lineageDone > 0 ? "done" :
+       lineageStep?.status === "done" ? "done" :
+       lineageSkipped ? "skipped" :
+       !lastRun ? "waiting" :
+       lastRun.status === "running" ? (lineageStep ? "progress" : "waiting") :
+       lastRun.status === "completed" ? (lineageStep ? "done" : "skipped") : "waiting")
+    : "skipped";
 
-    // 数据血缘（仅代码库）
-    const lineageDone = stats.lineage_stats?.done ?? 0;
-    const lineageTotal =
-      (stats.lineage_stats?.done ?? 0) +
-      (stats.lineage_stats?.processing ?? 0) +
-      (stats.lineage_stats?.pending ?? 0);
-    steps.push({
-      id: "data_lineage",
-      label: "数据血缘",
-      description: "从代码中解析表间依赖关系（代码库专属）",
-      status: (lineageDone > 0 ? "done" : lineageTotal > 0 ? "progress" : "waiting") as "done" | "progress" | "waiting",
-      isExclusive: true,
-      totalCount: lineageTotal,
-      doneCount: lineageDone,
-    });
-  }
-
-  // 文档流水线状态
-  const indexedDocs = stats.documents_by_status?.["indexed"] ?? 0;
-  const totalDocs = stats.total_documents;
-  if (totalDocs > 0) {
-    steps.push({
-      id: "document_processing",
-      label: "文档处理",
-      description: "文档清洗、分块、向量化",
-      status: (indexedDocs >= totalDocs ? "done" : "progress") as "done" | "progress" | "waiting",
-      isExclusive: false,
-      totalCount: totalDocs,
-      doneCount: indexedDocs,
-    });
-  }
+  steps.push({
+    id: "data-lineage",
+    label: "数据血缘",
+    description: lineageStatus === "done" ? `${lineageDone} 条依赖关系` :
+      lineageStatus === "skipped" ? (hasGitSource ? "未检测到表间依赖" : "仅代码源支持") :
+      "AI 分析表间依赖与数据流",
+    status: lineageStatus,
+    isExclusive: false,
+    totalCount: lineageStatus === "done" ? lineageDone : undefined,
+    doneCount: lineageStatus === "done" ? lineageDone : undefined,
+  });
 
   return steps;
 }

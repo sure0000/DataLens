@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import re
+import threading
 from datetime import datetime, timezone
 from typing import Any
 
@@ -100,7 +101,7 @@ _LINEAGE_EXTRACTION_SYSTEM = """你是数据工程专家。从给定的代码文
 # ── Pipeline orchestration ────────────────────────────────────────────
 
 
-async def _call_llm_json(client: Any, model_name: str, system_prompt: str, user_message: str, temperature: float = 0.1) -> dict[str, Any]:
+async def _call_llm_json(client: Any, model_name: str, system_prompt: str, user_message: str, temperature: float = 0.1, timeout_seconds: float = 120.0) -> dict[str, Any]:
     """调用 LLM 并解析 JSON 响应。"""
     resp = await client.chat.completions.create(
         model=model_name,
@@ -110,6 +111,7 @@ async def _call_llm_json(client: Any, model_name: str, system_prompt: str, user_
         ],
         temperature=temperature,
         response_format={"type": "json_object"},
+        timeout=timeout_seconds,
     )
     raw = resp.choices[0].message.content or "{}"
     try:
@@ -416,33 +418,48 @@ async def extract_lineage_from_kb(db: Session, kb_id: int) -> int:
 # ── Pipeline Orchestration ─────────────────────────────────────────────
 
 
-async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None = None) -> dict[str, Any]:
+async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None = None, skip_if_running: bool = True) -> dict[str, Any]:
     """编排执行完整的语义清洗流水线。"""
+    if skip_if_running:
+        existing = db.execute(
+            select(PipelineRun).where(
+                PipelineRun.knowledge_base_id == kb_id,
+                PipelineRun.status == "running",
+            )
+        ).scalars().first()
+        if existing:
+            # 如果卡住超过 5 分钟，自动标记为失败并继续
+            elapsed = datetime.now(timezone.utc) - existing.started_at
+            if elapsed.total_seconds() > 300:
+                _logger.warning("PipelineRun %s stuck for %s, auto-failing", existing.id, elapsed)
+                existing.status = "failed"
+                existing.steps = {
+                    k: (v if isinstance(v, dict) else {"status": "failed", "reason": "timeout"})
+                    for k, v in (existing.steps or {}).items()
+                }
+                existing.completed_at = datetime.now(timezone.utc)
+                db.commit()
+            else:
+                _logger.info("Semantic pipeline already running for kb=%s (run_id=%s), skipping", kb_id, existing.id)
+                return {"status": "skipped", "reason": "已有正在运行的流水线", "run_id": existing.id}
+
     run = _start_pipeline_run(db, kb_id, source_type)
-
     steps_status: dict[str, Any] = {}
+    _pipeline_timeout = 600  # 整体超时 10 分钟
 
-    try:
+    async def _run_steps() -> dict[str, Any]:
         # Step 1: 术语提取
         term_count = await extract_terms_from_kb(db, kb_id)
         steps_status["term_extraction"] = {"status": "done", "count": term_count}
         run.steps = steps_status
         db.commit()
-    except Exception:
-        _logger.warning("Term extraction failed for kb=%s", kb_id, exc_info=True)
-        steps_status["term_extraction"] = {"status": "failed", "count": 0}
 
-    try:
         # Step 2: 指标口径提取
         metric_count = await extract_metrics_from_kb(db, kb_id)
         steps_status["metric_caliber"] = {"status": "done", "count": metric_count}
         run.steps = steps_status
         db.commit()
-    except Exception:
-        _logger.warning("Metric extraction failed for kb=%s", kb_id, exc_info=True)
-        steps_status["metric_caliber"] = {"status": "failed", "count": 0}
 
-    try:
         # Step 3: 数据血缘（仅 Git 源知识库）
         has_git = db.execute(
             select(KnowledgeGitSource).where(KnowledgeGitSource.knowledge_base_id == kb_id).limit(1)
@@ -454,11 +471,36 @@ async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None
             steps_status["data_lineage"] = {"status": "skipped", "reason": "非代码库知识库"}
         run.steps = steps_status
         db.commit()
-    except Exception:
-        _logger.warning("Lineage extraction failed for kb=%s", kb_id, exc_info=True)
-        steps_status["data_lineage"] = {"status": "failed", "count": 0}
+        return steps_status
 
-    success = not any(s.get("status") == "failed" for s in steps_status.values())
+    try:
+        steps_status = await asyncio.wait_for(_run_steps(), timeout=_pipeline_timeout)
+    except asyncio.TimeoutError:
+        _logger.warning("Semantic pipeline timed out after %ss for kb=%s", _pipeline_timeout, kb_id)
+        if not steps_status:
+            steps_status = {
+                "term_extraction": {"status": "failed", "count": 0, "reason": "pipeline_timeout"},
+                "metric_caliber": {"status": "failed", "count": 0, "reason": "pipeline_timeout"},
+                "data_lineage": {"status": "failed", "count": 0, "reason": "pipeline_timeout"},
+            }
+        for key in ("term_extraction", "metric_caliber", "data_lineage"):
+            if key not in steps_status:
+                steps_status[key] = {"status": "failed", "count": 0, "reason": "pipeline_timeout"}
+        run.steps = steps_status
+        _finish_pipeline_run(db, run, success=False)
+        return {"status": "timeout", "steps": steps_status, "run_id": run.id}
+    except Exception:
+        _logger.warning("Semantic pipeline failed for kb=%s", kb_id, exc_info=True)
+        for key in ("term_extraction", "metric_caliber", "data_lineage"):
+            if key not in steps_status:
+                steps_status[key] = {"status": "failed", "count": 0, "reason": "unexpected_error"}
+        run.steps = steps_status
+        _finish_pipeline_run(db, run, success=False)
+        return {"status": "failed", "steps": steps_status, "run_id": run.id}
+
+    success = not any(
+        s.get("status") == "failed" for s in steps_status.values() if isinstance(s, dict)
+    )
     _finish_pipeline_run(db, run, success)
 
     return {
@@ -466,3 +508,59 @@ async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None
         "steps": steps_status,
         "run_id": run.id,
     }
+
+
+def trigger_semantic_pipeline_background(kb_id: int, source_type: str = "auto", skip_if_running: bool = True) -> None:
+    """在后台线程中触发语义提取流水线（术语、指标、血缘）。
+
+    可从任意上下文（文件导入、API 导入、Git 同步）调用，不阻塞调用方。
+    内置去重：若该知识库已有 running 状态的 PipelineRun 则跳过（除非 skip_if_running=False）。
+    """
+    def _run():
+        from database import SessionLocal
+        db2 = SessionLocal()
+        try:
+            asyncio.run(run_semantic_pipeline(db2, kb_id, source_type=source_type, skip_if_running=skip_if_running))
+        except Exception:
+            _logger.warning("Background semantic pipeline failed for kb=%s", kb_id, exc_info=True)
+        finally:
+            db2.close()
+
+    t = threading.Thread(target=_run, daemon=True, name=f"semantic-pipeline-kb-{kb_id}")
+    t.start()
+    _logger.info("Started background semantic pipeline for kb=%s (source=%s)", kb_id, source_type)
+
+
+def cleanup_orphaned_pipeline_runs() -> int:
+    """服务启动时清理所有因进程重启而遗留的 running 状态 PipelineRun。"""
+    try:
+        from database import SessionLocal
+        db = SessionLocal()
+        try:
+            runs = db.execute(
+                select(PipelineRun).where(PipelineRun.status == "running")
+            ).scalars().all()
+            count = 0
+            for run in runs:
+                run.status = "failed"
+                run.steps = {
+                    k: (v if isinstance(v, dict) else {"status": "failed", "reason": "server_restart"})
+                    for k, v in (run.steps or {}).items()
+                }
+                run.completed_at = datetime.now(timezone.utc)
+                count += 1
+                _logger.warning("Cleaned up orphaned PipelineRun id=%s kb=%s", run.id, run.knowledge_base_id)
+            if count:
+                db.commit()
+            return count
+        finally:
+            db.close()
+    except Exception:
+        _logger.warning("Failed to clean up orphaned pipeline runs", exc_info=True)
+        return 0
+
+
+# 模块加载时自动清理因服务重启遗留的 running 流水线
+_orphaned_cleaned = cleanup_orphaned_pipeline_runs()
+if _orphaned_cleaned:
+    _logger.info("Cleaned up %s orphaned pipeline runs on startup", _orphaned_cleaned)

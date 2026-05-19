@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, apiForm, ApiError, formatApiError } from "../../lib/api";
 import GitSourceForm, { defaultGitFormData, type GitSourceFormData } from "./GitSourceForm";
 import type { ApiSource } from "./types";
@@ -10,7 +10,6 @@ type ImportStep = "pick" | "file" | "api" | "git";
 interface ImportPickerModalProps {
   open: boolean;
   kbId: number;
-  kbDocCategories: string[];
   apiSources: ApiSource[];
   onClose: () => void;
   onSuccess: () => void;
@@ -20,7 +19,6 @@ interface ImportPickerModalProps {
 export default function ImportPickerModal({
   open,
   kbId,
-  kbDocCategories,
   apiSources,
   onClose,
   onSuccess,
@@ -29,12 +27,6 @@ export default function ImportPickerModal({
   const [step, setStep] = useState<ImportStep>("pick");
   const [fileKey, setFileKey] = useState(0);
   const [saving, setSaving] = useState(false);
-
-  // 分类
-  const [category, setCategory] = useState("");
-  const [categoryInput, setCategoryInput] = useState("");
-  const [showCategory, setShowCategory] = useState(false);
-  const catRef = useRef<HTMLInputElement>(null);
 
   // Git 表单
   const [gitData, setGitData] = useState<GitSourceFormData>(defaultGitFormData());
@@ -55,8 +47,6 @@ export default function ImportPickerModal({
   useEffect(() => {
     if (open) {
       setStep("pick");
-      setCategory("");
-      setCategoryInput("");
       setGitData(defaultGitFormData());
     }
   }, [open]);
@@ -65,7 +55,6 @@ export default function ImportPickerModal({
   async function handleFiles(files: FileList | File[]) {
     const arr = Array.from(files);
     if (!arr.length) return;
-    const cat = category.trim();
     const importBatch = crypto.randomUUID();
     let successCount = 0;
     for (const file of arr) {
@@ -73,7 +62,6 @@ export default function ImportPickerModal({
         const fd = new FormData();
         fd.append("file", file);
         fd.append("import_batch", importBatch);
-        if (cat) fd.append("category", cat);
         await apiForm(`/api/knowledge-bases/${kbId}/entries/import-file`, fd);
         successCount++;
       } catch (err: unknown) {
@@ -119,7 +107,6 @@ export default function ImportPickerModal({
           max_files: gitData.maxFiles,
           cron_expression: gitData.cron.trim() || null,
           enabled: gitData.enabled,
-          category: gitData.category.trim() || null,
         }),
       });
       notifyUser("代码源已添加，可点击「立即同步」拉取文件");
@@ -145,7 +132,7 @@ export default function ImportPickerModal({
         `/api/knowledge-bases/${kbId}/api-sources/${sourceId}/import`,
         {
           method: "POST",
-          body: JSON.stringify({ object_id: objectId.trim(), category: category.trim() }),
+          body: JSON.stringify({ object_id: objectId.trim() }),
         }
       );
       notifyUser(`已导入 ${res.entries_created ?? 0} 个条目`, "success", { persist: true });
@@ -254,18 +241,6 @@ export default function ImportPickerModal({
         {step === "file" && (
           <div className="space-y-4">
             <p className="app-text-muted text-sm">支持 .md .txt .html .docx .pdf .xlsx .csv，单文件最大 12MB。</p>
-            <CategoryCombo
-              categories={kbDocCategories}
-              value={categoryInput}
-              onChange={(v) => {
-                setCategoryInput(v);
-                setCategory(v);
-                setShowCategory(true);
-              }}
-              show={showCategory}
-              setShow={setShowCategory}
-              inputRef={catRef}
-            />
             <label className="flex flex-col items-center justify-center gap-3 rounded-xl border-2 border-dashed border-app-border bg-app-hover p-8 cursor-pointer hover:border-indigo-400 transition-colors">
               <svg className="h-10 w-10 text-app-muted" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="16 16 12 12 8 16" />
@@ -324,18 +299,6 @@ export default function ImportPickerModal({
                     {apiImportingId === s.id ? "导入中…" : "导入"}
                   </button>
                 </div>
-                <CategoryCombo
-                  categories={kbDocCategories}
-                  value={categoryInput}
-                  onChange={(v) => {
-                    setCategoryInput(v);
-                    setCategory(v);
-                    setShowCategory(true);
-                  }}
-                  show={showCategory}
-                  setShow={setShowCategory}
-                  inputRef={catRef}
-                />
               </div>
             ))}
           </div>
@@ -344,18 +307,6 @@ export default function ImportPickerModal({
         {/* Step 2c: Git */}
         {step === "git" && (
           <div className="space-y-4">
-            <CategoryCombo
-              categories={kbDocCategories}
-              value={categoryInput}
-              onChange={(v) => {
-                setCategoryInput(v);
-                setCategory(v);
-                setShowCategory(true);
-              }}
-              show={showCategory}
-              setShow={setShowCategory}
-              inputRef={catRef}
-            />
             <GitSourceForm data={gitData} onChange={(patch) => setGitData((prev) => ({ ...prev, ...patch }))} disabled={saving} />
             <label className="flex cursor-pointer items-center gap-2 text-sm text-app-secondary">
               <input
@@ -382,74 +333,6 @@ export default function ImportPickerModal({
           </div>
         )}
       </div>
-    </div>
-  );
-}
-
-/** 分类 combobox 组件 */
-function CategoryCombo({
-  categories,
-  value,
-  onChange,
-  show,
-  setShow,
-  inputRef,
-}: {
-  categories: string[];
-  value: string;
-  onChange: (v: string) => void;
-  show: boolean;
-  setShow: (v: boolean) => void;
-  inputRef: React.RefObject<HTMLInputElement>;
-}) {
-  return (
-    <div className="relative">
-      <label className="app-form-label">
-        <span>分类（选填）</span>
-        <input
-          ref={inputRef}
-          className="app-input"
-          placeholder="选择已有分类或输入新分类名"
-          value={value}
-          onChange={(e) => {
-            onChange(e.target.value);
-            setShow(true);
-          }}
-          onFocus={() => setShow(true)}
-          onBlur={() => setTimeout(() => setShow(false), 150)}
-        />
-      </label>
-      {show && (
-        <div className="absolute left-0 right-0 z-20 mt-1 rounded-xl border border-app-border bg-white shadow-lg overflow-hidden">
-          {categories
-            .filter((c) => c.toLowerCase().includes(value.toLowerCase()) && c !== value)
-            .map((c) => (
-              <button
-                key={c}
-                type="button"
-                className="w-full px-3 py-2 text-left text-sm hover:bg-app-hover text-app-primary"
-                onMouseDown={() => {
-                  onChange(c);
-                  setShow(false);
-                }}
-              >
-                {c}
-              </button>
-            ))}
-          {value.trim() && !categories.includes(value.trim()) && (
-            <button
-              type="button"
-              className="w-full px-3 py-2 text-left text-sm hover:bg-app-hover text-indigo-600"
-              onMouseDown={() => {
-                onChange(value.trim());
-                setShow(false);
-              }}
-            >
-              新建分类 &ldquo;{value.trim()}&rdquo;
-            </button>
-          )}
-        </div>
-      )}
     </div>
   );
 }

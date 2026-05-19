@@ -98,13 +98,17 @@ export default function PipelineStep({ step }: PipelineStepProps) {
       <p className="text-xs text-app-muted leading-relaxed">{description}</p>
 
       {/* 计数 */}
-      {totalCount != null && totalCount > 0 && (
+      {totalCount != null && (
         <p className="text-xs text-app-secondary">
-          {status === "done"
-            ? `已完成 ${doneCount ?? totalCount} 条`
-            : status === "progress"
-            ? `进行中 ${doneCount ?? 0}/${totalCount}`
-            : `${totalCount} 条待处理`}
+          {totalCount > 0
+            ? status === "done"
+              ? `已完成 ${doneCount ?? totalCount} 条`
+              : status === "progress"
+              ? `进行中 ${doneCount ?? 0}/${totalCount}`
+              : `${totalCount} 条待处理`
+            : status === "done"
+            ? "无结果"
+            : null}
         </p>
       )}
 

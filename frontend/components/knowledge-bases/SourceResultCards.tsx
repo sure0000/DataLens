@@ -4,9 +4,10 @@ import type { OutputCardData } from "./types";
 
 interface SourceResultCardsProps {
   cards: OutputCardData[];
+  onViewAll?: (cardId: string) => void;
 }
 
-export default function SourceResultCards({ cards }: SourceResultCardsProps) {
+export default function SourceResultCards({ cards, onViewAll }: SourceResultCardsProps) {
   if (cards.length === 0) {
     return (
       <section className="mt-4 app-card p-4">
@@ -81,7 +82,7 @@ export default function SourceResultCards({ cards }: SourceResultCardsProps) {
               )}
 
               {card.totalCount > 3 && (
-                <button className="app-link text-xs self-start" type="button">
+                <button className="app-link text-xs self-start" type="button" onClick={() => onViewAll?.(card.id)}>
                   查看全部 →
                 </button>
               )}

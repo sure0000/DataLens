@@ -12,7 +12,7 @@ export default function CleanPipeline({ steps }: CleanPipelineProps) {
       <section className="mt-6 app-card p-4">
         <div className="flex items-center gap-2 mb-3">
           <span className="text-lg">🔄</span>
-          <h2 className="app-section-title">清洗流水线</h2>
+          <h2 className="app-section-title">Pipeline</h2>
         </div>
         <p className="text-sm text-app-muted">暂无清洗数据。导入文档或代码源后，流水线将自动开始处理。</p>
       </section>
@@ -25,7 +25,7 @@ export default function CleanPipeline({ steps }: CleanPipelineProps) {
         <div className="flex items-center gap-2">
           <span className="text-lg">🔄</span>
           <h2 className="app-section-title">
-            清洗流水线
+            Pipeline
             <span className="ml-2 text-xs font-normal text-app-muted">
               本知识库支持 {steps.length} 个清洗环节
             </span>

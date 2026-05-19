@@ -73,9 +73,9 @@ def create_document(
 def run_pipeline(db: Session, doc: Document, raw_text: str) -> None:
     """同步执行完整流水线。在后台线程中调用。"""
     timings: dict[str, int] = {}
-    cfg = _get_pipeline_config(db, doc.knowledge_base_id)
 
     try:
+        cfg = _get_pipeline_config(db, doc.knowledge_base_id)
         # Stage 1: store raw text
         t0 = time.monotonic()
         _set_document_status(db, doc, "cleaning")

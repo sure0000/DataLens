@@ -43,6 +43,7 @@ def init_db() -> None:
         conn.execute(text("ALTER TABLE IF EXISTS knowledge_entries ADD COLUMN IF NOT EXISTS summary TEXT NOT NULL DEFAULT '';"))
         conn.execute(text("ALTER TABLE IF EXISTS knowledge_entries ADD COLUMN IF NOT EXISTS source_url TEXT;"))
         conn.execute(text("ALTER TABLE IF EXISTS knowledge_entries ADD COLUMN IF NOT EXISTS semantic_role TEXT;"))
+        conn.execute(text("ALTER TABLE IF EXISTS knowledge_entries ADD COLUMN IF NOT EXISTS tags JSON;"))
         conn.execute(text("ALTER TABLE IF EXISTS knowledge_bases ADD COLUMN IF NOT EXISTS category TEXT;"))
         conn.execute(
             text(
@@ -140,6 +141,7 @@ def init_db() -> None:
                 "ALTER TABLE knowledge_api_sources ALTER COLUMN object_id DROP NOT NULL;"
             )
         )
+        conn.execute(text("ALTER TABLE knowledge_api_sources ADD COLUMN IF NOT EXISTS tags JSON;"))
         # 语义知识库新表
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS pipeline_configs (
@@ -206,6 +208,13 @@ def init_db() -> None:
                     ALTER TABLE document_chunks
                         ADD COLUMN tsv tsvector
                         GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED;
+                ELSIF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='document_chunks' AND column_name='tsv'
+                ) THEN
+                    ALTER TABLE document_chunks
+                        ADD COLUMN tsv tsvector
+                        GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED;
                 END IF;
             END $$;
         """))
@@ -217,6 +226,9 @@ def init_db() -> None:
         ))
         conn.execute(text(
             "ALTER TABLE knowledge_git_sources ADD COLUMN IF NOT EXISTS category TEXT;"
+        ))
+        conn.execute(text(
+            "ALTER TABLE knowledge_git_sources ADD COLUMN IF NOT EXISTS tags JSON;"
         ))
         # ── 语义层模型（术语、指标、血缘、流水线运行记录） ──
         conn.execute(text("""

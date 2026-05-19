@@ -1,6 +1,9 @@
 """知识库官方 API 导入源：配置与导入分离。"""
 
+import logging
+import threading
 from datetime import datetime
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException
@@ -9,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import KnowledgeApiSource, KnowledgeBase
+from models import Document, KnowledgeApiSource, KnowledgeBase
 from services.entry_service import create_entry as create_entry_svc
 from services.import_log_service import complete_import, start_import
 from services.knowledge_ingest import (
@@ -18,6 +21,8 @@ from services.knowledge_ingest import (
     fetch_official_notion_database,
     fetch_official_notion_page,
 )
+
+_logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/knowledge-bases/{kb_id}/api-sources", tags=["knowledge-api-sources"])
 
@@ -44,6 +49,7 @@ class ApiSourceUpdate(BaseModel):
     object_id: str | None = Field(default=None, max_length=2000)
     extra: dict[str, str] | None = None
     enabled: bool | None = None
+    tags: list[str] | None = None
 
 
 def _source_row(s: KnowledgeApiSource) -> dict:
@@ -56,6 +62,7 @@ def _source_row(s: KnowledgeApiSource) -> dict:
         "extra": s.extra if isinstance(s.extra, dict) else {},
         "has_key": bool((s.api_key or "").strip()),
         "enabled": s.enabled,
+        "tags": s.tags if isinstance(s.tags, list) else [],
         "last_sync_at": s.last_sync_at.isoformat() if s.last_sync_at else None,
         "last_sync_status": s.last_sync_status,
         "last_error": s.last_error,
@@ -120,6 +127,8 @@ def update_api_source(kb_id: int, source_id: int, body: ApiSourceUpdate, db: Ses
         src.extra = body.extra
     if body.enabled is not None:
         src.enabled = body.enabled
+    if body.tags is not None:
+        src.tags = body.tags if isinstance(body.tags, list) else None
     src.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(src)
@@ -138,7 +147,7 @@ def delete_api_source(kb_id: int, source_id: int, db: Session = Depends(get_db))
 
 class ImportRequest(BaseModel):
     object_id: str = Field(default="", max_length=2000)
-    category: str = Field(default="", max_length=200)
+    tags: list[str] = Field(default_factory=list)
 
 
 @router.post("/{source_id}/import")
@@ -155,6 +164,40 @@ def import_from_api_source(kb_id: int, source_id: int, body: ImportRequest = Imp
         raise HTTPException(status_code=400, detail="请提供要导入的对象 ID（页面、文档或数据库）")
 
     log = start_import(db, kb_id, src.integration + "_api", source_id=src.id, source_name=src.name)
+
+    # Track created entries for Document creation
+    _created: list[dict] = []
+
+    def _add_entry(kb_id: int, title: str, text: str, **kw: Any) -> None:
+        entry = create_entry_svc(db, kb_id, title, text, **kw)
+        _created.append({"entry_id": entry.id, "title": title, "text": text})
+
+    def _spawn_pipelines() -> None:
+        """在后台线程中依次处理所有文档，完成后触发语义提取。"""
+        items = [*_created]
+        def _bg():
+            from database import SessionLocal
+            from services.knowledge_pipeline_service import create_document, run_pipeline
+            bg_db = SessionLocal()
+            try:
+                for item in items:
+                    doc = create_document(
+                        bg_db, kb_id, item["title"],
+                        source_type="api",
+                        source_meta={"kind": integration + "_api", "ref": object_id, "label": "API 导入"},
+                        knowledge_entry_id=item["entry_id"],
+                    )
+                    bg_db.commit()
+                    bg_doc = bg_db.get(Document, doc.id)
+                    if bg_doc:
+                        run_pipeline(bg_db, bg_doc, item["text"])
+                from services.semantic_extraction import trigger_semantic_pipeline_background
+                trigger_semantic_pipeline_background(kb_id, source_type="auto")
+            except Exception:
+                _logger.exception("Background API-import pipeline failed for kb=%d", kb_id)
+            finally:
+                bg_db.close()
+        threading.Thread(target=_bg, daemon=True).start()
 
     try:
         entries_created = 0
@@ -173,18 +216,19 @@ def import_from_api_source(kb_id: int, source_id: int, body: ImportRequest = Imp
                     if not pages:
                         raise ValueError("该对象既不是可访问的 Page，也不是可查询的 Database")
                     for idx, (t, txt) in enumerate(pages):
-                        create_entry_svc(
-                            db, kb_id, t or f"Notion Database 页面 {idx + 1}", txt,
-                            source_meta={"kind": "notion_api", "ref": object_id, "label": "Notion 官方 API（Database）", "category": body.category.strip()},
+                        _add_entry(
+                            kb_id, t or f"Notion Database 页面 {idx + 1}", txt,
+                            source_meta={"kind": "notion_api", "ref": object_id, "label": "Notion 官方 API（Database）", "tags": body.tags},
                         )
                         entries_created += 1
                     db.commit()
                     complete_import(db, log, entries_created=entries_created)
+                    _spawn_pipelines()
                     return {"ok": True, "entries_created": entries_created, "mode": "database"}
                 raise
-            create_entry_svc(
-                db, kb_id, title_hint or object_id[:80], text,
-                source_meta={"kind": "notion_api", "ref": object_id, "label": "Notion 官方 API", "category": body.category.strip()},
+            _add_entry(
+                kb_id, title_hint or object_id[:80], text,
+                source_meta={"kind": "notion_api", "ref": object_id, "label": "Notion 官方 API", "tags": body.tags},
             )
             entries_created = 1
 
@@ -197,9 +241,9 @@ def import_from_api_source(kb_id: int, source_id: int, body: ImportRequest = Imp
                 raise ValueError("请填写 Confluence API Token")
             title_hint, text = fetch_official_confluence_page(domain, email, api_key, object_id)
             src_url = f"https://{domain}/wiki/pages/viewpage.action?pageId={object_id.strip()}"
-            create_entry_svc(
-                db, kb_id, title_hint, text,
-                source_meta={"kind": "confluence_api", "ref": object_id, "label": "Confluence 官方 API", "category": body.category.strip()},
+            _add_entry(
+                kb_id, title_hint, text,
+                source_meta={"kind": "confluence_api", "ref": object_id, "label": "Confluence 官方 API", "tags": body.tags},
                 source_url=src_url,
             )
             entries_created = 1
@@ -211,9 +255,9 @@ def import_from_api_source(kb_id: int, source_id: int, body: ImportRequest = Imp
             if not api_key:
                 raise ValueError("请填写飞书应用 app_secret")
             title_hint, text = fetch_official_feishu_doc(app_id, api_key, object_id)
-            create_entry_svc(
-                db, kb_id, title_hint, text,
-                source_meta={"kind": "feishu_api", "ref": object_id[:500], "label": "飞书官方 API", "category": body.category.strip()},
+            _add_entry(
+                kb_id, title_hint, text,
+                source_meta={"kind": "feishu_api", "ref": object_id[:500], "label": "飞书官方 API", "tags": body.tags},
             )
             entries_created = 1
 
@@ -229,6 +273,10 @@ def import_from_api_source(kb_id: int, source_id: int, body: ImportRequest = Imp
 
         complete_import(db, log, entries_created=entries_created)
         db.commit()
+
+        # 后台触发文档处理流水线 + 语义提取
+        _spawn_pipelines()
+
         return {"ok": True, "entries_created": entries_created}
 
     except httpx.HTTPStatusError as exc:
