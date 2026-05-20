@@ -89,7 +89,7 @@ export default function LineageGraph({ data }: LineageGraphProps) {
           <span className="text-xs text-app-muted">
             共 {totalEdges} 条边
           </span>
-          <span className="text-xs text-emerald-600">
+          <span className="text-xs app-text-success">
             ✓ 已完成 {data.stats.done} 条
           </span>
           {data.stats.processing > 0 && (

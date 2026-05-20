@@ -1,5 +1,7 @@
 "use client";
 
+import { structuredBadge } from "../lib/themeClasses";
+
 type AnswerSection = {
   title: string;
   lines: string[];
@@ -37,11 +39,11 @@ type Props = {
 
 const SECTION_ACCENT: Record<string, { badge: string; text: string }> = {
   结论: { badge: "bg-app-primary text-white", text: "text-app-primary" },
-  说明: { badge: "bg-[#e0f2fe] text-[#0369a1]", text: "text-app-ink" },
-  下一步: { badge: "bg-[#dcfce7] text-[#15803d]", text: "text-app-ink" },
-  边界: { badge: "bg-[#fef9c3] text-[#854d0e]", text: "text-app-ink" },
-  可替代问题: { badge: "bg-[#f3e8ff] text-[#7e22ce]", text: "text-app-ink" },
-  判断依据: { badge: "bg-[#ede9fe] text-[#5b21b6]", text: "text-app-ink" },
+  说明: { badge: structuredBadge.info, text: "text-app-ink" },
+  下一步: { badge: structuredBadge.next, text: "text-app-ink" },
+  边界: { badge: structuredBadge.boundary, text: "text-app-ink" },
+  可替代问题: { badge: structuredBadge.alt, text: "text-app-ink" },
+  判断依据: { badge: structuredBadge.basis, text: "text-app-ink" },
 };
 
 function SectionBlock({ section, isConclusion = false }: { section: AnswerSection; isConclusion?: boolean }) {
@@ -91,14 +93,14 @@ export default function AssistantStructuredAnswer({ answer, explanation, showExp
       )}
 
       {shouldShowExplanation && (
-        <div className="space-y-2.5 rounded-xl border border-[#ddd6fe] bg-[#f5f3ff] p-3">
+        <div className="app-structured-panel space-y-2.5">
           {explanationSections.length ? (
             explanationSections.map((section, idx) => (
               <SectionBlock key={`exp-${section.title}-${idx}`} section={section} />
             ))
           ) : (
             <>
-              <span className="inline-block rounded-md bg-[#ede9fe] px-2 py-0.5 text-xs font-semibold text-[#5b21b6]">
+              <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-semibold ${structuredBadge.basis}`}>
                 判断依据
               </span>
               <p className="whitespace-pre-wrap break-words text-sm leading-7 text-app-ink">{explanationText}</p>

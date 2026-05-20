@@ -44,7 +44,7 @@ export default function GitSourceCard({
         {s.cron_expression && <span>定时：{s.cron_expression}</span>}
       </div>
       {s.last_error && (
-        <p className="text-xs text-rose-600 leading-relaxed">{s.last_error}</p>
+        <p className="text-xs app-text-danger leading-relaxed">{s.last_error}</p>
       )}
       {s.last_sync_at && (
         <p className="text-xs text-app-muted">

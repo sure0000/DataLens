@@ -4,6 +4,8 @@ import { Inter } from "next/font/google";
 import AppShell from "../components/AppShell";
 import ErrorBoundary from "../components/ErrorBoundary";
 import ProgressBar from "../components/ProgressBar";
+import ThemeProvider from "../components/ThemeProvider";
+import { THEME_BOOTSTRAP_SCRIPT } from "../lib/theme";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -13,14 +15,19 @@ const inter = Inter({
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="zh-CN" className={inter.variable}>
+    <html lang="zh-CN" className={inter.variable} data-theme="dark" suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
+      </head>
       <body className="min-h-screen">
         <a href="#main-content" className="app-skip-to-content">
           跳到主内容
         </a>
         <ProgressBar />
         <ErrorBoundary>
-          <AppShell>{children}</AppShell>
+          <ThemeProvider>
+            <AppShell>{children}</AppShell>
+          </ThemeProvider>
         </ErrorBoundary>
       </body>
     </html>

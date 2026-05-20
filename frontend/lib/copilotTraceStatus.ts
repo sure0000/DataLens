@@ -17,22 +17,21 @@ const LABEL: Record<TraceCheckpointStatus, string> = {
 
 /** 左侧色条（高饱和，便于扫读） */
 const STRIP: Record<TraceCheckpointStatus, string> = {
-  verified: "bg-emerald-500 shadow-[0_0_0_1px_rgba(16,185,129,0.35)] dark:bg-emerald-400",
-  context_missing: "bg-rose-500 shadow-[0_0_0_1px_rgba(244,63,94,0.35)] dark:bg-rose-400",
-  inferred_ok: "bg-indigo-500 shadow-[0_0_0_1px_rgba(99,102,241,0.35)] dark:bg-indigo-400",
-  inferred_review: "bg-amber-500 shadow-[0_0_0_1px_rgba(245,158,11,0.4)] dark:bg-amber-400",
-  skipped: "bg-neutral-400 shadow-[0_0_0_1px_rgba(163,163,163,0.45)] dark:bg-neutral-500",
-  issue: "bg-red-600 shadow-[0_0_0_1px_rgba(220,38,38,0.35)] dark:bg-red-500"
+  verified: "app-trace-strip-verified",
+  context_missing: "app-trace-strip-context_missing",
+  inferred_ok: "app-trace-strip-inferred_ok",
+  inferred_review: "app-trace-strip-inferred_review",
+  skipped: "app-trace-strip-skipped",
+  issue: "app-trace-strip-issue",
 };
 
-/** Lucide 图标描边/填充色，与色条同系 */
 const ICON: Record<TraceCheckpointStatus, string> = {
-  verified: "text-emerald-600 dark:text-emerald-400",
-  context_missing: "text-rose-600 dark:text-rose-400",
-  inferred_ok: "text-indigo-600 dark:text-indigo-400",
-  inferred_review: "text-amber-600 dark:text-amber-400",
-  skipped: "text-neutral-500 dark:text-neutral-400",
-  issue: "text-red-600 dark:text-red-400"
+  verified: "app-text-success",
+  context_missing: "app-text-danger",
+  inferred_ok: "app-text-accent",
+  inferred_review: "app-text-warning",
+  skipped: "text-app-muted",
+  issue: "app-text-danger",
 };
 
 export function traceCheckpointStatusLabel(s: TraceCheckpointStatus): string {

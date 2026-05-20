@@ -66,7 +66,7 @@ export default function MetricList({ metrics, loading }: MetricListProps) {
                     {m.related_terms.map((t) => (
                       <span
                         key={t}
-                        className="text-[10px] bg-indigo-50 text-indigo-600 px-1 py-0.5 rounded"
+                        className="app-metric-tag text-[10px] px-1 py-0.5 rounded"
                       >
                         {t}
                       </span>
@@ -80,10 +80,10 @@ export default function MetricList({ metrics, loading }: MetricListProps) {
                 <span
                   className={`text-xs font-medium ${
                     m.confidence >= 80
-                      ? "text-emerald-600"
+                      ? "app-text-success"
                       : m.confidence >= 50
                       ? "text-amber-600"
-                      : "text-rose-500"
+                      : "app-text-danger"
                   }`}
                 >
                   {Math.round(m.confidence)}%

@@ -6,6 +6,7 @@ import { filterCopilotTraceSteps, type ChatMessage } from "../../lib/chatSession
 import CopilotExecutionTrace from "../CopilotExecutionTrace";
 import SqlBlock from "../SqlBlock";
 import CsvExportButton from "../CsvExportButton";
+import { alertWarning, chatPanel, textDanger, userBubble } from "../../lib/themeClasses";
 import ChatGptStyleBody from "./ChatGptStyleBody";
 
 type QueryResult = {
@@ -92,7 +93,7 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
               >
                 编辑
               </button>
-              <div className="max-w-[min(100%,36rem)] shrink break-words rounded-[1.25rem] bg-[#f4f4f4] px-4 py-2.5 text-left text-[15px] leading-7 text-app-primary dark:bg-neutral-800 dark:text-neutral-100">
+              <div className={`max-w-[min(100%,36rem)] shrink break-words rounded-[1.25rem] px-4 py-2.5 text-left text-[15px] leading-7 ${userBubble}`}>
                 {m.question}
               </div>
             </div>
@@ -117,9 +118,9 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
         return (
           <div key={m.id} className="min-w-0 max-w-full">
             <div className="flex min-w-0 max-w-full justify-start">
-              <div className="min-w-0 max-w-[min(100%,42rem)] rounded-[1.35rem] border border-neutral-200/80 bg-[var(--app-card-bg)] px-4 py-3 shadow-sm dark:border-neutral-700 dark:bg-neutral-900">
+              <div className={`min-w-0 max-w-[min(100%,42rem)] rounded-[1.35rem] px-4 py-3 ${chatPanel}`}>
                 {((m.explanation || "").includes("护栏") || (m.answer || "").includes("不能提供")) && (
-                  <div className="mb-2 rounded-lg border border-amber-700/60 bg-amber-950/60 px-3 py-2 text-xs text-amber-300">
+                  <div className={`mb-2 rounded-lg px-3 py-2 text-xs ${alertWarning}`}>
                     该回答触发了 QA 安全边界，仅提供合规范围内的替代建议。
                   </div>
                 )}
@@ -152,7 +153,7 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
                     <details className="rounded-lg bg-app-chip px-3 py-2" open>
                       <summary className="cursor-pointer text-xs text-app-secondary">执行结果</summary>
                       {!queryResult.ok && (
-                        <p className="mt-2 text-sm text-rose-500">{queryResult.error || "查询执行失败"}</p>
+                        <p className={`mt-2 text-sm ${textDanger}`}>{queryResult.error || "查询执行失败"}</p>
                       )}
                       {!!queryResult.ok && (
                         <>

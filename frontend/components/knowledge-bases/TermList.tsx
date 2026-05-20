@@ -84,10 +84,10 @@ export default function TermList({ terms, loading }: TermListProps) {
                 <span
                   className={`text-xs font-medium ${
                     t.confidence >= 80
-                      ? "text-emerald-600"
+                      ? "app-text-success"
                       : t.confidence >= 50
                       ? "text-amber-600"
-                      : "text-rose-500"
+                      : "app-text-danger"
                   }`}
                 >
                   {Math.round(t.confidence)}%

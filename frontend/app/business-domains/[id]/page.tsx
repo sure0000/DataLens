@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, formatApiError } from "../../../lib/api";
+import { alertError, chipSuccess } from "../../../lib/themeClasses";
 import { useEscapeKey } from "../../../hooks/useEscapeKey";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 import EmptyState from "../../../components/EmptyState";
@@ -417,7 +418,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
       return (
         <main className="app-page space-y-4">
           <PageHeader breadcrumbs={[{ label: "业务域", href: "/" }]} title="加载失败" />
-          <div className="app-card border-rose-800/40 bg-rose-950/60 p-4 text-sm text-rose-300">
+          <div className={`app-card p-4 text-sm ${alertError}`}>
             <p className="font-medium">无法加载该业务域</p>
             <p className="mt-2 break-words">{loadError}</p>
             <button type="button" className="app-button-secondary mt-4" onClick={() => void loadDetail()}>
@@ -708,7 +709,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
                 <span>{batchStats.visibleDatabases} 个数据库</span>
                 <span>•</span>
                 <span>{batchStats.visibleTables} 张数据表</span>
-                <span className="ml-2 rounded-full border border-emerald-300/50 bg-emerald-50 px-2 py-1 text-emerald-700">
+                <span className={`ml-2 rounded-full px-2 py-1 ${chipSuccess}`}>
                   已选择：整库 {batchStats.selectedDatabaseCount} / 单表 {batchStats.selectedTableCount}
                 </span>
               </div>
@@ -744,7 +745,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
                               </span>
                             )}
                             {selectedDatabases[dbKey] && (
-                              <span className="rounded-full border border-emerald-300/50 bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">
+                              <span className={`rounded-full px-2 py-0.5 text-[11px] ${chipSuccess}`}>
                                 整库已选
                               </span>
                             )}

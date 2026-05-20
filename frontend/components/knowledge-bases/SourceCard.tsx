@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import type { ApiSource, DocRow, Entry, GitSource } from "./types";
+import { chipSuccess } from "../../lib/themeClasses";
 import { docStatusChip, gitSyncStatusChip } from "./utils";
 
 export type SourceItem =
@@ -58,7 +59,7 @@ function TagRow({
       {tags.map((tag) => (
         <span
           key={tag}
-          className="inline-flex items-center gap-0.5 rounded-full border border-violet-200 bg-violet-50 px-1.5 py-0 text-[10px] font-medium text-violet-700 leading-5"
+          className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0 text-[10px] font-medium leading-5 app-tag-violet"
         >
           {tag}
           <button
@@ -145,7 +146,7 @@ export default function SourceCard({
           </div>
           <p className="mt-1.5 text-[11px] text-app-muted truncate leading-snug">{metaParts.join(" · ")}</p>
           {s.last_error && (
-            <p className="mt-1 text-[11px] text-rose-600 line-clamp-2 leading-snug break-words">{s.last_error}</p>
+            <p className="mt-1 text-[11px] app-text-danger line-clamp-2 leading-snug break-words">{s.last_error}</p>
           )}
         </Link>
         {tags.length > 0 && sharedTagRow}
@@ -173,7 +174,7 @@ export default function SourceCard({
       s.integration === "feishu" ? "飞书" : s.integration;
     const integrationColor =
       s.integration === "notion" ? "text-app-secondary" :
-      s.integration === "confluence" ? "text-blue-600" :
+      s.integration === "confluence" ? "app-text-info" :
       s.integration === "feishu" ? "text-sky-600" : "text-app-muted";
 
     return (
@@ -202,7 +203,7 @@ export default function SourceCard({
             </p>
           )}
           {s.last_error && (
-            <p className="mt-1 text-[11px] text-rose-600 line-clamp-2 leading-snug break-words">{s.last_error}</p>
+            <p className="mt-1 text-[11px] app-text-danger line-clamp-2 leading-snug break-words">{s.last_error}</p>
           )}
         </Link>
         {tags.length > 0 && sharedTagRow}
@@ -213,7 +214,7 @@ export default function SourceCard({
   // API-imported entry (e.g. Notion, Confluence, 飞书)
   if (source.kind === "api_entry") {
     const { entry, doc } = source;
-    const chip = doc ? docStatusChip(doc.status) : { text: "已导入", className: "border-emerald-200 bg-emerald-50 text-emerald-800" };
+    const chip = doc ? docStatusChip(doc.status) : { text: "已导入", className: chipSuccess };
     const metaKind = entry.source_meta?.kind || "";
     const integrationLabel =
       metaKind === "notion_api" ? "Notion" :
@@ -221,7 +222,7 @@ export default function SourceCard({
       metaKind === "feishu_api" ? "飞书" : metaKind.replace("_api", "");
     const integrationColor =
       metaKind === "notion_api" ? "text-app-secondary" :
-      metaKind === "confluence_api" ? "text-blue-600" :
+      metaKind === "confluence_api" ? "app-text-info" :
       metaKind === "feishu_api" ? "text-sky-600" : "text-app-muted";
 
     const metaParts: string[] = [];
@@ -267,7 +268,7 @@ export default function SourceCard({
 
   // File upload
   const { entry, doc } = source;
-  const chip = doc ? docStatusChip(doc.status) : { text: "已导入", className: "border-emerald-200 bg-emerald-50 text-emerald-800" };
+  const chip = doc ? docStatusChip(doc.status) : { text: "已导入", className: chipSuccess };
   const rawLabel = entry.source_meta?.label;
   const label = (rawLabel && rawLabel !== "上传文件") ? rawLabel : (entry.source_meta?.ref || entry.source_meta?.kind || "文件");
 
@@ -282,7 +283,7 @@ export default function SourceCard({
         className="no-underline flex-1 min-w-0"
       >
         <div className="flex items-start gap-2">
-          <span className="shrink-0 mt-0.5 text-indigo-400">
+          <span className="shrink-0 mt-0.5 app-text-accent">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
               <polyline points="14 2 14 8 20 8" />

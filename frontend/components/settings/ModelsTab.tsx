@@ -86,7 +86,7 @@ export default function ModelsTab({ loading, connections, onAdd, onView, onDelet
                     </button>
                     <button
                       type="button"
-                      className="rounded-lg border border-[var(--app-card-border)] bg-[var(--app-card-bg)] px-3 py-1.5 text-xs font-medium text-rose-400 hover:bg-[var(--app-surface-hover)]"
+                      className="rounded-lg border border-[var(--app-card-border)] bg-[var(--app-card-bg)] px-3 py-1.5 text-xs font-medium app-text-danger hover:bg-[var(--app-surface-hover)]"
                       onClick={() => onDelete(row.id)}
                     >
                       删除

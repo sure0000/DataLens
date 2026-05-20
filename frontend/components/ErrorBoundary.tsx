@@ -20,8 +20,8 @@ export default class ErrorBoundary extends Component<Props, State> {
     if (this.state.hasError) {
       return (
         <div className="flex min-h-screen flex-col items-center justify-center gap-4 p-8 text-center">
-          <div className="flex h-14 w-14 items-center justify-center rounded-full bg-rose-950/60">
-            <svg className="h-7 w-7 text-rose-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <div className="app-error-icon-wrap">
+            <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <circle cx="12" cy="12" r="9" />
               <path d="M12 8v4M12 16h.01" />
             </svg>

@@ -1,13 +1,23 @@
 const PREFS_KEY = "datalens_user_prefs_v1";
 
+export type ThemePreference = "light" | "dark" | "system";
+
 export type UserPreferences = {
   /** Copilot 对话模型：auto 或 catalog id，如 deepseek:deepseek-chat */
   chatModel: string;
+  /** 界面主题：明亮 / 暗黑 / 跟随系统 */
+  theme: ThemePreference;
 };
 
 const defaultPreferences = (): UserPreferences => ({
-  chatModel: "auto"
+  chatModel: "auto",
+  theme: "dark",
 });
+
+function parseThemePreference(raw: unknown): ThemePreference {
+  if (raw === "light" || raw === "dark" || raw === "system") return raw;
+  return "dark";
+}
 
 export function readUserPreferences(): UserPreferences {
   if (typeof window === "undefined") return defaultPreferences();
@@ -16,7 +26,8 @@ export function readUserPreferences(): UserPreferences {
     if (!raw) return defaultPreferences();
     const parsed = JSON.parse(raw) as Partial<UserPreferences>;
     return {
-      chatModel: typeof parsed.chatModel === "string" && parsed.chatModel.trim() ? parsed.chatModel.trim() : "auto"
+      chatModel: typeof parsed.chatModel === "string" && parsed.chatModel.trim() ? parsed.chatModel.trim() : "auto",
+      theme: parseThemePreference(parsed.theme),
     };
   } catch {
     return defaultPreferences();

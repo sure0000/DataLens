@@ -19,7 +19,7 @@ function formatInline(raw: string) {
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   s = s.replace(
     /`([^`]+)`/g,
-    '<code style="background:rgba(0,0,0,.07);padding:1px 6px;border-radius:4px;font-size:.9em;font-family:ui-monospace,monospace">$1</code>'
+    '<code class="app-code-inline">$1</code>'
   );
   return s;
 }
@@ -99,7 +99,7 @@ function codeBlockToHtml(lang: string, body: string): string {
     const inner = highlightSqlKeywordsHtml(raw);
     return `<pre class="sql-block my-3 overflow-x-auto rounded-lg p-3 text-xs leading-relaxed"><code>${inner}</code></pre>`;
   }
-  return `<pre class="my-3 overflow-x-auto rounded-lg border border-neutral-200 bg-neutral-50 p-3 text-xs leading-relaxed dark:border-neutral-700 dark:bg-neutral-900/80"><code>${escapeHtml(
+  return `<pre class="app-copilot-md-pre my-3 overflow-x-auto rounded-lg p-3 text-xs leading-relaxed"><code>${escapeHtml(
     raw
   )}</code></pre>`;
 }
@@ -128,7 +128,7 @@ function ChatGptStyleBody({ text, className = "" }: Props) {
 
   return (
     <div
-      className={`copilot-md max-w-none text-[15px] text-[#1e1e1e] dark:text-neutral-100 ${className}`}
+      className={`app-copilot-md ${className}`}
       // eslint-disable-next-line react/no-danger -- 受控转义 + 代码块经 escape/highlightSql
       dangerouslySetInnerHTML={{ __html: html }}
     />

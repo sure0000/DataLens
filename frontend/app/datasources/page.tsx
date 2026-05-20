@@ -6,6 +6,7 @@ import { useEffect, useState, type CSSProperties } from "react";
 import { api, ApiError, formatApiError } from "../../lib/api";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import ConfirmDialog from "../../components/ConfirmDialog";
+import { alertError, alertInfo } from "../../lib/themeClasses";
 import EmptyState from "../../components/EmptyState";
 import ListPagination from "../../components/ListPagination";
 import LoadingSkeletonList from "../../components/LoadingSkeletonList";
@@ -389,7 +390,7 @@ export default function DataSourcesPage() {
 
       {loadError && (
         <div
-          className="app-surface-panel mt-4 flex flex-wrap items-start gap-3 rounded-xl border border-rose-800/40 bg-rose-950/60 px-4 py-3 text-sm text-rose-300"
+          className={`app-surface-panel mt-4 flex flex-wrap items-start gap-3 rounded-xl px-4 py-3 text-sm ${alertError}`}
           role="alert"
         >
           <p className="min-w-0 flex-1 break-words">{loadError}</p>
@@ -401,10 +402,8 @@ export default function DataSourcesPage() {
 
       {!!testResult && !isModalOpen && (
         <div
-          className={`app-surface-panel mt-6 flex max-w-full items-start gap-3 rounded-xl border px-4 py-3 text-sm backdrop-blur ${
-            testResult.startsWith("连接失败")
-              ? "border-rose-800/40 bg-rose-950/60 text-rose-300"
-              : "border-sky-800/40 bg-sky-950/60 text-sky-300"
+          className={`app-surface-panel mt-6 flex max-w-full items-start gap-3 rounded-xl px-4 py-3 text-sm backdrop-blur ${
+            testResult.startsWith("连接失败") ? alertError : alertInfo
           }`}
           role="status"
           aria-live="polite"
@@ -620,7 +619,7 @@ export default function DataSourcesPage() {
                     {/* 不用 type=password：Chrome 等对脚本回填的受控密码框常表现为完全空白（无圆点无明文）。改用 text + WebKit 圆点遮罩。 */}
                     <input
                       key={editingId ? `ds-pw-edit-${editingId}` : "ds-pw-create"}
-                      className="app-input w-full pr-11 text-sm text-[#111827]"
+                      className="app-input w-full pr-11 text-sm text-app-primary"
                       placeholder="输入连接密码"
                       type="text"
                       spellCheck={false}

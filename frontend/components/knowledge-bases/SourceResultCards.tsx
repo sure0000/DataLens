@@ -47,7 +47,7 @@ export default function SourceResultCards({ cards, onViewAll }: SourceResultCard
             <div key={card.id} className="app-card flex flex-col gap-3 p-4">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="text-indigo-500">{iconSvg}</span>
+                  <span className="app-text-accent">{iconSvg}</span>
                   <h3 className="text-sm font-semibold text-app-primary">{card.label}</h3>
                 </div>
                 <span className="text-xs text-app-muted">{card.totalCount} 项</span>
@@ -66,7 +66,7 @@ export default function SourceResultCards({ cards, onViewAll }: SourceResultCard
                           <span
                             className={`text-[11px] font-medium ${
                               p.confidence >= 80
-                                ? "text-emerald-600"
+                                ? "app-text-success"
                                 : p.confidence >= 50
                                 ? "text-amber-600"
                                 : "text-app-muted"

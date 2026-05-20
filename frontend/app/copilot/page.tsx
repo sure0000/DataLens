@@ -658,7 +658,7 @@ function CopilotPageContent() {
                     <textarea
                       ref={questionInputRef}
                       rows={1}
-                      className="max-h-[200px] min-h-[28px] w-0 flex-1 resize-none border-0 bg-transparent py-2 text-[15px] leading-6 text-neutral-900 outline-none placeholder:text-neutral-400 focus-visible:ring-0"
+                      className="max-h-[200px] min-h-[28px] w-0 flex-1 resize-none border-0 bg-transparent py-2 text-[15px] leading-6 text-app-primary outline-none placeholder:text-app-muted focus-visible:ring-0"
                       placeholder={`${activeProject?.name || (projectIdFromUrl === "__unassigned__" ? "未归类" : "临时问答")}中的新聊天`}
                       value={question}
                       maxLength={2000}

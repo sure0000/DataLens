@@ -10,6 +10,7 @@ import {
   type TraceCheckpointStatus
 } from "./copilotTraceStatus";
 import { renderTraceDetailWithLinks } from "./traceEntityLinks";
+import { chipNeutral, reasoningBadge } from "./themeClasses";
 import { tryParseReasoning3Line, type TrustUiCode } from "./traceReasoning3Parse";
 
 export type { TrustUiCode } from "./traceReasoning3Parse";
@@ -164,17 +165,13 @@ function RoleTag({ role }: { role: string }) {
   const base =
     "inline-flex max-w-full min-w-0 items-center rounded-full border px-2.5 py-0.5 text-[11px] font-medium leading-tight";
   const toneCls: Record<RoleTone, string> = {
-    locked:
-      "border-emerald-200/90 bg-emerald-50 text-emerald-900 dark:border-emerald-700/55 dark:bg-emerald-950/45 dark:text-emerald-100",
+    locked: reasoningBadge.verified,
     primary: "border-[var(--app-active-border)] bg-[var(--app-active-bg)] text-app-chipText",
-    join: "border-indigo-200/90 bg-indigo-50 text-indigo-900 dark:border-indigo-700/50 dark:bg-indigo-950/40 dark:text-indigo-100",
-    alert:
-      "border-rose-200/90 bg-rose-50 text-rose-900 dark:border-rose-800/50 dark:bg-rose-950/45 dark:text-rose-100",
-    context:
-      "border-amber-200/90 bg-amber-50 text-amber-950 dark:border-amber-800/45 dark:bg-amber-950/35 dark:text-amber-100",
-    missing:
-      "border-dashed border-neutral-300 bg-[var(--app-chip-bg)] text-app-muted italic dark:border-neutral-600",
-    other: "border-app-border bg-[var(--app-chip-bg)] text-app-chipText"
+    join: reasoningBadge.join,
+    alert: reasoningBadge.issue,
+    context: reasoningBadge.review,
+    missing: reasoningBadge.skipped,
+    other: `${chipNeutral} text-app-chipText`,
   };
   const isMissing = tone === "missing";
   return (
@@ -236,7 +233,7 @@ export function renderReasoning3Row(line: string, links: TraceEntityLink[]): Rea
       </span>
 
       <div className="mt-2 min-w-0">
-        <ol className="m-0 list-none divide-y divide-neutral-200/90 p-0 dark:divide-neutral-700/90">
+        <ol className="app-trace-divide m-0 list-none p-0">
           {basisMissing ? (
             <BasisCheckpointRow status="context_missing" indexLabel="—">
               <span className="italic text-app-muted">未提供说明，请结合上文或人工核对。</span>

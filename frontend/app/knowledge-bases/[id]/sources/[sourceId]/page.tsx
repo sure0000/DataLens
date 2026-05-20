@@ -21,10 +21,12 @@ import type {
   PipelineStats,
 } from "../../../../../components/knowledge-bases/types";
 
+import { linkAccent, tabActive, tabInactive } from "../../../../../lib/themeClasses";
 import {
   computeOutputCards,
   computePipelineSteps,
   docStatusChip,
+  filterLineageByGitSource,
   gitSyncStatusChip,
 } from "../../../../../components/knowledge-bases/utils";
 
@@ -288,10 +290,7 @@ export default function SourceDetailPage({
   // Lineage filtered by git_source_id
   const sourceLineage: LineageData | null =
     sourceType === "git" && lineage
-      ? {
-          ...lineage,
-          edges: lineage.edges.filter((e) => e.git_source_id === sourceId),
-        }
+      ? filterLineageByGitSource(lineage, sourceId)
       : null;
 
   // Source config
@@ -329,7 +328,6 @@ export default function SourceDetailPage({
         lineage_stats: sourceLineage
           ? sourceLineage.stats
           : { done: 0, processing: 0, pending: 0 },
-        last_pipeline_run: null, // 使用当前源的 term_count/metric_count，而非 KB 级 pipeline 运行计数
       }
     : null;
 
@@ -470,7 +468,7 @@ export default function SourceDetailPage({
               {gitSource.cron_expression && <span>定时：{gitSource.cron_expression}</span>}
               {gitSource.last_sync_at && <span>上次同步：{new Date(gitSource.last_sync_at).toLocaleString()}</span>}
               {gitSource.last_error && (
-                <span className="text-rose-600">错误：{gitSource.last_error}</span>
+                <span className="app-text-danger">错误：{gitSource.last_error}</span>
               )}
             </div>
           )}
@@ -500,8 +498,8 @@ export default function SourceDetailPage({
               type="button"
               className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === "documents"
-                  ? "border-indigo-500 text-indigo-600"
-                  : "border-transparent text-app-muted hover:text-app-primary"
+                  ? tabActive
+                  : tabInactive
               }`}
               onClick={() => setActiveTab("documents")}
             >
@@ -511,8 +509,8 @@ export default function SourceDetailPage({
               type="button"
               className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === "terms"
-                  ? "border-indigo-500 text-indigo-600"
-                  : "border-transparent text-app-muted hover:text-app-primary"
+                  ? tabActive
+                  : tabInactive
               }`}
               onClick={() => setActiveTab("terms")}
             >
@@ -522,8 +520,8 @@ export default function SourceDetailPage({
               type="button"
               className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === "metrics"
-                  ? "border-indigo-500 text-indigo-600"
-                  : "border-transparent text-app-muted hover:text-app-primary"
+                  ? tabActive
+                  : tabInactive
               }`}
               onClick={() => setActiveTab("metrics")}
             >
@@ -614,7 +612,7 @@ function SourceDocumentsTab({
                 <tr key={`doc-${doc.id}`} className="hover:bg-app-hover">
                   <td className="px-3 py-2.5">
                     <button
-                      className="text-left text-sm font-medium text-indigo-600 hover:text-indigo-800 truncate max-w-full"
+                      className={`text-left text-sm font-medium truncate max-w-full ${linkAccent}`}
                       type="button"
                       title={doc.title}
                       onClick={() => onLoadChunks(doc.id)}
@@ -682,10 +680,10 @@ function SourceDocumentsTab({
                       <span
                         className={`text-[11px] font-medium ${
                           c.quality_score >= 0.7
-                            ? "text-emerald-600"
+                            ? "app-text-success"
                             : c.quality_score >= 0.4
                             ? "text-amber-600"
-                            : "text-rose-500"
+                            : "app-text-danger"
                         }`}
                       >
                         质量 {c.quality_score.toFixed(2)}

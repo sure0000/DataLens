@@ -223,7 +223,7 @@ export default function ImportPickerModal({
                 className="app-card app-card-interactive flex flex-col items-center gap-3 p-5 text-center"
                 onClick={() => setStep(item.key)}
               >
-                <span className="text-indigo-500">{item.icon}</span>
+                <span className="app-text-accent">{item.icon}</span>
                 <span className="font-semibold text-sm text-app-primary">{item.title}</span>
                 <span className="text-xs text-app-muted leading-relaxed">{item.desc}</span>
               </button>

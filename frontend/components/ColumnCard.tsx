@@ -35,16 +35,16 @@ type Column = {
 };
 
 const SEMANTIC_TYPE_STYLE: Record<string, string> = {
-  metric: "bg-[#dbeafe] text-[#1d4ed8]",
-  dimension: "bg-[#dcfce7] text-[#15803d]",
-  time: "bg-[#fef9c3] text-[#854d0e]",
+  metric: "app-sem-type-metric",
+  dimension: "app-sem-type-dimension",
+  time: "app-sem-type-time",
   id: "bg-app-hover text-app-ink",
 };
 
 const RISK_STYLE = {
-  high: { dot: "bg-rose-400", text: "text-rose-400" },
-  medium: { dot: "bg-amber-400", text: "text-amber-400" },
-  low: { dot: "bg-emerald-400", text: "text-emerald-400" },
+  high: { dot: "bg-[var(--app-chart-outlier)]", text: "app-quality-high" },
+  medium: { dot: "bg-[var(--app-warning)]", text: "app-quality-medium" },
+  low: { dot: "bg-[var(--app-text-success)]", text: "app-quality-low" },
 };
 
 /** 规范化物理库类型名，用于判断是否与 semantic_type 重复 */
@@ -113,25 +113,25 @@ function DistributionBar({ dist }: { dist: NonNullable<Column["quality_metrics"]
         <span className="text-[10px] text-app-muted w-6 shrink-0">分布</span>
         <div className="relative flex-1 h-4 flex items-center">
           {/* whisker line: min → max */}
-          <div className="absolute left-0 right-0 h-px bg-[#d1d5db]" />
+          <div className="absolute left-0 right-0 h-px app-chart-axis-line" />
           {/* whisker: min → p25 */}
-          <div className="absolute h-px bg-[#9ca3af]" style={{ left: pct(min), width: pct(p25) }} />
+          <div className="absolute h-px app-chart-axis-strong" style={{ left: pct(min), width: pct(p25) }} />
           {/* whisker: p75 → max */}
-          <div className="absolute h-px bg-[#9ca3af]" style={{ left: pct(p75), width: `calc(${pct(max)} - ${pct(p75)})` }} />
+          <div className="absolute h-px app-chart-axis-strong" style={{ left: pct(p75), width: `calc(${pct(max)} - ${pct(p75)})` }} />
           {/* IQR box: p25 → p75 */}
           <div
-            className="absolute h-2 rounded-sm border border-[#60a5fa] bg-[#bfdbfe]"
+            className="absolute h-2 rounded-sm border app-chart-iqr"
             style={{ left: pct(p25), width: `calc(${pct(p75)} - ${pct(p25)})`, top: "50%", transform: "translateY(-50%)" }}
           />
           {/* median line */}
           <div
-            className="absolute w-px h-4 bg-[#1d4ed8]"
+            className="absolute w-px h-4 app-chart-median"
             style={{ left: pct(p50) }}
           />
           {/* avg dot */}
           {avg != null && (
             <div
-              className="absolute w-2.5 h-2.5 rounded-full bg-[#ef4444] border-2 border-white shadow-sm"
+              className="absolute w-2.5 h-2.5 rounded-full app-chart-outlier border-2 shadow-sm"
               style={{ left: pct(avg), top: "50%", transform: "translate(-50%, -50%)" }}
               title={`均值 ${fmt(avg)}`}
             />
@@ -142,11 +142,11 @@ function DistributionBar({ dist }: { dist: NonNullable<Column["quality_metrics"]
       <div className="flex items-center gap-x-3 gap-y-0.5 flex-wrap mt-1 ml-7">
         <span className="text-[11px] text-app-muted">min <span className="text-app-ink font-medium">{fmt(min)}</span></span>
         <span className="text-[11px] text-app-muted">P25 <span className="text-app-ink font-medium">{fmt(p25)}</span></span>
-        <span className="text-[11px] text-[#1d4ed8] font-medium">P50 <span className="font-semibold">{fmt(p50)}</span></span>
+        <span className="text-[11px] app-text-accent font-medium">P50 <span className="font-semibold">{fmt(p50)}</span></span>
         <span className="text-[11px] text-app-muted">P75 <span className="text-app-ink font-medium">{fmt(p75)}</span></span>
         <span className="text-[11px] text-app-muted">max <span className="text-app-ink font-medium">{fmt(max)}</span></span>
         {avg != null && (
-          <span className="text-[11px] text-[#ef4444]">avg <span className="font-medium">{fmt(avg)}</span></span>
+          <span className="text-[11px] app-text-danger">avg <span className="font-medium">{fmt(avg)}</span></span>
         )}
       </div>
     </div>
@@ -192,7 +192,7 @@ export default function ColumnCard({ col, isLast = false }: { col: Column; isLas
               {col.column_name}
             </span>
             {!col.is_usable && (
-              <span className="rounded bg-[#fee2e2] px-1.5 py-0.5 text-[10px] font-medium text-[#991b1b]">
+              <span className="rounded bg-[var(--app-status-error-bg)] px-1.5 py-0.5 text-[10px] font-medium app-text-danger">
                 不可用
               </span>
             )}

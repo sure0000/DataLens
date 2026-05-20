@@ -12,6 +12,16 @@ import {
   traceCheckpointStripClass,
   type TraceCheckpointStatus
 } from "../lib/copilotTraceStatus";
+import {
+  liveHighlight,
+  panelSubtle,
+  textAccent,
+  traceCard,
+  traceCardHeader,
+  traceCodeWrap,
+  traceIndigoHeader,
+  traceIndigoPanel,
+} from "../lib/themeClasses";
 import SqlBlock from "./SqlBlock";
 
 type Props = {
@@ -91,12 +101,12 @@ function Reasoning4StepLayout({
   return (
     <div className="space-y-3">
       {logicSubs.length > 0 ? (
-        <div className="overflow-hidden rounded-lg border border-neutral-200/90 bg-[var(--app-card-bg)] shadow-sm dark:border-neutral-600 dark:bg-neutral-900/45">
-          <div className="flex items-center gap-2 border-b border-neutral-200/85 bg-neutral-50/98 px-2.5 py-1.5 dark:border-neutral-700/90 dark:bg-neutral-800/55">
+        <div className={traceCard}>
+          <div className={`flex items-center gap-2 px-2.5 py-1.5 ${traceCardHeader}`}>
             <ListTree className="h-3.5 w-3.5 shrink-0 text-app-secondary" strokeWidth={2.25} aria-hidden />
             <span className="text-[11px] font-semibold uppercase tracking-wide text-app-secondary">查询逻辑</span>
           </div>
-          <ol className="m-0 list-none divide-y divide-neutral-200/90 p-0 dark:divide-neutral-700/85">
+          <ol className="app-trace-divide m-0 list-none p-0">
             {logicSubs.map((sub, i) => {
               const globalIdx = subs.indexOf(sub);
               const isLive = streaming && isLastStage && globalIdx === subs.length - 1;
@@ -106,11 +116,7 @@ function Reasoning4StepLayout({
                 <li
                   key={`${s.id}-sub-${globalIdx}`}
                   aria-current={isLive ? "step" : undefined}
-                  className={`flex items-stretch gap-1.5 px-1.5 py-1.5 sm:px-2 ${
-                    isLive
-                      ? "rounded-md bg-amber-500/[0.08] ring-1 ring-amber-500/25 dark:bg-amber-500/10 dark:ring-amber-400/20"
-                      : ""
-                  }`}
+                  className={`flex items-stretch gap-1.5 px-1.5 py-1.5 sm:px-2 ${isLive ? liveHighlight : ""}`}
                 >
                   <div className={`w-1 shrink-0 self-stretch rounded-full ${traceCheckpointStripClass(sub.status)}`} aria-hidden />
                   <div className="flex shrink-0 self-start pt-0.5" role="img" aria-label={a11y}>
@@ -134,18 +140,16 @@ function Reasoning4StepLayout({
           <div
             key={`${s.id}-sql-${globalIdx}`}
             aria-current={isLive ? "step" : undefined}
-            className={`overflow-hidden rounded-lg border border-indigo-200/75 bg-indigo-50/[0.42] shadow-sm dark:border-indigo-800/55 dark:bg-indigo-950/40 ${
-              isLive ? "ring-2 ring-amber-400/45 dark:ring-amber-400/35" : ""
-            }`}
+            className={`${traceIndigoPanel}${isLive ? " ring-2 ring-[var(--app-live-highlight-ring)]" : ""}`}
           >
-            <div className="flex items-center gap-2 border-b border-indigo-200/65 bg-white/70 px-2.5 py-1.5 dark:border-indigo-800/45 dark:bg-indigo-950/60">
-              <Code2 className="h-3.5 w-3.5 shrink-0 text-indigo-600 dark:text-indigo-400" strokeWidth={2.25} aria-hidden />
-              <span className="min-w-0 flex-1 truncate text-[11px] font-semibold leading-tight text-indigo-950 dark:text-indigo-50">
+            <div className={`flex items-center gap-2 px-2.5 py-1.5 ${traceIndigoHeader}`}>
+              <Code2 className={`h-3.5 w-3.5 shrink-0 ${textAccent}`} strokeWidth={2.25} aria-hidden />
+              <span className="min-w-0 flex-1 truncate text-[11px] font-semibold leading-tight">
                 {title}
               </span>
             </div>
             <div className="p-1.5 sm:p-2">
-              <div className="overflow-x-auto rounded-md border border-neutral-600/80 bg-[#14141c] shadow-inner dark:border-neutral-500/50">
+              <div className={traceCodeWrap}>
                 <SqlBlock
                   sql={sub.sql || ""}
                   className="mt-0 rounded-none border-0 bg-transparent p-2.5 text-[11px] leading-relaxed sm:p-3 sm:text-xs sm:leading-5"
@@ -190,7 +194,7 @@ function CopilotExecutionTrace({
 
           return (
             <section key={`${s.id}-${stageIdx}`} className="min-w-0">
-              <h3 className={`mb-1 border-b border-neutral-200/90 pb-1 text-app-primary dark:border-neutral-700 ${stageTitleCls}`}>
+              <h3 className={`mb-1 border-b border-app-border pb-1 text-app-primary ${stageTitleCls}`}>
                 {s.label}
               </h3>
 
@@ -208,7 +212,7 @@ function CopilotExecutionTrace({
                   idxCls={idxCls}
                 />
               ) : (
-                <ol className="m-0 list-none divide-y divide-neutral-200/90 p-0 dark:divide-neutral-700/90">
+                <ol className="app-trace-divide m-0 list-none p-0">
                   {subs.map((sub, subIdx) => {
                     const isLive = streaming && isLastStage && subIdx === subs.length - 1;
                     const subNo = subIdx + 1;
@@ -219,7 +223,7 @@ function CopilotExecutionTrace({
                       <li
                         key={`${s.id}-sub-${subIdx}`}
                         aria-current={isLive ? "step" : undefined}
-                        className={`flex items-stretch gap-1.5 py-1.5 ${isLive ? "rounded-md bg-amber-500/[0.08] ring-1 ring-amber-500/25 dark:bg-amber-500/10 dark:ring-amber-400/20" : ""}`}
+                        className={`flex items-stretch gap-1.5 py-1.5 ${isLive ? liveHighlight : ""}`}
                       >
                         <div
                           className={`w-1 shrink-0 self-stretch rounded-full ${traceCheckpointStripClass(sub.status)}`}
@@ -238,7 +242,7 @@ function CopilotExecutionTrace({
                               {sub.sqlCaption ? (
                                 <p className="mb-0.5 text-[10px] font-medium leading-tight text-app-secondary">{sub.sqlCaption}</p>
                               ) : null}
-                              <div className="overflow-x-auto rounded border border-neutral-200/80 bg-neutral-50/90 dark:border-neutral-700 dark:bg-neutral-900/60 [&_.sql-block]:mt-0">
+                              <div className={`${traceCodeWrap} [&_.sql-block]:mt-0`}>
                                 <SqlBlock sql={sub.sql} />
                               </div>
                             </div>
@@ -259,9 +263,7 @@ function CopilotExecutionTrace({
   if (variant === "framed") {
     return (
       <div
-        className={`rounded-lg border border-app-border bg-neutral-50/40 dark:border-neutral-700 dark:bg-neutral-950/30 ${
-          compact ? "px-2 py-2" : "px-2.5 py-2"
-        }`}
+        className={`rounded-lg border border-app-border ${panelSubtle} ${compact ? "px-2 py-2" : "px-2.5 py-2"}`}
       >
         {list}
       </div>

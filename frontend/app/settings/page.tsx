@@ -6,6 +6,7 @@ import Breadcrumbs from "../../components/Breadcrumbs";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import PageHeader from "../../components/PageHeader";
 import Toast from "../../components/Toast";
+import AppearanceTab from "../../components/settings/AppearanceTab";
 import ApiSourcesTab from "../../components/settings/ApiSourcesTab";
 import ModelsTab from "../../components/settings/ModelsTab";
 import SemanticTab from "../../components/settings/SemanticTab";
@@ -136,7 +137,7 @@ const SILICONFLOW_MODEL_IDS: { id: string; label: string }[] = [
 function StatusDot({ ok }: { ok: boolean }) {
   return (
     <span
-      className={`inline-block h-2 w-2 shrink-0 rounded-full ${ok ? "bg-emerald-500" : "bg-app-border"}`}
+      className={`inline-block h-2 w-2 shrink-0 rounded-full ${ok ? "app-progress-fill-success" : "bg-app-border"}`}
       aria-hidden
     />
   );
@@ -181,7 +182,7 @@ function IconEyeOff({ className = "h-4 w-4" }: { className?: string }) {
 export default function SettingsPage() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [cfg, setCfg] = useState<LlmConfig | null>(null);
-  const [activeTab, setActiveTab] = useState<"models" | "semantic" | "api_sources">("models");
+  const [activeTab, setActiveTab] = useState<"models" | "semantic" | "api_sources" | "appearance">("models");
   const [connections, setConnections] = useState<LlmConnPublic[]>([]);
   const [semantic, setSemantic] = useState("auto");
   const [savedSemantic, setSavedSemantic] = useState("");
@@ -435,6 +436,22 @@ export default function SettingsPage() {
             </button>
             <button
               role="tab"
+              aria-selected={activeTab === "appearance"}
+              onClick={() => setActiveTab("appearance")}
+              className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-left transition-colors ${
+                activeTab === "appearance"
+                  ? "bg-app-activeBg text-app-primary border border-app-primary/20"
+                  : "text-app-secondary hover:bg-app-hover hover:text-app-ink"
+              }`}
+            >
+              <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41" />
+              </svg>
+              外观
+            </button>
+            <button
+              role="tab"
               aria-selected={activeTab === "api_sources"}
               onClick={() => setActiveTab("api_sources")}
               className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-left transition-colors ${
@@ -480,6 +497,8 @@ export default function SettingsPage() {
             )}
 
             {activeTab === "api_sources" && <ApiSourcesTab />}
+
+            {activeTab === "appearance" && <AppearanceTab />}
 
           </div>
         </div>

@@ -57,7 +57,7 @@ export default function DetailStatsPanel({ stats, loading }: DetailStatsPanelPro
             </div>
             <div className="flex justify-between text-app-secondary">
               <span>已处理</span>
-              <span className="font-medium text-emerald-600">{indexed} ({syncPercent}%)</span>
+              <span className="font-medium app-text-success">{indexed} ({syncPercent}%)</span>
             </div>
             <div className="flex justify-between text-app-secondary">
               <span>待处理</span>
@@ -67,7 +67,7 @@ export default function DetailStatsPanel({ stats, loading }: DetailStatsPanelPro
           {/* 进度条 */}
           <div className="mt-2 h-1.5 w-full rounded-full bg-app-hover overflow-hidden">
             <div
-              className="h-full rounded-full bg-emerald-500 transition-all duration-500"
+              className="h-full rounded-full app-progress-fill-success transition-all duration-500"
               style={{ width: `${syncPercent}%` }}
             />
           </div>
@@ -125,10 +125,10 @@ export default function DetailStatsPanel({ stats, loading }: DetailStatsPanelPro
                   <span
                     className={
                       stats.last_pipeline_run.status === "completed"
-                        ? "text-emerald-600 font-medium"
+                        ? "app-text-success font-medium"
                         : stats.last_pipeline_run.status === "failed"
-                        ? "text-rose-600 font-medium"
-                        : "text-blue-600 font-medium"
+                        ? "app-text-danger font-medium"
+                        : "app-text-info font-medium"
                     }
                   >
                     {stats.last_pipeline_run.status === "completed" ? "✓ 完成" : stats.last_pipeline_run.status === "failed" ? "✗ 失败" : "◐ 运行中"}
@@ -158,7 +158,7 @@ function StatusRow({ label, done, total }: { label: string; done: number; total:
       <span className="text-app-secondary">{label}</span>
       <span
         className={`font-medium ${
-          status === "done" ? "text-emerald-600" : status === "progress" ? "text-blue-600" : "text-app-muted"
+          status === "done" ? "app-text-success" : status === "progress" ? "app-text-info" : "text-app-muted"
         }`}
       >
         {status === "done" ? `✓ ${done}条` : status === "progress" ? `◐ ${done}/${total}` : "○ —"}

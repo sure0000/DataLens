@@ -92,7 +92,7 @@ export default function KnowledgeBasesPage() {
               href={`/knowledge-bases/${kb.id}`}
               className="app-card app-card-interactive flex flex-col items-start gap-2 p-4 aspect-square no-underline group"
             >
-              <span className="text-indigo-500 group-hover:text-indigo-600 transition-colors">
+              <span className="app-text-accent group-hover:app-text-accent transition-colors">
                 <svg className="h-7 w-7" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.5} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <path d="M6 4h5a2 2 0 012 2v14a2 2 0 00-2-2H6V4zM13 4h5v14h-5a2 2 0 00-2 2V6a2 2 0 012-2z" />
                 </svg>

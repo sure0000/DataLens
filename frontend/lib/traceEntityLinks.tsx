@@ -83,7 +83,7 @@ function collectHits(text: string, links: TraceEntityLink[]): Hit[] {
 /** 推理 trace 内实体链接：仅用下划线与字重区分，避免背景/描边块在多链相邻时叠压 */
 const traceEntityLinkCls =
   "app-link cursor-pointer font-semibold decoration-2 underline-offset-[3px] transition-colors " +
-  "text-blue-700 hover:text-blue-900 dark:text-indigo-300 dark:hover:text-indigo-100";
+  "app-link-accent hover:opacity-90";
 
 /** 将 detail 中的可识别片段替换为站内详情链接 */
 export function renderTraceDetailWithLinks(text: string, links: TraceEntityLink[] | undefined): ReactNode {

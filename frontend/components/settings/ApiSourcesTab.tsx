@@ -206,7 +206,7 @@ export default function ApiSourcesTab() {
                     <span className="text-app-muted">集成</span> {integrationLabel(s)}
                     <span className="mx-1.5 text-app-border">·</span>
                     <span className="text-app-muted">密钥</span>{" "}
-                    {s.has_key ? <span className="text-emerald-600 font-medium">已配置</span> : <span className="text-rose-500">未配置</span>}
+                    {s.has_key ? <span className="app-text-success font-medium">已配置</span> : <span className="app-text-danger">未配置</span>}
                   </p>
                   <p className="text-[10px] text-app-muted">
                     上次导入：{s.last_sync_at ? new Date(s.last_sync_at).toLocaleString() : "—"}
@@ -218,7 +218,7 @@ export default function ApiSourcesTab() {
                   </button>
                   <button
                     type="button"
-                    className="rounded-lg border border-[var(--app-card-border)] bg-[var(--app-card-bg)] px-3 py-1.5 text-xs font-medium text-rose-400 hover:bg-[var(--app-surface-hover)]"
+                    className="rounded-lg border border-[var(--app-card-border)] bg-[var(--app-card-bg)] px-3 py-1.5 text-xs font-medium app-text-danger hover:bg-[var(--app-surface-hover)]"
                     onClick={() => setApiDeleteId(s.id)}
                   >
                     删除

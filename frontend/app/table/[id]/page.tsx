@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import ColumnCard from "../../../components/ColumnCard";
 import { api } from "../../../lib/api";
+import { badgeExclusive } from "../../../lib/themeClasses";
 import PageHeader from "../../../components/PageHeader";
 
 type Detail = {
@@ -260,7 +261,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center gap-2">
                       <Link className="app-button-secondary text-xs no-underline" href={`/knowledge-bases/${kb.id}`}>查看</Link>
-                      <button type="button" className="app-control-button text-xs text-app-secondary hover:text-rose-600" disabled={savingLinks} onClick={() => removeKbAssociation(kb.id)}>移除</button>
+                      <button type="button" className="app-control-button text-xs text-app-secondary hover:app-text-danger" disabled={savingLinks} onClick={() => removeKbAssociation(kb.id)}>移除</button>
                     </div>
                   </li>
                 ))}
@@ -268,14 +269,14 @@ export default function TableDetail({ params }: { params: { id: string } }) {
                   <li key={`ent-${en.id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="rounded-full border border-indigo-200 bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-900">条目</span>
+                        <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${badgeExclusive}`}>条目</span>
                         <span className="font-medium text-app-ink text-sm">{en.title}</span>
                         <span className="text-xs text-app-muted">（{kbDisplayName(en.knowledge_base_id)}）</span>
                       </div>
                     </div>
                     <div className="flex shrink-0 flex-wrap items-center gap-2">
                       <Link className="app-button-secondary text-xs no-underline" href={`/knowledge-bases/${en.knowledge_base_id}#entry-${en.id}`}>查看</Link>
-                      <button type="button" className="app-control-button text-xs text-app-secondary hover:text-rose-600" disabled={savingLinks} onClick={() => removeEntryAssociation(en.id)}>移除</button>
+                      <button type="button" className="app-control-button text-xs text-app-secondary hover:app-text-danger" disabled={savingLinks} onClick={() => removeEntryAssociation(en.id)}>移除</button>
                     </div>
                   </li>
                 ))}

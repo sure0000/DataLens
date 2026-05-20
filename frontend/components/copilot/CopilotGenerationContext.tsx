@@ -5,6 +5,7 @@ import { stripAutoRepairExplanationNote } from "../../lib/copilotTraceMarkdown";
 import { filterCopilotTraceSteps, type PipelineTraceStep } from "../../lib/chatSessions";
 import { streamAsk, type AskPayload, type AskResponse, type StreamStage } from "../../lib/copilotStream";
 import CopilotExecutionTrace from "../CopilotExecutionTrace";
+import { chatPanel, chipWarning } from "../../lib/themeClasses";
 import ChatGptStyleBody from "./ChatGptStyleBody";
 
 export type ActiveAsk = {
@@ -58,9 +59,9 @@ export const CopilotStreamBubble = memo(function CopilotStreamBubble() {
 
   return (
     <div ref={rootRef} className="flex min-w-0 max-w-full justify-start">
-      <div className="min-w-0 max-w-[min(100%,42rem)] rounded-[1.35rem] border border-neutral-200/80 bg-white px-4 py-3 shadow-sm dark:border-neutral-700 dark:bg-neutral-900 dark:shadow-none">
+      <div className={`min-w-0 max-w-[min(100%,42rem)] rounded-[1.35rem] px-4 py-3 ${chatPanel}`}>
         <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
-          <span className="rounded-full border border-amber-200/90 bg-amber-50 px-2 py-0.5 text-[11px] font-medium text-amber-900 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-100">
+          <span className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${chipWarning}`}>
             生成中
           </span>
           <span className="text-xs text-app-secondary">{stageLabelMap[ctx.streamStage]}</span>
@@ -73,7 +74,7 @@ export const CopilotStreamBubble = memo(function CopilotStreamBubble() {
                 <span
                   key={stage}
                   title={stageLabelMap[stage]}
-                  className={`h-1 min-w-0 flex-1 rounded-full ${done ? "bg-emerald-600 dark:bg-emerald-500" : "bg-neutral-200 dark:bg-neutral-600"}`}
+                  className={`h-1 min-w-0 flex-1 rounded-full ${done ? "app-progress-fill-success" : "app-progress-track"}`}
                 />
               );
             })}
@@ -113,7 +114,7 @@ export const CopilotGenerationDockStatus = memo(function CopilotGenerationDockSt
   if (!ctx?.busy) return null;
 
   return (
-    <div className="pointer-events-auto min-h-0 min-w-0 rounded-xl border border-neutral-200/80 bg-white/90 px-3 py-2 shadow-sm backdrop-blur-sm dark:border-neutral-700 dark:bg-neutral-900/90">
+    <div className={`pointer-events-auto min-h-0 min-w-0 rounded-xl px-3 py-2 shadow-sm backdrop-blur-sm ${chatPanel}`}>
       <div className="flex min-w-0 items-center gap-3">
         <p className="min-w-0 flex-1 truncate text-[13px] font-medium text-app-primary">{stageLabelMap[ctx.streamStage]}</p>
         <div className="flex min-w-[5rem] max-w-[40%] shrink-0 gap-1">
@@ -124,7 +125,7 @@ export const CopilotGenerationDockStatus = memo(function CopilotGenerationDockSt
             return (
               <span
                 key={stage}
-                className={`h-0.5 min-w-0 flex-1 rounded-full ${done ? "bg-neutral-700 dark:bg-neutral-200" : "bg-neutral-200 dark:bg-neutral-700"}`}
+                className={`h-0.5 min-w-0 flex-1 rounded-full ${done ? "app-progress-fill-neutral" : "app-progress-track"}`}
               />
             );
           })}

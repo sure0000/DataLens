@@ -71,7 +71,7 @@ export default function DocumentTable({
               return (
                 <Fragment key={key}>
                   <tr
-                    className={`transition-colors ${isSelected ? "bg-indigo-50/70 ring-1 ring-inset ring-indigo-200" : "hover:bg-app-hover"}`}
+                    className={`transition-colors ${isSelected ? "bg-[var(--app-active-bg)] ring-1 ring-inset ring-[var(--app-active-border)]" : "hover:bg-app-hover"}`}
                   >
                     <td className="px-3 py-2.5">
                       <input
@@ -114,7 +114,7 @@ export default function DocumentTable({
                           )}
                         </div>
                         {doc.error_message && (
-                          <p className="text-xs text-rose-600 mt-0.5 truncate" title={doc.error_message}>
+                          <p className="text-xs app-text-danger mt-0.5 truncate" title={doc.error_message}>
                             {doc.error_message}
                           </p>
                         )}
@@ -180,10 +180,10 @@ export default function DocumentTable({
                                   <span
                                     className={`text-[11px] font-medium ${
                                       c.quality_score >= 0.7
-                                        ? "text-emerald-600"
+                                        ? "app-text-success"
                                         : c.quality_score >= 0.4
                                         ? "text-amber-600"
-                                        : "text-rose-500"
+                                        : "app-text-danger"
                                     }`}
                                   >
                                     质量 {c.quality_score.toFixed(2)}
@@ -208,7 +208,7 @@ export default function DocumentTable({
                 <tr
                   key={key}
                   id={key}
-                  className={`transition-colors ${isSelected ? "bg-indigo-50/70 ring-1 ring-inset ring-indigo-200" : "hover:bg-app-hover"}`}
+                  className={`transition-colors ${isSelected ? "bg-[var(--app-active-bg)] ring-1 ring-inset ring-[var(--app-active-border)]" : "hover:bg-app-hover"}`}
                 >
                   <td className="px-3 py-2.5">
                     <input

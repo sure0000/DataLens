@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { api } from "../../../../../lib/api";
+import { chipError, chipInfo, chipNeutral, chipSuccess, textSuccess } from "../../../../../lib/themeClasses";
 import EmptyState from "../../../../../components/EmptyState";
 import ListPagination from "../../../../../components/ListPagination";
 import PageHeader from "../../../../../components/PageHeader";
@@ -21,10 +22,10 @@ type DatabaseCatalog = {
 };
 
 const STATUS_STYLE: Record<string, string> = {
-  done: "bg-emerald-950/60 text-emerald-300 border-emerald-800/40",
-  analyzing: "bg-sky-950/60 text-sky-300 border-sky-800/40",
-  error: "bg-rose-950/60 text-rose-300 border-rose-800/40",
-  pending: "bg-app-hover text-app-secondary border-app-border",
+  done: chipSuccess,
+  analyzing: chipInfo,
+  error: chipError,
+  pending: `${chipNeutral} text-app-secondary`,
 };
 const STATUS_LABEL: Record<string, string> = {
   done: "完成",
@@ -111,7 +112,7 @@ export default function DatabaseDetailPage({ params }: { params: { id: string; d
           </div>
         }
       />
-      {!!message && <p className="mt-2 text-sm text-emerald-600">{message}</p>}
+      {!!message && <p className={`mt-2 text-sm ${textSuccess}`}>{message}</p>}
 
       <div className="mt-5 space-y-2.5">
         {pagedTables.map((t) => (
