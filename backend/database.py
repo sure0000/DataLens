@@ -55,6 +55,7 @@ def init_db() -> None:
     with engine.begin() as conn:
         _ensure_safety_columns(conn)
         _ensure_safety_indexes(conn)
+        _ensure_safety_constraints(conn)
         _run_data_migrations(conn)
 
 
@@ -117,6 +118,20 @@ def _ensure_safety_indexes(conn) -> None:
             "ON document_chunks USING gin(tsv);"
         )
     )
+
+
+def _ensure_safety_constraints(conn) -> None:
+    """添加唯一约束（无副作用）。"""
+    conn.execute(text("""
+        DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_datasource_name_host_db') THEN
+                ALTER TABLE data_sources ADD CONSTRAINT uq_datasource_name_host_db UNIQUE (name, host, database);
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_knowledge_base_name') THEN
+                ALTER TABLE knowledge_bases ADD CONSTRAINT uq_knowledge_base_name UNIQUE (name);
+            END IF;
+        END $$;
+    """))
 
 
 def _run_data_migrations(conn) -> None:

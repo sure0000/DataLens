@@ -107,6 +107,16 @@ def get_datasource(datasource_id: int, db: Session = Depends(get_db)) -> dict:
 
 @router.post("/datasources")
 def create_datasource(body: DataSourceBody, db: Session = Depends(get_db)) -> dict:
+    # 同名数据源检测
+    existing = db.execute(
+        select(DataSource).where(
+            DataSource.name == body.name.strip(),
+            DataSource.host == body.host.strip(),
+            DataSource.database == body.database.strip(),
+        )
+    ).scalars().first()
+    if existing:
+        raise HTTPException(status_code=409, detail="同名的数据源已存在")
     row = DataSource(**_body_to_row_kwargs(body))
     db.add(row)
     db.commit()

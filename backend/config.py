@@ -19,9 +19,9 @@ class Settings(BaseSettings):
     openai_base_url: str | None = Field(default=None, alias="OPENAI_BASE_URL")
     backend_port: int = Field(default=8000, alias="BACKEND_PORT")
     cors_origins: str = Field(default="http://localhost:3000", alias="CORS_ORIGINS")
-    db_pool_size: int = Field(default=5, ge=1, le=50, alias="DB_POOL_SIZE")
-    db_max_overflow: int = Field(default=10, ge=0, le=100, alias="DB_MAX_OVERFLOW")
-    db_pool_recycle: int = Field(default=1800, ge=60, alias="DB_POOL_RECYCLE")
+    db_pool_size: int = Field(default=20, ge=1, le=50, alias="DB_POOL_SIZE")
+    db_max_overflow: int = Field(default=30, ge=0, le=100, alias="DB_MAX_OVERFLOW")
+    db_pool_recycle: int = Field(default=600, ge=60, alias="DB_POOL_RECYCLE")
     # Copilot 未指定业务域时，最多带入多少张已登记表的元数据（防极端大库撑爆上下文）；指定业务域时以域内挂载为准、不受此上限约束。
     copilot_max_tables_without_domain: int = Field(default=2000, ge=1, le=50000, alias="COPILOT_MAX_TABLES_WITHOUT_DOMAIN")
     # 语义流水线超时阈值（秒），超过此时间的 running 状态自动标记为 failed

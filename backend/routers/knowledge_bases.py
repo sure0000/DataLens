@@ -138,6 +138,12 @@ def list_knowledge_bases(db: Session = Depends(get_db)) -> dict:
 
 @router.post("")
 def create_knowledge_base(body: KnowledgeBaseCreate, db: Session = Depends(get_db)) -> dict:
+    # 同名知识库检测
+    existing = db.execute(
+        select(KnowledgeBase).where(KnowledgeBase.name == body.name.strip())
+    ).scalars().first()
+    if existing:
+        raise HTTPException(status_code=409, detail="同名的知识库已存在")
     kb = KnowledgeBase(
         name=body.name.strip(),
         description=body.description.strip() or None,

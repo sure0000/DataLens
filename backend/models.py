@@ -84,6 +84,9 @@ class Embedding(Base):
 
 class DataSource(Base):
     __tablename__ = "data_sources"
+    __table_args__ = (
+        UniqueConstraint("name", "host", "database", name="uq_datasource_name_host_db"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -136,6 +139,9 @@ class BusinessDomainSelection(Base):
 
 class KnowledgeBase(Base):
     __tablename__ = "knowledge_bases"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_knowledge_base_name"),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     name: Mapped[str] = mapped_column(Text, nullable=False)

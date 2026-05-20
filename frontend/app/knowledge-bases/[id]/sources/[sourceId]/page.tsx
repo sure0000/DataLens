@@ -329,6 +329,7 @@ export default function SourceDetailPage({
         lineage_stats: sourceLineage
           ? sourceLineage.stats
           : { done: 0, processing: 0, pending: 0 },
+        last_pipeline_run: null, // 使用当前源的 term_count/metric_count，而非 KB 级 pipeline 运行计数
       }
     : null;
 
