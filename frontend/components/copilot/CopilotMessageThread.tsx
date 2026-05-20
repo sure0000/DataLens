@@ -58,16 +58,16 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
         if (m.role === "user") {
           if (editingMessageId === m.id) {
             return (
-              <div key={m.id} className="ml-auto w-full max-w-2xl rounded-2xl bg-white/70 p-3">
+              <div key={m.id} className="ml-auto w-full max-w-2xl rounded-2xl bg-[var(--app-card-bg)]/70 p-3">
                 <textarea
-                  className="min-h-[80px] w-full resize-none rounded-xl border border-app-border bg-white px-3 py-2 text-sm leading-6 text-app-primary outline-none placeholder:text-app-muted"
+                  className="min-h-[80px] w-full resize-none rounded-xl border border-app-border bg-[var(--app-card-bg)] px-3 py-2 text-sm leading-6 text-app-primary outline-none placeholder:text-app-muted"
                   value={editingText}
                   onChange={(e) => setEditingText(e.target.value)}
                 />
                 <div className="mt-2 flex justify-end gap-2">
                   <button
                     type="button"
-                    className="inline-flex min-h-[2rem] items-center justify-center rounded-full border border-app-border bg-white px-3 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
+                    className="inline-flex min-h-[2rem] items-center justify-center rounded-full border border-app-border bg-[var(--app-card-bg)] px-3 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
                     onClick={() => setEditingMessageId("")}
                   >
                     取消
@@ -87,7 +87,7 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
             <div key={m.id} className="group flex min-w-0 max-w-full justify-end">
               <button
                 type="button"
-                className="mr-1 self-end rounded-md border border-app-border bg-white px-2 py-1 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
+                className="mr-1 self-end rounded-md border border-app-border bg-[var(--app-card-bg)] px-2 py-1 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
                 onClick={() => beginEditUserMessage(m)}
               >
                 编辑
@@ -117,9 +117,9 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
         return (
           <div key={m.id} className="min-w-0 max-w-full">
             <div className="flex min-w-0 max-w-full justify-start">
-              <div className="min-w-0 max-w-[min(100%,42rem)] rounded-[1.35rem] border border-neutral-200/80 bg-white px-4 py-3 shadow-sm dark:border-neutral-700 dark:bg-neutral-900">
+              <div className="min-w-0 max-w-[min(100%,42rem)] rounded-[1.35rem] border border-neutral-200/80 bg-[var(--app-card-bg)] px-4 py-3 shadow-sm dark:border-neutral-700 dark:bg-neutral-900">
                 {((m.explanation || "").includes("护栏") || (m.answer || "").includes("不能提供")) && (
-                  <div className="mb-2 rounded-lg border border-[#fcd34d] bg-[#fffbeb] px-3 py-2 text-xs text-[#92400e]">
+                  <div className="mb-2 rounded-lg border border-amber-700/60 bg-amber-950/60 px-3 py-2 text-xs text-amber-300">
                     该回答触发了 QA 安全边界，仅提供合规范围内的替代建议。
                   </div>
                 )}
@@ -173,7 +173,7 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
                               </thead>
                               <tbody>
                                 {queryResult.rows.slice(0, 20).map((row, idx) => (
-                                  <tr key={idx} className="odd:bg-white even:bg-app-hover">
+                                  <tr key={idx} className="odd:bg-[var(--app-card-bg)] even:bg-app-hover">
                                     {queryResult.columns.map((c) => (
                                       <td
                                         key={`${idx}-${c}`}
@@ -205,7 +205,7 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
                 <div className="mt-3 flex flex-wrap gap-2 border-t border-app-soft pt-3">
                   <button
                     type="button"
-                    className="rounded-md border border-app-border bg-white px-2.5 py-1 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
+                    className="rounded-md border border-app-border bg-[var(--app-card-bg)] px-2.5 py-1 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
                     onClick={() => copyMessage(m)}
                   >
                     复制
@@ -213,7 +213,7 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
                   {!isGeneralQaMessage && (
                     <button
                       type="button"
-                      className="rounded-md border border-app-border bg-white px-2.5 py-1 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
+                      className="rounded-md border border-app-border bg-[var(--app-card-bg)] px-2.5 py-1 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
                       onClick={() => retryFromAssistant(m.id)}
                     >
                       重试 SQL
@@ -222,7 +222,7 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
                   {isGeneralQaMessage && (
                     <button
                       type="button"
-                      className="rounded-md border border-app-border bg-white px-2.5 py-1 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
+                      className="rounded-md border border-app-border bg-[var(--app-card-bg)] px-2.5 py-1 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
                       onClick={() => continueFollowUp(m.id)}
                     >
                       继续追问

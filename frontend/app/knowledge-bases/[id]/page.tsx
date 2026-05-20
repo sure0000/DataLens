@@ -355,7 +355,6 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     <main className="app-page">
       <PageHeader
         breadcrumbs={[
-          { label: "首页", href: "/" },
           { label: "语义知识库", href: "/knowledge-bases" },
           { label: kb?.name || "…" },
         ]}

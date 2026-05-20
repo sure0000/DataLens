@@ -31,13 +31,13 @@ export function gitSyncStatusChip(
   const raw = (status || "").trim();
   const s = raw.toLowerCase();
   if (s === "success") {
-    return { text: "成功", className: "border-emerald-200 bg-emerald-50 text-emerald-800" };
+    return { text: "成功", className: "border-emerald-800/40 bg-emerald-950/60 text-emerald-300" };
   }
   if (s === "error") {
-    return { text: "失败", className: "border-rose-200 bg-rose-50 text-rose-800" };
+    return { text: "失败", className: "border-rose-800/40 bg-rose-950/60 text-rose-300" };
   }
   if (raw) {
-    return { text: raw, className: "border-app-border bg-white text-app-secondary" };
+    return { text: raw, className: "border-app-border bg-[var(--app-card-bg)] text-app-secondary" };
   }
   return { text: "尚未同步", className: "border-app-border bg-app-hover text-app-muted" };
 }
@@ -53,33 +53,33 @@ export function docStatusChip(
     },
     extracting: {
       text: "提取中",
-      className: "border-blue-200 bg-blue-50 text-blue-700",
+      className: "border-blue-800/40 bg-blue-950/60 text-blue-300",
     },
     cleaning: {
       text: "清洗中",
-      className: "border-blue-200 bg-blue-50 text-blue-700",
+      className: "border-blue-800/40 bg-blue-950/60 text-blue-300",
     },
     chunking: {
       text: "分块中",
-      className: "border-blue-200 bg-blue-50 text-blue-700",
+      className: "border-blue-800/40 bg-blue-950/60 text-blue-300",
     },
     embedding: {
       text: "向量化中",
-      className: "border-indigo-200 bg-indigo-50 text-indigo-700",
+      className: "border-indigo-800/40 bg-indigo-950/60 text-indigo-300",
     },
     indexed: {
       text: "已索引",
-      className: "border-emerald-200 bg-emerald-50 text-emerald-800",
+      className: "border-emerald-800/40 bg-emerald-950/60 text-emerald-300",
     },
     failed: {
       text: "失败",
-      className: "border-rose-200 bg-rose-50 text-rose-800",
+      className: "border-rose-800/40 bg-rose-950/60 text-rose-300",
     },
   };
   return (
     map[status] ?? {
       text: status,
-      className: "border-app-border bg-white text-app-secondary",
+      className: "border-app-border bg-[var(--app-card-bg)] text-app-secondary",
     }
   );
 }

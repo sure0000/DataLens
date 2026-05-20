@@ -58,7 +58,6 @@ export default function KnowledgeBasesPage() {
   return (
     <main className="app-page">
       <PageHeader
-        breadcrumbs={[{ label: "首页", href: "/" }, { label: "语义知识库" }]}
         title="语义知识库"
         subtitle="文档经过清洗、分块、向量化后进入语义索引，支持混合检索（向量 + 关键词），供 Copilot 和 RAG 引用。"
         actions={

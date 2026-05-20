@@ -172,7 +172,7 @@ export default function SourceCard({
       s.integration === "confluence" ? "Confluence" :
       s.integration === "feishu" ? "飞书" : s.integration;
     const integrationColor =
-      s.integration === "notion" ? "text-gray-700" :
+      s.integration === "notion" ? "text-app-secondary" :
       s.integration === "confluence" ? "text-blue-600" :
       s.integration === "feishu" ? "text-sky-600" : "text-app-muted";
 
@@ -220,7 +220,7 @@ export default function SourceCard({
       metaKind === "confluence_api" ? "Confluence" :
       metaKind === "feishu_api" ? "飞书" : metaKind.replace("_api", "");
     const integrationColor =
-      metaKind === "notion_api" ? "text-gray-700" :
+      metaKind === "notion_api" ? "text-app-secondary" :
       metaKind === "confluence_api" ? "text-blue-600" :
       metaKind === "feishu_api" ? "text-sky-600" : "text-app-muted";
 

@@ -42,9 +42,9 @@ const SEMANTIC_TYPE_STYLE: Record<string, string> = {
 };
 
 const RISK_STYLE = {
-  high: { dot: "bg-rose-500", text: "text-rose-600" },
-  medium: { dot: "bg-amber-400", text: "text-amber-600" },
-  low: { dot: "bg-emerald-400", text: "text-emerald-600" },
+  high: { dot: "bg-rose-400", text: "text-rose-400" },
+  medium: { dot: "bg-amber-400", text: "text-amber-400" },
+  low: { dot: "bg-emerald-400", text: "text-emerald-400" },
 };
 
 /** 规范化物理库类型名，用于判断是否与 semantic_type 重复 */

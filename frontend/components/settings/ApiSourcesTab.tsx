@@ -197,7 +197,7 @@ export default function ApiSourcesTab() {
             暂无 API 源，请点击右上角「新增 API 源」。
           </div>
         ) : (
-          <ul className="mt-5 divide-y divide-app-border overflow-hidden rounded-xl border border-app-border bg-white">
+          <ul className="mt-5 divide-y divide-[var(--app-card-border)] overflow-hidden rounded-xl border border-[var(--app-card-border)] bg-[var(--app-card-bg)]">
             {apiSources.map((s) => (
               <li key={s.id} className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4">
                 <div className="min-w-0 flex-1 space-y-1">
@@ -218,7 +218,7 @@ export default function ApiSourcesTab() {
                   </button>
                   <button
                     type="button"
-                    className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50"
+                    className="rounded-lg border border-[var(--app-card-border)] bg-[var(--app-card-bg)] px-3 py-1.5 text-xs font-medium text-rose-400 hover:bg-[var(--app-surface-hover)]"
                     onClick={() => setApiDeleteId(s.id)}
                   >
                     删除

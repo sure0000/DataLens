@@ -369,7 +369,6 @@ export default function DataSourcesPage() {
   return (
     <main className="app-page">
       <PageHeader
-        breadcrumbs={[{ label: "首页", href: "/" }, { label: "数据源" }]}
         title="数据源管理"
         subtitle="统一维护连接配置：关系型（MySQL / MariaDB / PostgreSQL / Greenplum / SQL Server / SQLite）与分析型（ClickHouse / Doris / StarRocks / Trino / Hive）。"
         actionsBelowSubtitle
@@ -390,7 +389,7 @@ export default function DataSourcesPage() {
 
       {loadError && (
         <div
-          className="app-surface-panel mt-4 flex flex-wrap items-start gap-3 rounded-xl border border-rose-300/60 bg-rose-50 px-4 py-3 text-sm text-rose-800"
+          className="app-surface-panel mt-4 flex flex-wrap items-start gap-3 rounded-xl border border-rose-800/40 bg-rose-950/60 px-4 py-3 text-sm text-rose-300"
           role="alert"
         >
           <p className="min-w-0 flex-1 break-words">{loadError}</p>
@@ -404,8 +403,8 @@ export default function DataSourcesPage() {
         <div
           className={`app-surface-panel mt-6 flex max-w-full items-start gap-3 rounded-xl border px-4 py-3 text-sm backdrop-blur ${
             testResult.startsWith("连接失败")
-              ? "border-rose-300/60 bg-rose-50 text-rose-700"
-              : "border-sky-300/60 bg-sky-50 text-sky-700"
+              ? "border-rose-800/40 bg-rose-950/60 text-rose-300"
+              : "border-sky-800/40 bg-sky-950/60 text-sky-300"
           }`}
           role="status"
           aria-live="polite"

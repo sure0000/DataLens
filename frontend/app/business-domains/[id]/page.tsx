@@ -416,8 +416,8 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
     if (loadError) {
       return (
         <main className="app-page space-y-4">
-          <PageHeader breadcrumbs={[{ label: "首页", href: "/" }, { label: "业务域", href: "/" }]} title="加载失败" />
-          <div className="app-card border-rose-200 bg-rose-50 p-4 text-sm text-rose-800">
+          <PageHeader breadcrumbs={[{ label: "业务域", href: "/" }]} title="加载失败" />
+          <div className="app-card border-rose-800/40 bg-rose-950/60 p-4 text-sm text-rose-300">
             <p className="font-medium">无法加载该业务域</p>
             <p className="mt-2 break-words">{loadError}</p>
             <button type="button" className="app-button-secondary mt-4" onClick={() => void loadDetail()}>
@@ -436,7 +436,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
   return (
     <main className="app-page">
       <PageHeader
-        breadcrumbs={[{ label: "首页", href: "/" }, { label: "业务域", href: "/" }, { label: detail.domain.name }]}
+        breadcrumbs={[{ label: "业务域", href: "/" }, { label: detail.domain.name }]}
         title={detail.domain.name}
         meta={`创建时间：${new Date(detail.domain.created_at).toLocaleString()}`}
         actions={
@@ -465,7 +465,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
       <section className="app-card mt-4 p-4">
         <h2 className="app-section-title">业务描述</h2>
         <div className="mt-3 space-y-2">
-          <div className="rounded-lg border border-app-border bg-white p-3">
+          <div className="rounded-lg border border-app-border bg-[var(--app-card-bg)] p-3">
             {detail.description?.content ? (
               <div className="prose prose-sm max-w-none text-sm" dangerouslySetInnerHTML={{ __html: detail.description.content }} />
             ) : (
@@ -652,7 +652,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
             </div>
             <div
               ref={descEditorRef}
-              className="mt-2 min-h-[180px] rounded-lg border border-app-border bg-white p-3 text-sm text-app-primary outline-none"
+              className="mt-2 min-h-[180px] rounded-lg border border-app-border bg-[var(--app-card-bg)] p-3 text-sm text-app-primary outline-none"
               contentEditable
               suppressContentEditableWarning
             />
@@ -716,7 +716,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
 
             <div className="mt-3 max-h-[52vh] space-y-3 overflow-auto pr-1">
               {pagedBatchOptions.map((s) => (
-                <div key={s.id} className="rounded-lg border border-app-border bg-white p-3">
+                <div key={s.id} className="rounded-lg border border-app-border bg-[var(--app-card-bg)] p-3">
                   <p className="font-medium text-app-primary">
                     {s.name} <span className="text-xs text-app-secondary">({s.source_type})</span>
                   </p>
@@ -753,7 +753,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
                             {db.tables.map((t) => {
                               const tableKey = `${dbKey}::${t.name}`;
                               return (
-                                <label key={tableKey} className="flex items-start gap-2 rounded-md border border-app-border bg-white px-2 py-1.5 text-xs text-app-ink">
+                                <label key={tableKey} className="flex items-start gap-2 rounded-md border border-app-border bg-[var(--app-card-bg)] px-2 py-1.5 text-xs text-app-ink">
                                   <input
                                     type="checkbox"
                                     checked={!!selectedTables[tableKey]}

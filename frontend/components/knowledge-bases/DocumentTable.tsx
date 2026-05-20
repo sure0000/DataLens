@@ -42,7 +42,7 @@ export default function DocumentTable({
   selectedDocId,
 }: DocumentTableProps) {
   return (
-    <div className="overflow-hidden rounded-xl border border-app-border bg-white shadow-sm">
+    <div className="overflow-hidden rounded-xl border border-app-border bg-[var(--app-card-bg)]">
       <table className="app-table">
         <thead>
           <tr>
@@ -170,7 +170,7 @@ export default function DocumentTable({
                           {chunks.map((c) => (
                             <div
                               key={c.id}
-                              className="rounded-lg border border-app-border bg-white p-3"
+                              className="rounded-lg border border-app-border bg-[var(--app-card-bg)] p-3"
                             >
                               <div className="flex items-center justify-between gap-2 mb-1">
                                 <span className="text-xs text-app-muted">

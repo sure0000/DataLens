@@ -120,8 +120,8 @@ export default function PipelineStep({ step }: PipelineStepProps) {
             : status === "progress"
             ? "border-blue-200 bg-blue-50 text-blue-700"
             : status === "skipped"
-            ? "border-app-border bg-white text-app-muted"
-            : "border-app-border bg-white text-app-muted"
+            ? "border-app-border bg-[var(--app-card-bg)] text-app-muted"
+            : "border-app-border bg-[var(--app-card-bg)] text-app-muted"
         }`}
       >
         {status === "done" ? "✓ 完成" : status === "progress" ? "◐ 进行中" : status === "skipped" ? "— 跳过" : "○ 待开始"}

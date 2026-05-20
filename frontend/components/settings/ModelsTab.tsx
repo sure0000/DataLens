@@ -61,7 +61,7 @@ export default function ModelsTab({ loading, connections, onAdd, onView, onDelet
               暂无接入，请点击右上角「新增接入」。
             </div>
           ) : (
-            <ul className="mt-3 divide-y divide-app-border overflow-hidden rounded-xl border border-app-border bg-white">
+            <ul className="mt-3 divide-y divide-[var(--app-card-border)] overflow-hidden rounded-xl border border-[var(--app-card-border)] bg-[var(--app-card-bg)]">
               {connections.map((row) => (
                 <li key={row.id} className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4">
                   <div className="min-w-0 flex-1 space-y-1">
@@ -86,7 +86,7 @@ export default function ModelsTab({ loading, connections, onAdd, onView, onDelet
                     </button>
                     <button
                       type="button"
-                      className="rounded-lg border border-rose-200 bg-white px-3 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50"
+                      className="rounded-lg border border-[var(--app-card-border)] bg-[var(--app-card-bg)] px-3 py-1.5 text-xs font-medium text-rose-400 hover:bg-[var(--app-surface-hover)]"
                       onClick={() => onDelete(row.id)}
                     >
                       删除

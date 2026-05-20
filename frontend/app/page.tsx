@@ -90,7 +90,6 @@ export default function Home() {
   return (
     <main className="app-page">
       <PageHeader
-        breadcrumbs={[{ label: "首页" }, { label: "业务域" }]}
         title="业务域"
         subtitle="在这里维护业务域定义，并关联数据表范围与业务描述。"
         actionsBelowSubtitle

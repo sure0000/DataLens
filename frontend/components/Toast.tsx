@@ -22,10 +22,10 @@ export default function Toast({ message, tone = "success", duration = 4000, onCl
 
   const toneClass =
     tone === "error"
-      ? "border-rose-300/60 bg-rose-50 text-rose-700"
+      ? "border-rose-800/40 bg-rose-950/60 text-rose-300"
       : tone === "info"
-        ? "border-sky-300/60 bg-sky-50 text-sky-700"
-        : "border-emerald-300/60 bg-emerald-50 text-emerald-700";
+        ? "border-sky-800/40 bg-sky-950/60 text-sky-300"
+        : "border-emerald-800/40 bg-emerald-950/60 text-emerald-300";
 
   return (
     <div className="pointer-events-none fixed right-4 top-4 z-[150]" role="status" aria-live="polite">

@@ -11,7 +11,7 @@ interface SessionListProps {
 
 export default function SessionList({ sessions, getPreview, onOpen, onDelete }: SessionListProps) {
   return (
-    <div className="divide-y divide-app-subtle rounded-xl bg-white/60">
+    <div className="divide-y divide-[var(--app-card-border)] rounded-xl bg-[var(--app-card-bg)]">
       {sessions.map((session) => (
         <div
           key={session.id}
@@ -34,7 +34,7 @@ export default function SessionList({ sessions, getPreview, onOpen, onDelete }: 
           </button>
           <button
             type="button"
-            className="shrink-0 self-center rounded-md px-2 py-1.5 text-xs text-[var(--app-danger)] hover:bg-red-50"
+            className="shrink-0 self-center rounded-md px-2 py-1.5 text-xs text-[var(--app-danger)] hover:bg-[var(--app-surface-hover)]"
             onClick={() => onDelete(session.id)}
           >
             删除

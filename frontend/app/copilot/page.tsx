@@ -641,10 +641,10 @@ function CopilotPageContent() {
                 </div>
 
                 <div className="mb-6">
-                  <div className="flex min-h-[48px] items-end gap-2 rounded-full border border-neutral-200 bg-white px-3 py-2 shadow-[0_1px_2px_rgba(15,23,42,0.05)] sm:items-center">
+                  <div className="flex min-h-[48px] items-end gap-2 rounded-full border border-[var(--app-card-border)] bg-[var(--app-card-bg)] px-3 py-2 sm:items-center">
                     <button
                       type="button"
-                      className="mb-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-neutral-500 transition hover:bg-neutral-100 hover:text-neutral-800 sm:mb-0"
+                      className="mb-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[var(--app-text-secondary)] transition hover:bg-[var(--app-surface-hover)] hover:text-[var(--app-text-primary)] sm:mb-0"
                       aria-label="清空输入"
                       onClick={() => {
                         setQuestion("");
@@ -724,7 +724,7 @@ function CopilotPageContent() {
                   {QUICK_QUESTIONS.map((item) => (
                     <button
                       key={item}
-                      className="inline-flex min-h-[2rem] items-center justify-center rounded-full border border-app-border bg-white px-3 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
+                      className="inline-flex min-h-[2rem] items-center justify-center rounded-full border border-app-border bg-[var(--app-card-bg)] px-3 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
                       onClick={() => {
                         setQuestion(item);
                         questionInputRef.current?.focus();

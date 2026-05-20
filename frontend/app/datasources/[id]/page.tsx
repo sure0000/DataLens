@@ -61,7 +61,7 @@ export default function DataSourceDetailPage({ params }: { params: { id: string 
   return (
     <main className="app-page">
       <PageHeader
-        breadcrumbs={[{ label: "首页", href: "/" }, { label: "数据源", href: "/datasources" }, { label: catalog.datasource.name }]}
+        breadcrumbs={[{ label: "数据源", href: "/datasources" }, { label: catalog.datasource.name }]}
         title={catalog.datasource.name}
         subtitle={`${catalog.datasource.source_type} / ${catalog.datasource.database}`}
         meta={<span className="break-words">备注：{catalog.datasource.description || "无备注"}</span>}

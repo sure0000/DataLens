@@ -21,9 +21,9 @@ type DatabaseCatalog = {
 };
 
 const STATUS_STYLE: Record<string, string> = {
-  done: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  analyzing: "bg-sky-50 text-sky-700 border-sky-200",
-  error: "bg-rose-50 text-rose-700 border-rose-200",
+  done: "bg-emerald-950/60 text-emerald-300 border-emerald-800/40",
+  analyzing: "bg-sky-950/60 text-sky-300 border-sky-800/40",
+  error: "bg-rose-950/60 text-rose-300 border-rose-800/40",
   pending: "bg-app-hover text-app-secondary border-app-border",
 };
 const STATUS_LABEL: Record<string, string> = {
@@ -91,7 +91,6 @@ export default function DatabaseDetailPage({ params }: { params: { id: string; d
     <main className="app-page">
       <PageHeader
         breadcrumbs={[
-          { label: "首页", href: "/" },
           { label: "数据源", href: "/datasources" },
           { label: catalog.datasource.name, href: `/datasources/${params.id}` },
           { label: catalog.database.name }

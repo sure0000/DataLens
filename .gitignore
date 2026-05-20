@@ -35,3 +35,4 @@ build/
 # IDE / editor
 .idea/
 .vscode/
+.design-extract/

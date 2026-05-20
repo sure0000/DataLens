@@ -182,7 +182,6 @@ export default function TableDetail({ params }: { params: { id: string } }) {
     <main className="app-page">
       <PageHeader
         breadcrumbs={[
-          { label: "首页", href: "/" },
           { label: "数据源", href: "/datasources" },
           ...(detail.table.datasource_id
             ? [{ label: detail.table.datasource_name || String(detail.table.datasource_id), href: `/datasources/${detail.table.datasource_id}` }]
@@ -250,7 +249,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
                 点击「添加知识」选择知识库或具体条目。
               </p>
             ) : (
-              <ul className="mt-3 divide-y divide-app-subtle rounded-xl border border-app-border bg-white">
+              <ul className="mt-3 divide-y divide-app-subtle rounded-xl border border-app-border bg-[var(--app-card-bg)]">
                 {(detail.knowledge_bases || []).map((kb) => (
                   <li key={`kb-${kb.id}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-2.5">
                     <div className="min-w-0 flex-1">
@@ -468,7 +467,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
           />
         </div>
         {filteredColumns.length > 0 ? (
-          <div className="overflow-hidden rounded-xl border border-app-border bg-white">
+          <div className="overflow-hidden rounded-xl border border-app-border bg-[var(--app-card-bg)]">
             {filteredColumns.map((c, i) => (
               <ColumnCard col={c} key={`${c.column_name}-${i}`} isLast={i === filteredColumns.length - 1} />
             ))}

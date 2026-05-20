@@ -127,7 +127,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }
 
   function focusSessionSearch() {
-    if (!isCopilot) router.push("/copilot");
     setSearchMode(true);
     setTimeout(() => sessionSearchInputRef.current?.focus(), 0);
   }
@@ -298,19 +297,19 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <li key={s.id} className="group/session-item relative">
                 <div
                   className={`flex w-full items-center gap-0.5 rounded-[10px] py-0.5 pl-1 pr-0.5 transition-colors ${
-                    isSessionActive ? "bg-neutral-100" : "hover:bg-neutral-50"
+                    isSessionActive ? "bg-[var(--app-active-bg)]" : "hover:bg-[var(--app-surface-hover)]"
                   }`}
                 >
                   <button
                     type="button"
-                    className="min-w-0 flex-1 truncate py-2 pl-0.5 text-left text-[13px] leading-snug text-neutral-900"
+                    className="min-w-0 flex-1 truncate py-2 pl-0.5 text-left text-[13px] leading-snug text-[var(--app-text-primary)]"
                     onClick={() => selectCopilotSession(s.id)}
                   >
                     {s.title}
                   </button>
                   <button
                     type="button"
-                    className={`app-control-button h-7 w-7 shrink-0 p-0 text-neutral-500 ${
+                    className={`app-control-button h-7 w-7 shrink-0 p-0 ${
                       sessionMenuId === s.id ? "opacity-100" : "opacity-0 group-hover/session-item:opacity-100"
                     }`}
                     data-menu-root="1"
@@ -349,7 +348,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <div className="app-project-sidebar-children mt-0.5 pl-1">
             <button
               type="button"
-              className="text-xs text-neutral-500 underline-offset-2 hover:text-neutral-800 hover:underline"
+              className="text-xs text-[var(--app-text-secondary)] underline-offset-2 hover:text-[var(--app-text-primary)] hover:underline"
               onClick={() => toggleSidebarGroupSessionsFull(treeKey)}
             >
               {full ? `仅显示最近 ${SIDEBAR_SESSION_PREVIEW_LIMIT} 条` : `展开全部（${list.length}）`}
@@ -397,7 +396,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </Link>
           )}
           <button
-            className="app-control-button border border-[var(--app-card-border)] bg-white"
+            className="app-control-button border border-[var(--app-card-border)] bg-[var(--app-elevated-bg)]"
             onClick={toggleSidebar}
             title={sidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}
             aria-label={sidebarCollapsed ? "展开侧边栏" : "折叠侧边栏"}
@@ -560,12 +559,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
                       <div className="app-project-sidebar-group">
                         <div
                           className={`app-project-sidebar-folder group/unassigned flex items-center gap-0.5 rounded-[10px] pr-1 transition-colors ${
-                            activeProjectId === "__unassigned__" ? "bg-neutral-100" : "hover:bg-neutral-50"
+                            activeProjectId === "__unassigned__" ? "bg-[var(--app-active-bg)]" : "hover:bg-[var(--app-surface-hover)]"
                           }`}
                         >
                           <button
                             type="button"
-                            className="app-control-button h-7 w-7 shrink-0 p-0 text-neutral-500"
+                            className="app-control-button h-7 w-7 shrink-0 p-0"
                             aria-expanded={isSidebarGroupOpen("__unassigned__")}
                             aria-label="展开或折叠未归类下的会话"
                             onClick={() => toggleSidebarGroup("__unassigned__")}
@@ -577,13 +576,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
                           </button>
                           <button
                             type="button"
-                            className="flex min-w-0 flex-1 items-center gap-2 px-0.5 py-2 text-left text-[13px] font-medium text-neutral-900"
+                            className="flex min-w-0 flex-1 items-center gap-2 px-0.5 py-2 text-left text-[13px] font-medium text-[var(--app-text-primary)]"
                             onClick={() => openProjectView("__unassigned__")}
                           >
-                            <Icon name="folder" className="h-[18px] w-[18px] shrink-0 text-neutral-500" />
+                            <Icon name="folder" className="h-[18px] w-[18px] shrink-0 text-[var(--app-text-secondary)]" />
                             <span className="min-w-0 flex-1 truncate">
                               未归类
-                              <span className="font-normal text-neutral-400"> ({unassignedSessionsSidebar.length})</span>
+                              <span className="font-normal text-[var(--app-text-placeholder)]"> ({unassignedSessionsSidebar.length})</span>
                             </span>
                           </button>
                         </div>
@@ -601,7 +600,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                           <div key={project.id} className="app-project-sidebar-group">
                             {isEditing ? (
                               <input
-                                className="app-input w-full rounded-[10px] border border-neutral-200 px-2 py-2 text-[13px]"
+                                className="app-input w-full rounded-[10px] px-2 py-2 text-[13px]"
                                 value={editingProjectName}
                                 autoFocus
                                 onChange={(e) => setEditingProjectName(e.target.value)}
@@ -617,12 +616,12 @@ export default function AppShell({ children }: { children: ReactNode }) {
                             ) : (
                               <div
                                 className={`app-project-sidebar-folder group/proj relative flex items-center gap-0.5 rounded-[10px] pr-1 transition-colors ${
-                                  activeProjectId === project.id ? "bg-neutral-100" : "hover:bg-neutral-50"
+                                  activeProjectId === project.id ? "bg-[var(--app-active-bg)]" : "hover:bg-[var(--app-surface-hover)]"
                                 }`}
                               >
                                 <button
                                   type="button"
-                                  className="app-control-button h-7 w-7 shrink-0 p-0 text-neutral-500"
+                                  className="app-control-button h-7 w-7 shrink-0 p-0"
                                   aria-expanded={isSidebarGroupOpen(treeKey)}
                                   aria-label={`展开或折叠「${project.name}」下的会话`}
                                   onClick={() => toggleSidebarGroup(treeKey)}
@@ -634,13 +633,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
                                 </button>
                                 <button
                                   type="button"
-                                  className="flex min-w-0 flex-1 items-center gap-2 px-0.5 py-2 text-left text-[13px] font-medium text-neutral-900"
+                                  className="flex min-w-0 flex-1 items-center gap-2 px-0.5 py-2 text-left text-[13px] font-medium text-[var(--app-text-primary)]"
                                   onClick={() => openProjectView(project.id)}
                                 >
-                                  <Icon name="folder" className="h-[18px] w-[18px] shrink-0 text-neutral-500" />
+                                  <Icon name="folder" className="h-[18px] w-[18px] shrink-0 text-[var(--app-text-secondary)]" />
                                   <span className="min-w-0 flex-1 truncate">
                                     {project.name}
-                                    <span className="font-normal text-neutral-400"> ({count})</span>
+                                    <span className="font-normal text-[var(--app-text-placeholder)]"> ({count})</span>
                                   </span>
                                 </button>
                                 <button

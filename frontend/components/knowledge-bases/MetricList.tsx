@@ -31,7 +31,7 @@ export default function MetricList({ metrics, loading }: MetricListProps) {
   }
 
   return (
-    <div className="overflow-hidden rounded-xl border border-app-border bg-white shadow-sm">
+    <div className="overflow-hidden rounded-xl border border-app-border bg-[var(--app-card-bg)]">
       <table className="app-table">
         <thead>
           <tr>

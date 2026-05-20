@@ -405,7 +405,6 @@ export default function SourceDetailPage({
     <main className="app-page">
       <PageHeader
         breadcrumbs={[
-          { label: "首页", href: "/" },
           { label: "语义知识库", href: "/knowledge-bases" },
           { label: kb?.name || "…", href: `/knowledge-bases/${kbId}` },
           { label: sourceTitle },
@@ -598,7 +597,7 @@ function SourceDocumentsTab({
 
   return (
     <>
-      <div className="overflow-hidden rounded-xl border border-app-border bg-white shadow-sm">
+      <div className="overflow-hidden rounded-xl border border-app-border bg-[var(--app-card-bg)]">
         <table className="app-table">
           <thead>
             <tr>
