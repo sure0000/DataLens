@@ -1,12 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 import PageHeader from "../../../components/PageHeader";
 import Toast from "../../../components/Toast";
 import { api, ApiError, formatApiError } from "../../../lib/api";
+import { tabActive, tabInactive } from "../../../lib/themeClasses";
 
 import type {
   ApiSource,
@@ -17,6 +18,10 @@ import type {
 } from "../../../components/knowledge-bases/types";
 
 import EditKbModal from "../../../components/knowledge-bases/EditKbModal";
+import CleanPipeline from "../../../components/knowledge-bases/CleanPipeline";
+import { computePipelineSteps } from "../../../components/knowledge-bases/utils";
+import type { PipelineStats } from "../../../components/knowledge-bases/types";
+import OntologyWorkspace from "../../../components/ontology/OntologyWorkspace";
 import GitSourceForm, {
   defaultGitFormData,
   type GitSourceFormData,
@@ -41,6 +46,7 @@ type GitHubDiagResponse = {
 
 export default function KnowledgeBaseDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const kbId = Number(params.id);
 
   // ── Core data ──
@@ -103,6 +109,12 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   // ── Tag loading ──
   const [tagLoading, setTagLoading] = useState(false);
 
+  // ── 视图 Tab：来源 | 本体建模 ──
+  type KbViewTab = "sources" | "ontology";
+  const [activeView, setActiveView] = useState<KbViewTab>("sources");
+  const [pipelineStats, setPipelineStats] = useState<PipelineStats | null>(null);
+  const [pipelineRunning, setPipelineRunning] = useState(false);
+
   // ═══════════════════════════════════════════════════
   // Data fetching
   // ═══════════════════════════════════════════════════
@@ -113,6 +125,35 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       const res = await api<{ documents: DocRow[] }>(`/api/knowledge-bases/${kbId}/documents`);
       setDocuments(res.documents ?? []);
     } catch { setDocuments([]); } finally { setDocsLoading(false); }
+  }
+
+  async function loadPipelineStats() {
+    try {
+      const stats = await api<PipelineStats>(`/api/knowledge-bases/${kbId}/pipeline-stats`);
+      setPipelineStats(stats);
+    } catch {
+      setPipelineStats(null);
+    }
+  }
+
+  async function runSemanticPipeline() {
+    setPipelineRunning(true);
+    try {
+      const res = await api<{ status: string; run_id?: number }>(
+        `/api/knowledge-bases/${kbId}/semantic-pipeline/run`,
+        { method: "POST" },
+      );
+      if (res.status === "running") {
+        notifyUser("语义提取已在运行中，请稍后刷新查看结果", "info");
+      } else {
+        notifyUser("语义提取完成，正在刷新数据…", "success");
+      }
+      await loadPipelineStats();
+    } catch (e: unknown) {
+      notifyUser(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "启动失败", "error");
+    } finally {
+      setPipelineRunning(false);
+    }
   }
 
   async function loadAll() {
@@ -129,6 +170,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       setGitSources(gitRes.git_sources ?? []);
       setApiSources(apiRes.api_sources ?? []);
       loadDocuments();
+      loadPipelineStats();
     } catch {
       setKb(null); setEntries([]); setGitSources([]); setApiSources([]);
     } finally {
@@ -137,6 +179,11 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   }
 
   useEffect(() => { loadAll(); }, [kbId]);
+
+  useEffect(() => {
+    const tab = searchParams.get("tab");
+    if (tab === "ontology") setActiveView("ontology");
+  }, [searchParams]);
 
   // Close settings menu on outside click
   useEffect(() => {
@@ -351,6 +398,10 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   // Render
   // ═══════════════════════════════════════════════════
 
+  const hasGitSource = gitSources.length > 0;
+  const pipelineSteps = computePipelineSteps(pipelineStats, hasGitSource);
+  const hasIndexedDocs = documents.some((d) => d.status === "indexed");
+
   return (
     <main className="app-page">
       <PageHeader
@@ -359,9 +410,19 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
           { label: kb?.name || "…" },
         ]}
         title={kb?.name || "语义知识库"}
-        subtitle={kb?.description || "文档经过清洗、分块、向量化后进入语义索引，支持混合检索（向量 + 关键词）。"}
+        subtitle={kb?.description || "文档导入后自动清洗、分块、向量化；语义流水线提取术语与指标，并同步到 Fuseki RDF 本体层。"}
         actions={
           <div className="app-toolbar flex-wrap">
+            {activeView === "ontology" && hasIndexedDocs && (
+              <button
+                type="button"
+                className={`app-button app-toolbar-action ${pipelineRunning ? "is-loading" : ""}`}
+                disabled={pipelineRunning}
+                onClick={() => void runSemanticPipeline()}
+              >
+                {pipelineRunning ? "运行中…" : "运行语义流水线"}
+              </button>
+            )}
             <div className="relative" ref={settingsMenuRef}>
               <button
                 className="app-button-secondary app-toolbar-action"
@@ -402,6 +463,33 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
 
       {!loading && kb && (
         <>
+          <div className="mt-4 flex items-center gap-1 border-b border-app-border">
+            <button
+              type="button"
+              className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeView === "sources" ? tabActive : tabInactive
+              }`}
+              onClick={() => setActiveView("sources")}
+            >
+              来源
+            </button>
+            <button
+              type="button"
+              className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
+                activeView === "ontology" ? tabActive : tabInactive
+              }`}
+              onClick={() => setActiveView("ontology")}
+            >
+              本体建模
+            </button>
+          </div>
+
+          {activeView === "sources" ? (
+          <>
+          <div className="mt-6">
+            <CleanPipeline steps={pipelineSteps} />
+          </div>
+
           <div className="mt-6">
             <SourceCardGrid
               gitSources={gitSources}
@@ -419,6 +507,15 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
           </div>
 
           {docsLoading && <p className="text-sm text-app-muted mt-3">加载文档状态…</p>}
+          </>
+          ) : (
+          <div className="mt-4 flex min-h-[480px] flex-col">
+            <CleanPipeline steps={pipelineSteps} />
+            <div className="mt-4 min-h-0 flex-1">
+              <OntologyWorkspace fixedKbId={kbId} embedded />
+            </div>
+          </div>
+          )}
 
           {/* ── Modals ── */}
           <ImportPickerModal

@@ -140,9 +140,9 @@ def run_pipeline(db: Session, doc: Document, raw_text: str) -> None:
 
         timings["embed_ms"] = int((time.monotonic() - t0) * 1000)
 
-        # Stage 5: semantic structuring（轻量本体：role + grounding）
+        # Stage 5: ontology assertion (LLM structuring + RDF triples)
         t0 = time.monotonic()
-        _set_document_status(db, doc, "structuring")
+        _set_document_status(db, doc, "ontology_assertion")
         settings = get_settings()
         struct_result = structure_document_chunks(
             db,

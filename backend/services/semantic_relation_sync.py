@@ -1,4 +1,9 @@
-"""语义关系同步：从 chunk / 术语 / 指标 / 血缘写入 semantic_relations。"""
+"""语义关系同步：从 chunk / 术语 / 指标 / 血缘写入 semantic_relations。
+
+.. deprecated::
+    Cutover 后语义源已迁移至 Fuseki ABox（``ontology_population`` / ``ontology_triple_cleaner``）。
+    本模块仅保留兼容旧 PipelineRun 统计与双写过渡。
+"""
 from __future__ import annotations
 
 import logging

@@ -5,6 +5,7 @@ import logging
 from config import get_settings
 from database import init_db
 from services.git_schedule import start_git_sync_scheduler, stop_git_sync_scheduler
+from services.ontology_loader import init_ontology
 from routers.analyze import router as analyze_router
 from routers.business_domains import router as business_domains_router
 from routers.connect import router as connect_router
@@ -18,6 +19,7 @@ from routers.api_sources import router as api_sources_router
 from routers.diagnostics import router as diagnostics_router
 from routers.knowledge_semantic import router as knowledge_semantic_router
 from routers.llm_settings import router as llm_settings_router
+from routers.ontology import router as ontology_router
 from routers.tables import router as tables_router
 
 settings = get_settings()
@@ -39,6 +41,11 @@ def on_startup() -> None:
     except Exception as exc:  # noqa: BLE001
         # Allow service startup even when local DB is unavailable.
         logger.warning("Database init skipped: %s", exc)
+    if get_settings().ontology_enabled:
+        try:
+            init_ontology()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Ontology init skipped: %s", exc)
     try:
         start_git_sync_scheduler()
     except Exception as exc:  # noqa: BLE001
@@ -71,4 +78,5 @@ app.include_router(api_sources_router)
 
 app.include_router(diagnostics_router)
 app.include_router(knowledge_semantic_router)
+app.include_router(ontology_router)
 app.include_router(llm_settings_router)

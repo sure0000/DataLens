@@ -1,0 +1,129 @@
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:  <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dl:   <https://datalens.local/ontology/> .
+
+dl:BusinessConcept a owl:Class ;
+  rdfs:label "业务概念"@zh .
+
+dl:BusinessTerm a owl:Class ;
+  rdfs:subClassOf skos:Concept , dl:BusinessConcept ;
+  rdfs:label "业务术语"@zh .
+
+dl:Metric a owl:Class ;
+  rdfs:subClassOf dl:BusinessConcept ;
+  rdfs:label "指标"@zh .
+
+dl:PhysicalTable a owl:Class ;
+  rdfs:label "物理表"@zh .
+
+dl:PhysicalColumn a owl:Class ;
+  rdfs:label "物理列"@zh .
+
+dl:JoinRelation a owl:Class ;
+  rdfs:label "JOIN 关系"@zh .
+
+dl:LineageAssertion a owl:Class ;
+  rdfs:label "血缘断言"@zh .
+
+dl:QuarantinedAssertion a owl:Class ;
+  rdfs:label "隔离区断言"@zh .
+
+dl:formula a owl:DatatypeProperty ;
+  rdfs:domain dl:Metric ;
+  rdfs:range xsd:string ;
+  rdfs:label "公式"@zh .
+
+dl:caliber a owl:DatatypeProperty ;
+  rdfs:domain dl:Metric ;
+  rdfs:range xsd:string ;
+  rdfs:label "口径"@zh .
+
+dl:platformId a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range xsd:integer ;
+  rdfs:label "平台 ID"@zh .
+
+dl:semanticType a owl:DatatypeProperty ;
+  rdfs:domain dl:PhysicalColumn ;
+  rdfs:range xsd:string .
+
+dl:semanticDescription a owl:DatatypeProperty ;
+  rdfs:domain dl:PhysicalColumn ;
+  rdfs:range xsd:string .
+
+dl:businessSummary a owl:DatatypeProperty ;
+  rdfs:domain dl:PhysicalTable ;
+  rdfs:range xsd:string .
+
+dl:confidence a owl:DatatypeProperty ;
+  rdfs:range xsd:decimal .
+
+dl:approvalStatus a owl:DatatypeProperty ;
+  rdfs:range xsd:string .
+
+dl:sourceType a owl:DatatypeProperty ;
+  rdfs:range xsd:string .
+
+dl:linkConfidence a owl:DatatypeProperty ;
+  rdfs:range xsd:decimal .
+
+dl:linkMethod a owl:DatatypeProperty ;
+  rdfs:range xsd:string .
+
+dl:inferred a owl:DatatypeProperty ;
+  rdfs:range xsd:boolean .
+
+dl:joinKey a owl:DatatypeProperty ;
+  rdfs:domain dl:JoinRelation ;
+  rdfs:range xsd:string .
+
+dl:rejectReason a owl:DatatypeProperty ;
+  rdfs:domain dl:QuarantinedAssertion ;
+  rdfs:range xsd:string .
+
+dl:rawTriple a owl:DatatypeProperty ;
+  rdfs:domain dl:QuarantinedAssertion ;
+  rdfs:range xsd:string .
+
+dl:suggestedFix a owl:DatatypeProperty ;
+  rdfs:domain dl:QuarantinedAssertion ;
+  rdfs:range xsd:string .
+
+dl:mapsToColumn a owl:ObjectProperty ;
+  rdfs:domain dl:BusinessTerm ;
+  rdfs:range dl:PhysicalColumn ;
+  rdfs:label "映射到列"@zh .
+
+dl:computedFromTable a owl:ObjectProperty ;
+  rdfs:domain dl:Metric ;
+  rdfs:range dl:PhysicalTable ;
+  rdfs:label "计算来源表"@zh .
+
+dl:joinableWith a owl:ObjectProperty ;
+  rdfs:domain dl:PhysicalTable ;
+  rdfs:range dl:PhysicalTable ;
+  rdfs:label "可 JOIN"@zh .
+
+dl:leftTable a owl:ObjectProperty ;
+  rdfs:domain dl:JoinRelation ;
+  rdfs:range dl:PhysicalTable .
+
+dl:rightTable a owl:ObjectProperty ;
+  rdfs:domain dl:JoinRelation ;
+  rdfs:range dl:PhysicalTable .
+
+dl:transformsFrom a owl:ObjectProperty ;
+  rdfs:domain dl:PhysicalTable ;
+  rdfs:range dl:PhysicalTable ;
+  rdfs:label "血缘来源"@zh .
+
+dl:aliasOf a owl:ObjectProperty ;
+  rdfs:subPropertyOf skos:exactMatch ;
+  rdfs:domain dl:BusinessConcept ;
+  rdfs:range dl:BusinessConcept .
+
+dl:sourceChunk a owl:ObjectProperty ;
+  rdfs:range owl:Thing .

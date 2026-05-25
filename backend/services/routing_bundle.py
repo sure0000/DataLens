@@ -64,5 +64,16 @@ def build_routing_search_bundle(
                 embed_texts=_embed,
             )
         )
+        # Ontology SPARQL supplement
+        from config import get_settings
+        from services.routing.ontology_router import search_ontology_metrics_and_terms
+
+        if get_settings().ontology_enabled:
+            onto_text, onto_tables, onto_bonuses = search_ontology_metrics_and_terms(db, q, kb_ids)
+            if onto_text:
+                bundle.metric_term_text = (bundle.metric_term_text + "\n" + onto_text).strip()
+            bundle.metric_bound_table_ids |= onto_tables
+            for tid, bonus in onto_bonuses.items():
+                bundle.metric_table_bonuses[tid] = bundle.metric_table_bonuses.get(tid, 0) + bonus
 
     return bundle

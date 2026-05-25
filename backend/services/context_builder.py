@@ -899,6 +899,15 @@ def build_priority_context(
     trace.fallback_reason = fallback_reason
     if final_scores:
         trace.top_table_scores = _build_top_table_scores(final_scores, {k: set(v) for k, v in cand_sources.items()}, tables_by_id)
+        for row in trace.top_table_scores:
+            sources = row.get("sources") or []
+            if "ontology_graph" in sources:
+                trace.ontology_trace.append({
+                    "type": "table",
+                    "iri": f"https://datalens.local/data/table/{row.get('table_id')}",
+                    "label": row.get("fq_name"),
+                    "source": "ontology_graph",
+                })
     elif table_id and preferred_table:
         trace.top_table_scores = [{"table_id": preferred_table.id, "fq_name": f"{preferred_table.database_name}.{preferred_table.table_name}", "score": 1.0, "sources": ["locked_table"]}]
 
@@ -1023,6 +1032,17 @@ def collect_knowledge_context_text(
             sem_lines.append(block)
         if len(sem_lines) > 1:
             sections.append("\n".join(sem_lines))
+
+    # Ontology SPARQL context supplement
+    from config import get_settings
+    if get_settings().ontology_enabled and kb_ids and routing_bundle and routing_bundle.metric_bound_table_ids:
+        from services.routing.ontology_router import build_ontology_context_snippet
+
+        onto_ctx = build_ontology_context_snippet(
+            db, list(routing_bundle.metric_bound_table_ids), kb_ids
+        )
+        if onto_ctx.strip():
+            sections.append("[本体语义层 — SPARQL 上下文]\n" + onto_ctx.strip())
 
     text = "\n\n".join(sections).strip()
     if len(text) > max_total_chars:

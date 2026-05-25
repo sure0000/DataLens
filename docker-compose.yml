@@ -11,14 +11,34 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
 
+  fuseki:
+    image: stain/jena-fuseki:4.10.0
+    ports:
+      - "${FUSEKI_PORT:-3030}:3030"
+    environment:
+      ADMIN_PASSWORD: ${FUSEKI_ADMIN_PASSWORD:-admin}
+      FUSEKI_DATASET_1: ${FUSEKI_DATASET:-datalens}
+    volumes:
+      - ./.run/fuseki-data:/fuseki
+    command: ["--update=true", "/${FUSEKI_DATASET:-datalens}"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:3030/\\$$/ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
   backend:
     build: ./backend
     ports:
       - "8000:8000"
     env_file:
       - .env
+    environment:
+      - FUSEKI_URL=http://fuseki:3030
     depends_on:
       - postgres
+      - fuseki
 
   frontend:
     build: ./frontend

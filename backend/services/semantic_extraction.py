@@ -440,13 +440,25 @@ async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None
         run.steps = steps_status
         db.commit()
 
-        # Step 4: 语义关系图同步
+        # Step 5: 本体建模 — 同步术语/指标/血缘/关联表 → Fuseki RDF
         try:
-            rel_stats = sync_semantic_relations_for_kb(db, kb_id)
-            steps_status["semantic_relations"] = {"status": "done", **rel_stats}
+            from config import get_settings
+            if get_settings().ontology_enabled:
+                from services.ontology_sync_service import sync_knowledge_base_to_rdf
+
+                sync_out = sync_knowledge_base_to_rdf(db, kb_id)
+                steps_status["ontology_modeling"] = {
+                    "status": "done",
+                    "written": sync_out.get("written", 0),
+                    "quarantined": sync_out.get("quarantined", 0),
+                    "physical_tables": sync_out.get("physical_tables", {}),
+                }
+            else:
+                rel_stats = sync_semantic_relations_for_kb(db, kb_id)
+                steps_status["ontology_modeling"] = {"status": "skipped", "reason": "ontology_disabled", **rel_stats}
         except Exception:
-            _logger.warning("Semantic relation sync failed for kb=%s", kb_id, exc_info=True)
-            steps_status["semantic_relations"] = {"status": "failed", "reason": "sync_error"}
+            _logger.warning("Ontology modeling sync failed for kb=%s", kb_id, exc_info=True)
+            steps_status["ontology_modeling"] = {"status": "failed", "reason": "sync_error"}
         run.steps = steps_status
         db.commit()
         return steps_status

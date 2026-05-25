@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from sqlalchemy import select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models import Document, DocumentChunk, DataLineage, KnowledgeEntry
@@ -251,7 +252,7 @@ def structure_document_chunks(
     *,
     max_chunks: int = _DEFAULT_MAX_CHUNKS,
 ) -> dict[str, Any]:
-    """同步入口：结构化分块并回写 entry.semantic_role。"""
+    """同步入口：结构化分块、回写 entry.semantic_role，并断言本体三元组。"""
     structured = asyncio.run(
         structure_document_chunks_async(db, document_id, max_chunks=max_chunks)
     )
@@ -261,14 +262,36 @@ def structure_document_chunks(
     join_edges = 0
     metric_refs = 0
     graph_relations = 0
+    ontology_result: dict[str, Any] = {}
     if kb_id is not None:
         join_edges = sync_join_edges_from_document(db, document_id, kb_id)
         metric_refs = apply_metric_bound_table_refs_from_document(db, document_id, kb_id)
         graph_relations = sync_relations_from_document(db, document_id, kb_id)
+        # Ontology assertion (Formal OWL path)
+        try:
+            from config import get_settings
+            if get_settings().ontology_enabled:
+                from services.context_builder import kb_ids_for_business_domain, tables_from_business_domain
+                from models import BusinessDomainKnowledgeBase
+                from services.ontology_population import populate_from_document
+
+                domain_row = db.execute(
+                    select(BusinessDomainKnowledgeBase.domain_id).where(
+                        BusinessDomainKnowledgeBase.knowledge_base_id == kb_id
+                    )
+                ).first()
+                domain_id = int(domain_row[0]) if domain_row else None
+                domain_tables = tables_from_business_domain(db, domain_id) if domain_id else []
+                ontology_result = populate_from_document(
+                    db, document_id, kb_id=kb_id, domain_tables=domain_tables, domain_id=domain_id
+                )
+        except Exception:
+            _logger.warning("Ontology assertion failed doc=%s", document_id, exc_info=True)
     return {
         "structured_chunks": structured,
         "entry_semantic_role": role,
         "join_edges_synced": join_edges,
         "metrics_bound_refs": metric_refs,
         "semantic_relations_synced": graph_relations,
+        "ontology": ontology_result,
     }

@@ -197,7 +197,8 @@ def delete_knowledge_base(kb_id: int, db: Session = Depends(get_db)) -> dict:
         db.execute(select(KnowledgeEntry.id).where(KnowledgeEntry.knowledge_base_id == kb_id)).scalars().all()
     )
     delete_embeddings_for_knowledge_entries(db, entry_ids)
-    db.delete(kb)
+    # 使用 SQL DELETE + DB 级联，避免 ORM 加载 document_chunks（列未迁移时会报错）
+    db.execute(delete(KnowledgeBase).where(KnowledgeBase.id == kb_id))
     db.commit()
     return {"ok": True}
 

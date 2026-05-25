@@ -193,7 +193,10 @@ export function computePipelineSteps(
   if (!stats) return [];
 
   const lastRun = stats.last_pipeline_run;
-  const lastSteps = (lastRun?.steps ?? {}) as Record<string, { status?: string; count?: number }>;
+  const lastSteps = (lastRun?.steps ?? {}) as Record<
+    string,
+    { status?: string; count?: number; written?: number }
+  >;
   const steps: {
     id: string;
     label: string;
@@ -296,6 +299,47 @@ export function computePipelineSteps(
     isExclusive: false,
     totalCount: lineageStatus === "done" ? lineageDone : undefined,
     doneCount: lineageStatus === "done" ? lineageDone : undefined,
+  });
+
+  // Step 5: 本体建模 — 同步术语/指标/血缘到 Fuseki RDF
+  const ontologyStep = lastSteps["ontology_modeling"];
+  const rdfTriples = stats.rdf_stats?.triple_count ?? 0;
+  const ontologyWritten = typeof ontologyStep?.count === "number" ? ontologyStep.count : ontologyStep?.written;
+  let ontologyStatus: PipelineStepStatus = "waiting";
+  if (ontologyStep?.status === "skipped") {
+    ontologyStatus = "skipped";
+  } else if (ontologyStep?.status === "failed") {
+    ontologyStatus = "done";
+  } else if (rdfTriples > 0 || ontologyStep?.status === "done") {
+    ontologyStatus = "done";
+  } else if (lastRun?.status === "running" && ontologyStep) {
+    ontologyStatus = "progress";
+  } else if (lastRun?.status === "completed" || lastRun?.status === "failed") {
+    ontologyStatus = ontologyStep ? "done" : "waiting";
+  }
+
+  const ontologyDesc =
+    ontologyStatus === "done" && rdfTriples > 0
+      ? `${rdfTriples} 条 RDF 三元组 · ${stats.rdf_stats?.storage_backend || "Fuseki"}`
+      : ontologyStatus === "skipped"
+        ? "本体层未启用"
+        : ontologyStatus === "progress"
+          ? "正在写入 Fuseki…"
+          : "将术语、指标与表结构同步到 RDF 图数据库";
+
+  steps.push({
+    id: "ontology-modeling",
+    label: "本体建模",
+    description: ontologyDesc,
+    status: ontologyStatus,
+    isExclusive: false,
+    totalCount: ontologyStatus === "done" && rdfTriples > 0 ? rdfTriples : undefined,
+    doneCount:
+      ontologyStatus === "done" && typeof ontologyWritten === "number"
+        ? ontologyWritten
+        : ontologyStatus === "done" && rdfTriples > 0
+          ? rdfTriples
+          : undefined,
   });
 
   return steps;

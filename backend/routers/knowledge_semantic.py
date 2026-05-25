@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from database import get_db, SessionLocal
+from config import get_settings
 from models import (
     BusinessTerm,
     DataLineage,
@@ -257,6 +258,28 @@ def get_pipeline_stats(kb_id: int, db: Session = Depends(get_db)):
         .limit(1)
     ).scalar_one_or_none()
 
+    rdf_stats: dict | None = None
+    if get_settings().ontology_enabled:
+        try:
+            from services.ontology_rdf_browser import fetch_kb_rdf_view
+
+            view = fetch_kb_rdf_view(kb_id)
+            from services.ontology_store import graph_stats
+
+            store = graph_stats()
+            prod = view.get("production", {})
+            rdf_stats = {
+                "triple_count": prod.get("triple_count"),
+                "term_count": prod.get("term_count"),
+                "metric_count": prod.get("metric_count"),
+                "physical_table_count": prod.get("physical_table_count"),
+                "quarantine_count": view.get("quarantine", {}).get("assertion_count", 0),
+                "storage_backend": store.get("storage_backend"),
+                "fuseki_live": store.get("fuseki_live"),
+            }
+        except Exception:
+            rdf_stats = None
+
     if last_run and last_run.status == "running" and last_run.started_at:
         elapsed = datetime.now(timezone.utc) - last_run.started_at
         if elapsed.total_seconds() > 300:
@@ -299,6 +322,7 @@ def get_pipeline_stats(kb_id: int, db: Session = Depends(get_db)):
             "started_at": last_run.started_at.isoformat() if last_run and last_run.started_at else None,
             "completed_at": last_run.completed_at.isoformat() if last_run and last_run.completed_at else None,
         } if last_run else None,
+        "rdf_stats": rdf_stats,
     }
 
 

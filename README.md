@@ -43,6 +43,10 @@ cp .env.example .env
 - `COPILOT_MAX_TABLES_WITHOUT_DOMAIN`：未选业务域时语义 top_k 表上限（默认 `20`）
 - `SEMANTIC_AUTO_APPROVE_CONFIDENCE`：术语/指标提取置信度 ≥ 此值自动 `approved`（默认 `80`）
 - `SEMANTIC_CHUNK_STRUCTURE_MAX`：单文档语义结构化最多处理的 chunk 数（默认 `40`）
+- **本体层 / 存储**（Formal OWL，见 [`docs/ONTOLOGY_CUTOVER.md`](docs/ONTOLOGY_CUTOVER.md)）：
+  - **默认**：Fuseki（`FUSEKI_URL=http://localhost:3030`），可用 Docker 或本地 Java Fuseki
+  - `./scripts/fuseki.sh start` / `FUSEKI_AUTO_START=true`：随 `./scripts/service.sh start` 启动 Docker Fuseki
+  - 调试回退：显式设置 `ONTOLOGY_LOCAL_STORE_ENABLED=true` 才写入本地 Trig 文件
 
 更多 Copilot 路由相关变量见 [`docs/COPILOT_ROUTING_OPTIMIZATION.md`](docs/COPILOT_ROUTING_OPTIMIZATION.md) §5。
 

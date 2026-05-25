@@ -25,6 +25,7 @@ export type RoutingTrace = {
   auto_domain_applied?: boolean;
   embed_calls?: number;
   kb_search_calls?: number;
+  ontology_trace?: { iri?: string; label?: string; type?: string; source?: string }[];
 };
 
 export type SqlReview = {

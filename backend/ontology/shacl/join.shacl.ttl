@@ -1,0 +1,21 @@
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix dl:   <https://datalens.local/ontology/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+dl:JoinShape a sh:NodeShape ;
+  sh:targetClass dl:JoinRelation ;
+  sh:property [
+    sh:path dl:leftTable ;
+    sh:minCount 1 ;
+    sh:class dl:PhysicalTable ;
+  ] ;
+  sh:property [
+    sh:path dl:rightTable ;
+    sh:minCount 1 ;
+    sh:class dl:PhysicalTable ;
+  ] ;
+  sh:property [
+    sh:path dl:joinKey ;
+    sh:minCount 1 ;
+    sh:datatype xsd:string ;
+  ] .

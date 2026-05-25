@@ -55,6 +55,27 @@ class Settings(BaseSettings):
     semantic_chunk_structure_max: int = Field(default=40, ge=1, le=200, alias="SEMANTIC_CHUNK_STRUCTURE_MAX")
     # 术语/指标提取置信度 ≥ 此值时自动 approved（否则 pending_review）
     semantic_auto_approve_confidence: float = Field(default=80.0, ge=0.0, le=100.0, alias="SEMANTIC_AUTO_APPROVE_CONFIDENCE")
+    # Ontology / Fuseki — RDF 默认写入 Fuseki（本地或 Docker），不再默认落盘 Trig
+    fuseki_url: str = Field(default="http://localhost:3030", alias="FUSEKI_URL")
+    fuseki_dataset: str = Field(default="datalens", alias="FUSEKI_DATASET")
+    fuseki_admin_password: str = Field(default="admin", alias="FUSEKI_ADMIN_PASSWORD")
+    ontology_ns: str = Field(default="https://datalens.local/ontology/", alias="ONTOLOGY_NS")
+    ontology_tbox_graph: str = Field(default="https://datalens.local/graph/tbox", alias="ONTOLOGY_TBOX_GRAPH")
+    ontology_enabled: bool = Field(default=True, alias="ONTOLOGY_ENABLED")
+    fuseki_auto_start: bool = Field(default=True, alias="FUSEKI_AUTO_START")
+    fuseki_fallback_memory: bool = Field(default=False, alias="FUSEKI_FALLBACK_MEMORY")
+    fuseki_wait_seconds: int = Field(default=30, ge=0, le=120, alias="FUSEKI_WAIT_SECONDS")
+    # 仅调试/离线：显式开启才写入 .run/ontology-store/*.trig
+    ontology_local_store_enabled: bool = Field(default=False, alias="ONTOLOGY_LOCAL_STORE_ENABLED")
+    ontology_local_store_path: str = Field(
+        default=".run/ontology-store/datalens.trig",
+        alias="ONTOLOGY_LOCAL_STORE_PATH",
+    )
+    ontology_min_confidence_auto_approve: float = Field(default=85.0, ge=0.0, le=100.0, alias="ONTOLOGY_MIN_CONFIDENCE_AUTO_APPROVE")
+    ontology_quarantine_on_ambiguous_link: bool = Field(default=True, alias="ONTOLOGY_QUARANTINE_ON_AMBIGUOUS_LINK")
+    ontology_merge_bidirectional_join: bool = Field(default=True, alias="ONTOLOGY_MERGE_BIDIRECTIONAL_JOIN")
+    ontology_inferred_max_hops: int = Field(default=3, ge=1, le=10, alias="ONTOLOGY_INFERRED_MAX_HOPS")
+    ontology_reconcile_cron_hours: int = Field(default=24, ge=1, alias="ONTOLOGY_RECONCILE_CRON_HOURS")
 
 
 @lru_cache

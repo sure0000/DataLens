@@ -1,0 +1,4 @@
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix dl:   <https://datalens.local/ontology/> .
+
+# Provenance annotations for ABox assertions

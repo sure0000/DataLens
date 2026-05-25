@@ -1,0 +1,4 @@
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix dl:   <https://datalens.local/ontology/> .
+
+# Business terms and metrics use skos:prefLabel, skos:definition, skos:altLabel

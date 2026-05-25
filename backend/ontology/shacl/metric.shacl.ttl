@@ -1,0 +1,15 @@
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix dl:   <https://datalens.local/ontology/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+dl:MetricShape a sh:NodeShape ;
+  sh:targetClass dl:Metric ;
+  sh:property [
+    sh:path skos:prefLabel ;
+    sh:minCount 1 ;
+  ] ;
+  sh:property [
+    sh:path dl:formula ;
+    sh:minCount 1 ;
+  ] .

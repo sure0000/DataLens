@@ -133,4 +133,21 @@ def apply_graph_expansion(
         sources.setdefault(tid, set()).add("semantic_graph")
         rank += 1
 
+    # Ontology SPARQL join expansion
+    if settings.ontology_enabled and primary_table_id:
+        from services.routing.ontology_router import expand_tables_via_ontology
+
+        onto_neighbors = expand_tables_via_ontology(
+            db, kb_ids, primary_table_id, allowed | {primary_table_id}, top_k=top_k
+        )
+        for tid in onto_neighbors:
+            if tid in scores:
+                sources.setdefault(tid, set()).add("ontology_graph")
+                continue
+            scores[tid] = scores.get(tid, 0.0) + settings.copilot_routing_weight_lineage / (
+                settings.rrf_k + rank + 1
+            )
+            sources.setdefault(tid, set()).add("ontology_graph")
+            rank += 1
+
     return scores, sources

@@ -17,12 +17,16 @@ BACKEND_PORT_DEFAULT=8000
 FRONTEND_PORT_DEFAULT=3000
 BACKEND_PORT="$BACKEND_PORT_DEFAULT"
 FRONTEND_PORT="$FRONTEND_PORT_DEFAULT"
+FUSEKI_AUTO_START="${FUSEKI_AUTO_START:-false}"
+FUSEKI_URL="${FUSEKI_URL:-}"
 
 if [[ -f "$ROOT_DIR/.env" ]]; then
   # shellcheck disable=SC1090
   source "$ROOT_DIR/.env"
   BACKEND_PORT="${BACKEND_PORT:-$BACKEND_PORT_DEFAULT}"
   FRONTEND_PORT="${FRONTEND_PORT:-$FRONTEND_PORT_DEFAULT}"
+  FUSEKI_AUTO_START="${FUSEKI_AUTO_START:-false}"
+  FUSEKI_URL="${FUSEKI_URL:-}"
 fi
 
 mkdir -p "$LOG_DIR"
@@ -90,7 +94,32 @@ stop_pid() {
   fi
 }
 
+start_fuseki_if_needed() {
+  # 默认启动 Fuseki（Docker）；本地 Java Fuseki 可手动监听同一端口
+  if [[ "${FUSEKI_AUTO_START:-true}" != "true" ]]; then
+    return 0
+  fi
+  if [[ -z "${FUSEKI_URL:-}" ]]; then
+    log "未配置 FUSEKI_URL，请设置 FUSEKI_URL=http://localhost:3030"
+    return 0
+  fi
+  if [[ -x "$ROOT_DIR/scripts/fuseki.sh" ]]; then
+    log "启动 Fuseki RDF 存储..."
+    "$ROOT_DIR/scripts/fuseki.sh" start || log "Fuseki 未就绪 — 请检查 Docker 或本地 Fuseki 是否在 ${FUSEKI_URL} 运行"
+  fi
+}
+
+stop_fuseki_if_managed() {
+  if [[ "${FUSEKI_AUTO_START:-false}" != "true" ]] || [[ -z "${FUSEKI_URL:-}" ]]; then
+    return 0
+  fi
+  if [[ -x "$ROOT_DIR/scripts/fuseki.sh" ]]; then
+    "$ROOT_DIR/scripts/fuseki.sh" stop || true
+  fi
+}
+
 start_backend() {
+  start_fuseki_if_needed
   remove_pid_file_if_stale "$BACKEND_PID_FILE"
   local pid
   pid="$(read_pid_file "$BACKEND_PID_FILE" || true)"
@@ -213,6 +242,10 @@ status() {
   bpid="$(read_pid_file "$BACKEND_PID_FILE" || true)"
   fpid="$(read_pid_file "$FRONTEND_PID_FILE" || true)"
 
+  if [[ -x "$ROOT_DIR/scripts/fuseki.sh" ]]; then
+    "$ROOT_DIR/scripts/fuseki.sh" status || true
+  fi
+
   if [[ -n "${bpid:-}" ]] && is_pid_running "$bpid"; then
     log "后端: 运行中 (pid=$bpid, port=$BACKEND_PORT)"
   else
@@ -231,10 +264,12 @@ usage() {
 用法: ./scripts/service.sh <start|stop|restart|status>
 
 命令:
-  start    启动前后端服务
-  stop     停止前后端服务
-  restart  重启前后端服务
-  status   查看服务状态
+  start    启动 Fuseki（若 FUSEKI_AUTO_START=true）+ 前后端服务
+  stop     停止前后端服务 + Fuseki 容器
+  restart  重启全部服务
+  status   查看 Fuseki / 前后端状态
+
+Fuseki 单独控制: ./scripts/fuseki.sh start|stop|status|logs
 EOF
 }
 
@@ -249,11 +284,13 @@ main() {
     stop)
       stop_frontend
       stop_backend
+      stop_fuseki_if_managed
       status
       ;;
     restart)
       stop_frontend
       stop_backend
+      stop_fuseki_if_managed
       start_backend
       start_frontend
       status

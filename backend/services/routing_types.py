@@ -35,6 +35,8 @@ class CopilotRoutingTrace:
     embed_calls: int = 0
     kb_search_calls: int = 0
 
+    ontology_trace: list[dict[str, Any]] = field(default_factory=list)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "routing_mode": self.routing_mode,
@@ -47,4 +49,5 @@ class CopilotRoutingTrace:
             "auto_domain_applied": self.auto_domain_applied,
             "embed_calls": self.embed_calls,
             "kb_search_calls": self.kb_search_calls,
+            "ontology_trace": self.ontology_trace,
         }

@@ -52,10 +52,14 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
 
+    # 分步提交：约束失败（如重复知识库名）不应回滚列/索引补丁
     with engine.begin() as conn:
         _ensure_safety_columns(conn)
+    with engine.begin() as conn:
         _ensure_safety_indexes(conn)
+    with engine.begin() as conn:
         _ensure_safety_constraints(conn)
+    with engine.begin() as conn:
         _run_data_migrations(conn)
 
 
@@ -127,14 +131,22 @@ def _ensure_safety_indexes(conn) -> None:
 
 
 def _ensure_safety_constraints(conn) -> None:
-    """添加唯一约束（无副作用）。"""
+    """添加唯一约束（无副作用）；存在重复数据时跳过对应约束，避免阻断列迁移。"""
     conn.execute(text("""
         DO $$ BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_datasource_name_host_db') THEN
                 ALTER TABLE data_sources ADD CONSTRAINT uq_datasource_name_host_db UNIQUE (name, host, database);
             END IF;
+        END $$;
+    """))
+    conn.execute(text("""
+        DO $$ BEGIN
             IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'uq_knowledge_base_name') THEN
-                ALTER TABLE knowledge_bases ADD CONSTRAINT uq_knowledge_base_name UNIQUE (name);
+                IF NOT EXISTS (
+                    SELECT 1 FROM knowledge_bases GROUP BY name HAVING COUNT(*) > 1
+                ) THEN
+                    ALTER TABLE knowledge_bases ADD CONSTRAINT uq_knowledge_base_name UNIQUE (name);
+                END IF;
             END IF;
         END $$;
     """))

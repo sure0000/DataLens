@@ -206,10 +206,19 @@ export interface PipelineStats {
     tags: string[];
   }[];
   lineage_stats: { done: number; processing: number; pending: number };
+  rdf_stats?: {
+    triple_count?: number;
+    term_count?: number;
+    metric_count?: number;
+    physical_table_count?: number;
+    quarantine_count?: number;
+    storage_backend?: string;
+    fuseki_live?: boolean;
+  } | null;
   last_pipeline_run: {
     id: number;
     status: string;
-    steps: Record<string, { status?: string; count?: number }> | null;
+    steps: Record<string, { status?: string; count?: number; written?: number }> | null;
     started_at: string | null;
     completed_at: string | null;
   } | null;

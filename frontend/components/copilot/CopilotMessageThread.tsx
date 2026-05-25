@@ -158,6 +158,19 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
                     已自动绑定推荐业务域「{m.routing_trace.domain_suggestion.domain_name}」参与本次路由。
                   </div>
                 )}
+                {(m.routing_trace?.ontology_trace?.length ?? 0) > 0 && (
+                  <div className="mb-2 rounded-lg border border-app-border bg-app-chip px-3 py-2 text-xs text-app-secondary">
+                    <p className="font-medium text-app-primary">本体路由来源</p>
+                    <ul className="mt-1 list-inside list-disc space-y-0.5">
+                      {m.routing_trace!.ontology_trace!.map((item, idx) => (
+                        <li key={`${item.iri}-${idx}`}>
+                          {item.label || item.iri}{" "}
+                          <span className="text-app-muted">({item.type || "concept"} · {item.source || "sparql"})</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
                 {m.sql_review?.review_required && (
                   <div className={`mb-2 rounded-lg px-3 py-2 text-xs ${alertWarning}`}>
                     <p className="font-medium text-app-primary">SQL 需人工确认后再执行</p>
