@@ -22,12 +22,39 @@ class Settings(BaseSettings):
     db_pool_size: int = Field(default=20, ge=1, le=50, alias="DB_POOL_SIZE")
     db_max_overflow: int = Field(default=30, ge=0, le=100, alias="DB_MAX_OVERFLOW")
     db_pool_recycle: int = Field(default=600, ge=60, alias="DB_POOL_RECYCLE")
-    # Copilot 未指定业务域时，最多带入多少张已登记表的元数据（防极端大库撑爆上下文）；指定业务域时以域内挂载为准、不受此上限约束。
-    copilot_max_tables_without_domain: int = Field(default=2000, ge=1, le=50000, alias="COPILOT_MAX_TABLES_WITHOUT_DOMAIN")
+    # Copilot 未指定业务域时，语义 top_k 硬上限（无域时按表向量筛表，而非按 created_at 全量加载）
+    copilot_max_tables_without_domain: int = Field(default=20, ge=1, le=50000, alias="COPILOT_MAX_TABLES_WITHOUT_DOMAIN")
+    # 域内语义路由（知识 + 表向量 RRF 融合）后进入 schema 的候选表上限
+    copilot_max_candidate_tables: int = Field(default=10, ge=1, le=100, alias="COPILOT_MAX_CANDIDATE_TABLES")
+    # 梯度 fallback 第二档：放宽阈值后的候选表上限
+    copilot_max_candidate_tables_expanded: int = Field(default=20, ge=1, le=200, alias="COPILOT_MAX_CANDIDATE_TABLES_EXPANDED")
+    # 表摘要向量检索 probe 数（在 allowed_table_ids 范围内取 top_k）
+    copilot_table_embed_top_k: int = Field(default=15, ge=1, le=200, alias="COPILOT_TABLE_EMBED_TOP_K")
+    # 候选表综合分阈值：低于则触发梯度 fallback
+    copilot_routing_min_score: float = Field(default=0.012, ge=0.0, alias="COPILOT_ROUTING_MIN_SCORE")
+    copilot_routing_min_score_relaxed: float = Field(default=0.006, ge=0.0, alias="COPILOT_ROUTING_MIN_SCORE_RELAXED")
+    copilot_routing_weight_knowledge: float = Field(default=1.0, ge=0.0, alias="COPILOT_ROUTING_WEIGHT_KNOWLEDGE")
+    copilot_routing_weight_table_emb: float = Field(default=1.0, ge=0.0, alias="COPILOT_ROUTING_WEIGHT_TABLE_EMB")
+    copilot_routing_explicit_link_bonus: float = Field(default=0.02, ge=0.0, alias="COPILOT_ROUTING_EXPLICIT_LINK_BONUS")
+    # 列向量维表扩表 probe 数
+    copilot_column_expand_top_k: int = Field(default=4, ge=0, le=20, alias="COPILOT_COLUMN_EXPAND_TOP_K")
+    copilot_routing_weight_column_expand: float = Field(default=0.008, ge=0.0, alias="COPILOT_ROUTING_WEIGHT_COLUMN_EXPAND")
+    # P2-1 自动业务域路由
+    copilot_auto_domain_enabled: bool = Field(default=True, alias="COPILOT_AUTO_DOMAIN_ENABLED")
+    copilot_auto_domain_apply_min_score: float = Field(default=0.55, ge=0.0, le=1.0, alias="COPILOT_AUTO_DOMAIN_APPLY_MIN_SCORE")
+    copilot_auto_domain_suggest_min_score: float = Field(default=0.2, ge=0.0, le=1.0, alias="COPILOT_AUTO_DOMAIN_SUGGEST_MIN_SCORE")
+    # P2-2 血缘 / JOIN 扩表
+    copilot_lineage_expand_top_k: int = Field(default=4, ge=0, le=20, alias="COPILOT_LINEAGE_EXPAND_TOP_K")
+    copilot_routing_weight_lineage: float = Field(default=0.006, ge=0.0, alias="COPILOT_ROUTING_WEIGHT_LINEAGE")
+    copilot_join_blacklist: str = Field(default="", alias="COPILOT_JOIN_BLACKLIST")
     # 语义流水线超时阈值（秒），超过此时间的 running 状态自动标记为 failed
     pipeline_run_timeout_seconds: int = Field(default=300, ge=60, le=3600, alias="PIPELINE_RUN_TIMEOUT_SECONDS")
     # RRF 融合常数 k
     rrf_k: int = Field(default=60, ge=1, alias="RRF_K")
+    # 知识库分块语义结构化：单文档最多 LLM 处理的 chunk 数
+    semantic_chunk_structure_max: int = Field(default=40, ge=1, le=200, alias="SEMANTIC_CHUNK_STRUCTURE_MAX")
+    # 术语/指标提取置信度 ≥ 此值时自动 approved（否则 pending_review）
+    semantic_auto_approve_confidence: float = Field(default=80.0, ge=0.0, le=100.0, alias="SEMANTIC_AUTO_APPROVE_CONFIDENCE")
 
 
 @lru_cache

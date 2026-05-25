@@ -21,11 +21,17 @@ from models import (
     TableSummary,
 )
 from services.context_builder import (
+    build_domain_context_block,
     build_priority_context,
     collect_knowledge_context_text,
     reasoning3_basis_chain,
     resolve_table_meta_for_trace,
+    tables_from_business_domain,
 )
+from services.routing.domain_router import resolve_effective_business_domain_id
+from services.routing.sql_post_validation import evaluate_sql_execution_review
+from services.routing_bundle import build_routing_search_bundle
+from services.routing_types import CopilotRoutingTrace
 from services.embedding_service import embed_and_store_async, search_similar_async
 from services.llm_service import (
     SqlCopilotContext,
@@ -81,7 +87,7 @@ async def answer(
             d = (detail or "").strip()
             await trace_callback({"id": step_id, "label": label, "detail": d})
 
-    # -------- 阶段 1：意图识别 --------
+    # -------- 阶段 1：guardrail + 意图识别（前置，避免 general_qa 加载全量 schema）--------
     await emit("intent_recognizing")
     await asyncio.sleep(0)
 
@@ -89,40 +95,7 @@ async def answer(
     if len(q_preview) > 900:
         q_preview = q_preview[:900] + "…"
 
-    refs = await search_similar_async(db, question, top_k=5, table_id=table_id, ref_type="query")
-    await trace_live("live_prep", "准备上下文", "已完成相似问法检索；若已选业务域，将先按域内知识库语义检索筛候选表再加载表元数据…")
-    await asyncio.sleep(0)
-
-    # -------- 阶段 2：上下文组装 --------
-    priority_context, schema, summary_text, preferred_table_id, table_scope_note = build_priority_context(
-        db, table_id, business_domain_id, question=question
-    )
-    await asyncio.sleep(0)
-
-    knowledge_text = collect_knowledge_context_text(db, question, business_domain_id, table_id)
-
-    if business_domain_id:
-        dom = db.get(BusinessDomain, business_domain_id)
-        if dom:
-            dom_desc_row = (
-                db.execute(
-                    select(BusinessDomainDescription)
-                    .where(BusinessDomainDescription.domain_id == business_domain_id)
-                    .order_by(BusinessDomainDescription.created_at.desc())
-                )
-                .scalars()
-                .first()
-            )
-            dom_desc = (dom_desc_row.content or "").strip() if dom_desc_row else ""
-            dom_block = f"## DOMAIN CONTEXT — 当前业务域「{dom.name}」"
-            if dom_desc:
-                dom_block += f"\n{dom_desc}"
-            dom_block += "\n（以上为该业务域的全局语义约束与分析惯例，生成 SQL 和解释时必须优先遵守）"
-            knowledge_text = dom_block + "\n\n" + knowledge_text if knowledge_text.strip() else dom_block
-    await asyncio.sleep(0)
-
-    # -------- 阶段 3：意图分类 --------
-    ref_n = len(refs) if isinstance(refs, list) else 0
+    early_guardrail = guardrail_for_question(question)
     await trace_live("live_intent", "意图识别", "正在调用大模型判断是否需要生成 SQL…")
     await asyncio.sleep(0)
 
@@ -142,19 +115,103 @@ async def answer(
     if len(reason_txt) > 1200:
         reason_txt = reason_txt[:1200] + "…"
 
-    # -------- 构建 reasoning_2 --------
-    reasoning_2_lines, reasoning_2_links = _build_reasoning_2(
-        db, business_domain_id, knowledge_text, ref_n, priority_context, schema, table_scope_note
-    )
-    reasoning_2_detail = "\n".join(reasoning_2_lines)
+    dom_block = build_domain_context_block(db, business_domain_id)
 
-    # -------- 通用问答分支 --------
+    routing_trace = CopilotRoutingTrace()
+    effective_domain_id, domain_suggestion, auto_domain_applied = resolve_effective_business_domain_id(
+        db, question, business_domain_id, table_id
+    )
+    routing_trace.domain_suggestion = domain_suggestion
+    routing_trace.auto_domain_applied = auto_domain_applied
+    active_domain_id = effective_domain_id if effective_domain_id is not None else business_domain_id
+    if auto_domain_applied and domain_suggestion:
+        dom_block = build_domain_context_block(db, active_domain_id) or dom_block
+
+    # -------- 阶段 2：按意图分支组装上下文 --------
+    routing_bundle = build_routing_search_bundle(
+        db, question, active_domain_id, table_id, load_metric_terms=(intent == "sql_query")
+    )
+    routing_trace.embed_calls = routing_bundle.embed_calls
+    routing_trace.kb_search_calls = routing_bundle.kb_search_calls
+    await trace_live(
+        "live_prep",
+        "准备上下文",
+        f"路由 bundle：embed={routing_bundle.embed_calls} 次，KB 检索={routing_bundle.kb_search_calls} 次；"
+        f"意图={intent}。",
+    )
+    await asyncio.sleep(0)
+
     if intent != "sql_query":
+        knowledge_text = collect_knowledge_context_text(
+            db, question, active_domain_id, table_id, routing_bundle=routing_bundle
+        )
+        if dom_block:
+            knowledge_text = dom_block + "\n\n" + knowledge_text if knowledge_text.strip() else dom_block
+        priority_context = dom_block or "[通用问答] 未加载表 schema 与列语义。"
+        schema = ""
+        summary_text = ""
+        table_scope_note = "表定位：general_qa 路径，已跳过列 schema 加载。"
+        routing_trace.routing_mode = "general_qa_light"
+        ref_n = 0
+        reasoning_2_lines, reasoning_2_links = _build_reasoning_2(
+            db, active_domain_id, knowledge_text, ref_n, priority_context, schema, table_scope_note
+        )
+        reasoning_2_detail = "\n".join(reasoning_2_lines)
+        await _emit_routing_trace(trace_row, routing_trace)
+        if early_guardrail:
+            return {
+                "intent": "general_qa",
+                "answer": early_guardrail["answer"],
+                "sql": "",
+                "explanation": early_guardrail["reason"],
+                "query_result": {"ok": False, "columns": [], "rows": [], "error": "该问题无需SQL执行"},
+                "pipeline_trace": pipeline_traces,
+            }
         return await _handle_general_qa(
             db, question, q_preview, reason_txt, knowledge_text, priority_context,
             reasoning_2_detail, reasoning_2_links, pipeline_traces,
-            emit, trace_row, chat_model,
+            emit, trace_row, chat_model, routing_trace=routing_trace,
         )
+
+    allowed_few_shot_table_ids: set[int] | None = None
+    if active_domain_id and not table_id:
+        allowed_few_shot_table_ids = {t.id for t in tables_from_business_domain(db, active_domain_id)}
+
+    refs = await search_similar_async(
+        db,
+        question,
+        top_k=5,
+        table_id=table_id,
+        ref_type="query",
+        allowed_table_ids=allowed_few_shot_table_ids,
+    )
+    ref_n = len(refs) if isinstance(refs, list) else 0
+
+    priority_context, schema, summary_text, preferred_table_id, table_scope_note, routing_trace = build_priority_context(
+        db, table_id, active_domain_id, question=question, routing_bundle=routing_bundle, routing_trace=routing_trace
+    )
+    knowledge_text = collect_knowledge_context_text(
+        db, question, active_domain_id, table_id, routing_bundle=routing_bundle
+    )
+    if dom_block:
+        knowledge_text = dom_block + "\n\n" + knowledge_text if knowledge_text.strip() else dom_block
+    await asyncio.sleep(0)
+
+    reasoning_2_lines, reasoning_2_links = _build_reasoning_2(
+        db, active_domain_id, knowledge_text, ref_n, priority_context, schema, table_scope_note
+    )
+    reasoning_2_detail = "\n".join(reasoning_2_lines)
+    await _emit_routing_trace(trace_row, routing_trace)
+
+    if early_guardrail:
+        return {
+            "intent": "general_qa",
+            "answer": early_guardrail["answer"],
+            "sql": "",
+            "explanation": early_guardrail["reason"],
+            "query_result": {"ok": False, "columns": [], "rows": [], "error": "该问题无需SQL执行"},
+            "pipeline_trace": pipeline_traces,
+        }
 
     # -------- SQL 查询分支 --------
     await trace_row("reasoning_1", "1. 明确用户输入，给出理解",
@@ -191,7 +248,29 @@ async def answer(
     r3_links = await _build_reasoning_3(
         db, sql_text, ds_anchor, dialect_anchor, default_db,
         table_id, preferred_table_id, resolved_table_id, used_latest_table_fallback,
-        business_domain_id, trace_row,
+        active_domain_id, trace_row,
+    )
+
+    sql_review = evaluate_sql_execution_review(
+        db,
+        sql_text=sql_text,
+        business_domain_id=active_domain_id,
+        candidate_table_ids=routing_trace.candidate_table_ids,
+        table_id=table_id,
+        ds_anchor=ds_anchor,
+        default_db=default_db,
+    )
+    result["sql_review"] = sql_review
+    await trace_row(
+        "routing_review",
+        "SQL 执行校验",
+        "\n".join(
+            [
+                f"trust_level={sql_review.get('trust_level')}",
+                f"execution_mode={sql_review.get('execution_mode')}",
+                *(sql_review.get("reasons") or []),
+            ]
+        ),
     )
 
     # -------- 持久化 QueryExample + Embedding --------
@@ -207,10 +286,29 @@ async def answer(
     exp_raw = str(result.get("explanation") or "").strip()
     exp_show = (exp_raw[:1600] + ("…" if len(exp_raw) > 1600 else "")) if exp_raw else "（模型未给出说明）"
 
-    execution = await _execute_with_repair(
-        db, question, sql_text, summary_text, ds_anchor, dialect_anchor,
-        default_db, resolved_table_id, result, emit, trace_row, copilot_context, chat_model,
-    )
+    if sql_review.get("review_required"):
+        execution = {
+            "ok": False,
+            "columns": [],
+            "rows": [],
+            "error": "SQL 需人工确认后再执行（见 sql_review / routing_review）",
+            "review_required": True,
+        }
+        await trace_row(
+            "reasoning_5",
+            "5. 执行环境与 AST 校验",
+            "检测到 review 条件，已跳过自动执行；请在前端确认 SQL 与表范围。",
+        )
+        await trace_row(
+            "reasoning_7",
+            "7. 执行结果",
+            "执行状态：未执行（等待 review 确认）。",
+        )
+    else:
+        execution = await _execute_with_repair(
+            db, question, sql_text, summary_text, ds_anchor, dialect_anchor,
+            default_db, resolved_table_id, result, emit, trace_row, copilot_context, chat_model,
+        )
 
     # 第 4 步在修复/执行后补入
     sql_show_final = _format_sql_display(result.get("sql", ""), ds_anchor, dialect_anchor)
@@ -226,9 +324,38 @@ async def answer(
 
     result["query_result"] = execution
     result["intent"] = "sql_query"
-    result["answer"] = "已根据你的问题生成并执行 SQL，结果如下。"
+    result["answer"] = (
+        "已生成 SQL；请先确认表范围与口径后再执行。"
+        if sql_review.get("review_required")
+        else "已根据你的问题生成并执行 SQL，结果如下。"
+    )
     result["pipeline_trace"] = pipeline_traces
+    result["routing_trace"] = routing_trace.to_dict()
     return result
+
+
+async def _emit_routing_trace(trace_row, routing_trace: CopilotRoutingTrace) -> None:
+    d = routing_trace.to_dict()
+    lines = [
+        f"routing_mode={d.get('routing_mode')}",
+        f"candidate_table_count={d.get('candidate_table_count')}",
+        f"fallback_reason={d.get('fallback_reason') or '（无）'}",
+        f"embed_calls={d.get('embed_calls')} kb_search_calls={d.get('kb_search_calls')}",
+    ]
+    if d.get("domain_suggestion"):
+        sug = d["domain_suggestion"]
+        lines.append(
+            f"domain_suggestion={sug.get('domain_name')} score={sug.get('score')} "
+            f"requires_confirmation={sug.get('requires_confirmation')}"
+        )
+    if d.get("auto_domain_applied"):
+        lines.append("auto_domain_applied=true")
+    if d.get("top_table_scores"):
+        preview = ", ".join(
+            f"{x['fq_name']}({x['score']})" for x in d["top_table_scores"][:5]
+        )
+        lines.append(f"top_table_scores: {preview}")
+    await trace_row("routing_meta", "路由元数据", "\n".join(lines), links=[])
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +410,7 @@ async def _handle_general_qa(
     reasoning_2_detail: str, reasoning_2_links: list[dict[str, Any]],
     pipeline_traces: list[dict[str, Any]],
     emit, trace_row, chat_model: str | None,
+    routing_trace: CopilotRoutingTrace | None = None,
 ) -> dict[str, Any]:
     await trace_row("reasoning_1", "1. 明确用户输入，给出理解",
         "\n".join([f"用户问题摘要：{q_preview or '（空）'}", "判定为「通用问答」。", f"意图说明：{reason_txt or '（无）'}"]))
@@ -302,12 +430,15 @@ async def _handle_general_qa(
         explanation = "该问题更适合自然语言回答，无需执行 SQL"
 
     await embed_and_store_async(db, "query", 0, f"{question} -> {natural_answer}")
-    return {
+    out: dict[str, Any] = {
         "intent": "general_qa", "answer": natural_answer, "sql": "",
         "explanation": explanation,
         "query_result": {"ok": False, "columns": [], "rows": [], "error": "该问题无需SQL执行"},
         "pipeline_trace": pipeline_traces,
     }
+    if routing_trace is not None:
+        out["routing_trace"] = routing_trace.to_dict()
+    return out
 
 
 def _resolve_datasource_anchor(
@@ -368,6 +499,9 @@ async def _build_reasoning_3(
         r3_links_map[key] = {"kind": "table", "id": tm.id, "matches": [f"「{fq}」", fq, f"table_id={tm.id}", f"id={tm.id}。"]}
 
     primary_tm = db.get(TableMeta, table_id or preferred_table_id or resolved_table_id)
+    domain_table_ids: set[int] = set()
+    if business_domain_id:
+        domain_table_ids = {t.id for t in tables_from_business_domain(db, business_domain_id)}
 
     # 解析 SQL 中的表引用
     sql_resolved: list[TableMeta] = []
@@ -399,7 +533,15 @@ async def _build_reasoning_3(
             fq = f"{tm.database_name}.{tm.table_name}"
             fq_b = f"「{fq}」"
             locked = bool(table_id and tm.id == table_id)
-            if locked:
+            if business_domain_id and domain_table_ids and tm.id not in domain_table_ids:
+                _r3_row(
+                    fq_b,
+                    "review",
+                    "域外表（SQL 引用）",
+                    tm=tm,
+                    narr="解析 SQL 引用的表不在当前业务域挂载表范围内，需人工确认。",
+                )
+            elif locked:
                 _r3_row(fq_b, "high", "主分析表（与用户锁定一致）", tm=tm,
                         narr=f"请求锁定 table_id={table_id}。方言「{dialect_anchor}」解析生成 SQL 已引用该物理名。")
             elif table_id and primary_tm and primary_tm.id == table_id and tm.id != table_id:

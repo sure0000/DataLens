@@ -13,6 +13,7 @@ from models import Embedding, KnowledgeEntry
 settings = get_settings()
 
 KNOWLEDGE_EMBEDDING_REF = "knowledge_entry"
+TABLE_EMBEDDING_REF = "table"
 
 
 def _has_embedding_key() -> bool:
@@ -63,30 +64,176 @@ async def embed_and_store_async(
 
 
 def _search_similar_with_vector(
-    db: Session, qv: list[float], top_k: int, table_id: int | None, ref_type: str | None = "query"
+    db: Session,
+    qv: list[float],
+    top_k: int,
+    table_id: int | None,
+    ref_type: str | None = "query",
+    allowed_table_ids: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     stmt = select(Embedding)
     if ref_type is not None:
         stmt = stmt.where(Embedding.ref_type == ref_type)
     if table_id is not None:
         stmt = stmt.where(Embedding.ref_id == table_id)
+    elif allowed_table_ids is not None:
+        if not allowed_table_ids:
+            return []
+        stmt = stmt.where(Embedding.ref_id.in_(allowed_table_ids))
     stmt = stmt.order_by(Embedding.embedding.cosine_distance(cast(qv, Vector(1536)))).limit(top_k)
     rows = db.execute(stmt).scalars().all()
     return [{"ref_type": r.ref_type, "ref_id": r.ref_id, "content": r.content} for r in rows]
 
 
 def search_similar(
-    db: Session, query: str, top_k: int = 5, table_id: int | None = None, ref_type: str | None = "query"
+    db: Session,
+    query: str,
+    top_k: int = 5,
+    table_id: int | None = None,
+    ref_type: str | None = "query",
+    allowed_table_ids: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     qv = _embed([query])[0]
-    return _search_similar_with_vector(db, qv, top_k, table_id, ref_type=ref_type)
+    return _search_similar_with_vector(
+        db, qv, top_k, table_id, ref_type=ref_type, allowed_table_ids=allowed_table_ids
+    )
 
 
 async def search_similar_async(
-    db: Session, query: str, top_k: int = 5, table_id: int | None = None, ref_type: str | None = "query"
+    db: Session,
+    query: str,
+    top_k: int = 5,
+    table_id: int | None = None,
+    ref_type: str | None = "query",
+    allowed_table_ids: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     qv = (await asyncio.to_thread(_embed, [query]))[0]
-    return _search_similar_with_vector(db, qv, top_k, table_id, ref_type=ref_type)
+    return _search_similar_with_vector(
+        db, qv, top_k, table_id, ref_type=ref_type, allowed_table_ids=allowed_table_ids
+    )
+
+
+def search_table_embeddings(
+    db: Session,
+    query: str,
+    allowed_table_ids: set[int] | list[int],
+    top_k: int = 15,
+    *,
+    query_vector: list[float] | None = None,
+) -> list[tuple[int, float]]:
+    """检索 allowed 范围内表摘要向量，返回 (table_id, cosine_distance) 按距离升序。"""
+    q = (query or "").strip()
+    if not q:
+        return []
+    ids = sorted({int(i) for i in allowed_table_ids})
+    if not ids:
+        return []
+    qv = query_vector if query_vector is not None else _embed([q])[0]
+    probe = min(len(ids), max(top_k, top_k * 2))
+    stmt = (
+        select(
+            Embedding.ref_id,
+            Embedding.embedding.cosine_distance(cast(qv, Vector(1536))).label("dist"),
+        )
+        .where(
+            Embedding.ref_type == TABLE_EMBEDDING_REF,
+            Embedding.ref_id.in_(ids),
+        )
+        .order_by("dist")
+        .limit(probe)
+    )
+    rows = db.execute(stmt).all()
+    seen: set[int] = set()
+    out: list[tuple[int, float]] = []
+    for ref_id, dist in rows:
+        tid = int(ref_id)
+        if tid in seen:
+            continue
+        seen.add(tid)
+        out.append((tid, float(dist)))
+        if len(out) >= top_k:
+            break
+    return out
+
+
+COLUMN_EMBEDDING_REF = "column"
+
+
+def search_column_embeddings(
+    db: Session,
+    query: str,
+    allowed_table_ids: set[int] | list[int],
+    top_k: int = 4,
+    *,
+    query_vector: list[float] | None = None,
+) -> list[tuple[int, float]]:
+    """域内列语义向量检索，返回 (table_id, cosine_distance)；用于维表/码表扩表。"""
+    q = (query or "").strip()
+    ids = sorted({int(i) for i in allowed_table_ids})
+    if not q or not ids or top_k <= 0:
+        return []
+    qv = query_vector if query_vector is not None else _embed([q])[0]
+    probe = min(len(ids) * 8, max(top_k * 6, top_k))
+    stmt = (
+        select(
+            Embedding.ref_id,
+            Embedding.embedding.cosine_distance(cast(qv, Vector(1536))).label("dist"),
+        )
+        .where(
+            Embedding.ref_type == COLUMN_EMBEDDING_REF,
+            Embedding.ref_id.in_(ids),
+        )
+        .order_by("dist")
+        .limit(probe)
+    )
+    rows = db.execute(stmt).all()
+    seen: set[int] = set()
+    out: list[tuple[int, float]] = []
+    for ref_id, dist in rows:
+        tid = int(ref_id)
+        if tid in seen:
+            continue
+        seen.add(tid)
+        out.append((tid, float(dist)))
+        if len(out) >= top_k:
+            break
+    return out
+
+
+def search_table_embeddings_global(
+    db: Session,
+    query: str,
+    top_k: int = 20,
+    *,
+    query_vector: list[float] | None = None,
+) -> list[tuple[int, float]]:
+    """全库表摘要向量检索（无域场景），返回 (table_id, cosine_distance)。"""
+    q = (query or "").strip()
+    if not q:
+        return []
+    qv = query_vector if query_vector is not None else _embed([q])[0]
+    probe = max(top_k, top_k * 2)
+    stmt = (
+        select(
+            Embedding.ref_id,
+            Embedding.embedding.cosine_distance(cast(qv, Vector(1536))).label("dist"),
+        )
+        .where(Embedding.ref_type == TABLE_EMBEDDING_REF)
+        .order_by("dist")
+        .limit(probe)
+    )
+    rows = db.execute(stmt).all()
+    seen: set[int] = set()
+    out: list[tuple[int, float]] = []
+    for ref_id, dist in rows:
+        tid = int(ref_id)
+        if tid in seen:
+            continue
+        seen.add(tid)
+        out.append((tid, float(dist)))
+        if len(out) >= top_k:
+            break
+    return out
 
 
 # 单块不宜过大：嵌入模型上下文与召回粒度；重叠避免句段被硬生生切断。

@@ -1,6 +1,6 @@
 # DataLens 项目全貌（人与 AI 双可读）
 
-> 本文档合并了原 `PROJECT_BRIEF_AI.md`、`IMPLEMENTATION_SPEC_AI.md`、`AI_READER_PROMPT.md`，反映 2026-05 最新状态。
+> 本文档合并了原 `PROJECT_BRIEF_AI.md`、`IMPLEMENTATION_SPEC_AI.md`、`AI_READER_PROMPT.md`，反映 **2026-05-25** 最新状态（含知识库语义结构化、Copilot 多信号路由、轻量语义关系图）。
 
 ---
 
@@ -29,7 +29,11 @@
 | RAG | 检索增强生成：向量检索历史语义和知识条目，注入 LLM 上下文提升 SQL 质量 |
 | Copilot | 面向自然语言问答的 ChatBI 助手页面，支持生成 SQL + 只读执行 + 结果预览 |
 | 业务域 | 用户定义的业务范畴（如"交易域""用户域"），可绑定库表和知识库 |
-| 知识库 | 可检索的业务文档集合，条目支持 Markdown，可绑定到业务域或单个表 |
+| 知识库 | 可检索的业务文档集合；支持 Markdown 条目、文档流水线分块、Git/API 同步 |
+| 语义角色 (semantic_role) | 知识条目的业务分类：如 `business_metric`、`join_guide`、`column_glossary` 等 |
+| 语义关系 (semantic_relations) | 术语/指标/表/概念之间的可遍历边，供 Copilot 图扩展路由 |
+| concept_id | 企业薄层统一概念标识（如 `metric.gmv`），支持跨域别名对齐 |
+| 业务术语 / 指标口径 | AI 从知识库提取并经审核的结构化资产（`business_terms`、`metric_definitions`） |
 
 ## 2. 项目定义
 
@@ -48,34 +52,37 @@
 - 异步表分析：Schema 提取 → Profiling → LLM 列语义 → LLM 表摘要 → 向量持久化
 - 表详情页：字段语义、质量指标、表五段式摘要、分析场景推荐
 - 业务域管理：创建域、维护描述、选择关联库表、绑定知识库
-- 知识库管理：手动创建条目、Git 仓库同步（GitHub/GitLab）、代码库分析（自动提取表引用/枚举值/聚合方式）
-- Copilot ChatBI：自然语言 → SQL 生成 → 只读执行 → 结果预览（SSE 流式）
+- 知识库管理：手动条目、文件上传、Git 仓库同步（GitHub/GitLab）、API 源（Notion/飞书等）、代码库分析
+- **文档流水线**：extract → clean → chunk → embed → **语义结构化**（`semantic_meta`）→ 索引
+- **语义提取流水线**：术语 / 指标口径 / 数据血缘 LLM 提取 + **`semantic_relations` 关系图同步**
+- Copilot ChatBI：自然语言 → **多信号表路由** → SQL 生成 → 只读执行 → 结果预览（SSE 流式）
+- Copilot 路由：知识 grounding、表/列向量、指标术语、血缘/语义图 1-hop 扩表、梯度 fallback、`routing_trace`
 - SQL 安全护栏：sqlglot AST 只读校验 + 前缀白名单双重保护
 - LLM 无 Key 兜底：未配置 API Key 时用规则和本地向量提供基本链路可用性
 - 大模型多厂商接入：DeepSeek / OpenAI / 自定义兼容端点
 
 ### Out of Scope（当前不做）
 
-- 数据血缘与治理平台
+- 完整企业级数据血缘与治理平台（已有轻量 `data_lineage` + `semantic_relations`）
 - 复杂权限 / 多租户 / 审计合规
 - 团队协作工作流（审批、评审、共享空间）
-- 高级指标平台与统一口径引擎
+- Formal OWL/RDF 本体引擎
 
 ## 4. 端到端业务流程
 
 ```
 配置阶段:
   用户录入数据源 ─┐
-  用户配置Git同步 ─┤→ Git 文件同步为知识条目 → 代码库分析(提取表引用/枚举/聚合)
-                   │                              ├→ 表已登记 → 自动链接 + 补填 ColumnMeta
-                   │                              └→ 表未登记 → 暂存,等表分析后补填
+  用户配置Git/API同步 ─┤→ 文档/条目入库
+                       │     ├→ 文档流水线: clean → chunk → embed → 语义结构化
+                       │     └→ 语义提取: 术语 / 指标 / 血缘 → semantic_relations
+                       ├→ 代码库分析(提取表引用/枚举/聚合) → TableKnowledgeEntry 链接
 
 使用阶段:
-  用户选择分析范围 → 系统抽取Schema+样本
-    → Profiler 统计画像 → LLM 生成列语义(含代码库推导的枚举/聚合) → LLM 生成表摘要
-    → 向量持久化 → 用户在 Copilot 自然语言提问
-    → RAG 检索上下文(含 Git 文件全文 + 代码库分析结果)
-    → LLM 生成 SQL → AST 校验 → 只读执行 → 返回结果
+  用户选择分析范围 → Schema+样本 → Profiler → LLM 列语义/表摘要 → 向量持久化
+    → Copilot 提问（可选业务域 / 单表锁定）
+    → routing_bundle 共享检索 → 多信号表路由 + 知识/口径注入
+    → LLM 生成 SQL → AST 校验 + sql_review → 只读执行 → 返回结果
 ```
 
 ## 5. 技术栈
@@ -104,24 +111,35 @@ backend/
 │   ├── datasources.py          # 数据源 CRUD、目录浏览
 │   ├── tables.py               # 表详情聚合
 │   ├── business_domains.py     # 业务域 CRUD + 选择
-│   ├── knowledge_bases.py      # 知识库 CRUD + 条目管理
+│   ├── knowledge_bases.py      # 知识库 CRUD + 条目 + 文件上传 + 文档流水线
 │   ├── knowledge_git_sources.py # Git 同步源管理
+│   ├── knowledge_api_sources.py # Notion/飞书等 API 源
+│   ├── knowledge_semantic.py   # 术语/指标/血缘 CRUD + 语义流水线
 │   ├── llm_settings.py         # 大模型偏好设置
 │   └── diagnostics.py          # 诊断接口
 ├── services/
-│   ├── schema_extractor.py     # 多源 Schema/样本/DDL/行数提取 + 只读SQL执行
-│   ├── profiler.py             # 列统计画像、枚举检测、分位数、风险评分
-│   ├── llm_service.py          # LLM 调用：列语义、表摘要、SQL生成/修复
-│   ├── rag_service.py          # RAG 上下文拼装、问答主流程
-│   ├── codebase_analyzer.py    # 代码库分析：提取表引用、枚举值、聚合方式
-│   ├── embedding_service.py    # 向量写入与语义检索
+│   ├── context_builder.py      # Copilot 上下文：表路由、知识聚合
+│   ├── routing_bundle.py       # 共享 KB 检索 bundle
+│   ├── routing/                # metric / lineage / graph / domain 路由
+│   ├── knowledge_pipeline_service.py  # 文档 clean/chunk/embed/structuring
+│   ├── chunk_semantic_structuring.py  # chunk semantic_meta
+│   ├── semantic_extraction.py  # 术语/指标/血缘 LLM 提取
+│   ├── semantic_relation_sync.py # semantic_relations 同步
+│   ├── semantic_grounding.py   # grounding 解析、role 推断
+│   ├── retrieval_service.py    # Entry + Chunk 混合检索 (RRF)
+│   ├── schema_extractor.py     # Schema/样本/只读 SQL 执行
+│   ├── profiler.py             # 列统计画像
+│   ├── llm_service.py          # 列语义、表摘要、SQL 生成
+│   ├── rag_service.py          # 问答主流程
+│   ├── codebase_analyzer.py    # 代码库分析
+│   ├── embedding_service.py    # 向量检索
+│   ├── document_cleaner.py     # 文档清洗
+│   ├── document_chunker.py     # 文档分块
 │   ├── sql_ast_guard.py        # sqlglot 只读校验
-│   ├── runtime_llm_config.py   # LLM 配置读写
-│   ├── llm_models.py           # 模型引用解析
-│   ├── llm_connections.py      # 自定义大模型接入管理
-│   ├── git_knowledge_sync.py   # Git → 知识条目同步（含同步后自动触发代码库分析）
-│   └── git_schedule.py         # Git 定时同步调度
-└── tests/                      # pytest 测试套件
+│   ├── git_knowledge_sync.py   # Git 同步
+│   └── git_schedule.py         # Git 定时调度
+├── prompts/                    # LLM prompt 模板
+└── tests/                      # pytest
 
 frontend/
 ├── app/                        # Next.js App Router 页面
@@ -145,7 +163,32 @@ frontend/
 
 ## 7. 核心数据流
 
-### 7.0 代码库分析管道（新增）
+### 7.0 知识库文档流水线
+
+```
+文件 / API / Git 同步
+  │
+  ▼
+knowledge_pipeline_service.run_pipeline()
+  ├── clean_text()           # 去噪声、标点归一化
+  ├── chunk_text()           # 按标题 / 固定长度分块
+  ├── embed → DocumentChunk  # 向量 + tsvector 全文索引
+  └── structure_document_chunks()   # Stage 5（需 LLM）
+        ├── semantic_meta: semantic_role + grounding + join_edges
+        ├── KnowledgeEntry.semantic_role 回写
+        ├── data_lineage 同步（join_guide）
+        ├── MetricDefinition.bound_table_refs 回填
+        └── semantic_relations 同步
+  │
+  ▼（后台）
+semantic_extraction.run_semantic_pipeline()
+  ├── 术语提取 → business_terms (+ concept_id)
+  ├── 指标提取 → metric_definitions (+ bound_table_refs)
+  ├── 血缘提取 → data_lineage（Git 源）
+  └── semantic_relations 全量同步
+```
+
+### 7.0.1 代码库分析管道
 
 ```
 GitHub / GitLab 仓库
@@ -233,38 +276,31 @@ sample_data─┼→ profile_column() ─→ profiles[] ─→┤→ ColumnMeta.
 ```
 用户问题 + 可选 table_id / business_domain_id
   │
-  ├→ guardrail_for_question()         # 安全护栏检查
-  ├→ classify_question_intent()       # 意图分类 (sql_query / general_qa)
+  ├→ guardrail_for_question()
+  ├→ classify_question_intent()          # 意图前置：general_qa 跳过全量 schema
   │
   ├→ [若 general_qa] → answer_general_question()
   │
   └→ [若 sql_query]
-      ├→ _collect_knowledge_context_text()  # 拉取域知识库 + 表绑知识条目 + 语义检索
-      │     ├→ 固定全文: TableKnowledgeEntry 链接的代码文件
-      │     │  【由 codebase_analyzer 自动创建，含完整代码上下文】← 新增强
-      │     └→ 语义检索: 向量搜索知识库片段 (含 git 条目 summaries)
+      ├→ build_routing_search_bundle()   # 单次 embed + 统一 KB hybrid 检索
       │
-      ├→ _build_priority_context()          # 组装表摘要 + 列语义
-      │     ├→ _candidate_table_ids_from_domain_knowledge()
-      │     │   【TableKnowledgeEntry 显式链接锚定 + 表名提及匹配】← 新增强
-      │     │
-      │     └→ SqlCopilotContext:
-      │         ├── knowledge (BUSINESS CONTEXT — 知识库与业务口径)
-      │         ├── datasource_priority (BUSINESS CONTEXT — 数据源与表分析)
-      │         ├── schema (BUSINESS CONTEXT — 结构化字段)
-      │         │    · enum_values ← 含代码提取的枚举值        ← 新增强
-      │         │    · aggregation ← 含代码提取的聚合方式      ← 新增强
-      │         └── few_shot_json (FEW-SHOT — 历史相似问答)
+      ├→ collect_knowledge_context_text()
+      │     ├→ 固定全文: TableKnowledgeEntry
+      │     └→ 混合检索: Entry + DocumentChunk（RRF），按 semantic_role 分流加权
       │
-      ├→ generate_sql()                     # LLM 生成 SQL
-      │     └→ system: 只读规则 + JSON格式约束
-      │     └→ user: BUSINESS + FEW-SHOT + TABLE SUMMARY + QUESTION
+      ├→ build_priority_context()        # 多信号表路由
+      │     ├→ 知识 grounding / 表名匹配 / 显式链接
+      │     ├→ 表摘要向量直搜 + RRF 融合
+      │     ├→ 指标/术语路由（metric_router，含 concept_alias）
+      │     ├→ 列向量维表扩表
+      │     ├→ apply_graph_expansion()   # lineage + semantic_relations 1-hop
+      │     └→ 梯度 fallback + routing_trace
       │
-      ├→ sqlglot AST 只读校验
-      ├→ execute_readonly_sql()             # 前缀白名单 + 执行
-      │
-      └→ [若失败] → repair_failed_sql() × 3  # 带上下文修复重试
+      ├→ generate_sql() → AST 校验 → execute_readonly_sql()
+      └→ sql_review（域外表检测，review 标签）
 ```
+
+详见 [`COPILOT_ROUTING_OPTIMIZATION.md`](./COPILOT_ROUTING_OPTIMIZATION.md)。
 
 ## 8. 关键数据模型
 
@@ -280,7 +316,15 @@ sample_data─┼→ profile_column() ─→ profiles[] ─→┤→ ColumnMeta.
 | BusinessDomainDescription | business_domain_descriptions | domain_id, content | 域描述 |
 | BusinessDomainSelection | business_domain_selections | domain_id, datasource_id, database_name, table_name | 域→库表关联 |
 | KnowledgeBase | knowledge_bases | name, description | 知识库 |
-| KnowledgeEntry | knowledge_entries | knowledge_base_id, title, summary, body, sort_order, source_url, source_meta | 知识条目（含 git 文件，source_meta 存储分析状态与暂存引用） |
+| KnowledgeEntry | knowledge_entries | title, summary, body, semantic_role, tags, source_meta | 知识条目 |
+| Document | documents | knowledge_base_id, title, status, raw_text, stage_timings | 文档流水线单元 |
+| DocumentChunk | document_chunks | content, quality_score, semantic_meta, embedding | 分块检索单元 |
+| BusinessTerm | business_terms | name, type, definition, concept_id, related_fields, status | AI/人工业务术语 |
+| MetricDefinition | metric_definitions | name, formula, caliber, concept_id, bound_table_refs, status | 指标口径 |
+| DataLineage | data_lineage | source_table, target_table, transform_logic, layer | 表间血缘 |
+| SemanticRelation | semantic_relations | relation_type, source/target ref, concept_id, join_key | 轻量语义关系图 |
+| PipelineRun | pipeline_runs | knowledge_base_id, steps, status | 语义提取流水线状态 |
+| PipelineConfig | pipeline_configs | chunk_strategy, chunk_size, dedup_threshold | 知识库流水线配置 |
 | BusinessDomainKnowledgeBase | business_domain_knowledge_bases | domain_id, knowledge_base_id | 域↔知识库 |
 | TableKnowledgeBase | table_knowledge_bases | table_id, knowledge_base_id | 表↔知识库 |
 | TableKnowledgeEntry | table_knowledge_entries | table_id, knowledge_entry_id | 表↔条目（由 codebase_analyzer 自动创建） |
@@ -317,9 +361,16 @@ sample_data─┼→ profile_column() ─→ profiles[] ─→┤→ ColumnMeta.
 ### 知识库
 - `CRUD /api/knowledge-bases` — 知识库管理
 - `CRUD /api/knowledge-bases/{id}/entries` — 条目管理
+- `POST /api/knowledge-bases/{id}/upload` — 文件上传（触发文档流水线）
+- `GET /api/knowledge-bases/{id}/documents` — 文档列表与分块
 - `POST /api/knowledge-bases/{id}/git-sources` — Git 同步源
-- `POST /api/knowledge-bases/{id}/git-sources/{sid}/sync` — 手动同步 Git 源
-- `POST /api/knowledge-bases/{id}/analyze-codebase` — 触发代码库分析（后台扫描 git 条目提取表引用）
+- `POST /api/knowledge-bases/{id}/git-sources/{sid}/sync` — 手动同步
+- `POST /api/knowledge-bases/{id}/analyze-codebase` — 代码库分析
+- `GET/POST/PUT/DELETE /api/knowledge-bases/{id}/terms` — 业务术语
+- `GET/POST/PUT/DELETE /api/knowledge-bases/{id}/metrics` — 指标口径
+- `GET /api/knowledge-bases/{id}/lineage` — 数据血缘
+- `GET /api/knowledge-bases/{id}/semantic-stats` — 语义流水线统计
+- `POST /api/knowledge-bases/{id}/run-semantic-pipeline` — 触发语义提取
 
 ### LLM & 诊断
 - `GET/POST /api/llm-settings` — 大模型配置
@@ -353,12 +404,22 @@ sample_data─┼→ profile_column() ─→ profiles[] ─→┤→ ColumnMeta.
 
 ## 12. 推荐演进路线
 
-**P0：** 数据源凭据加密 / 异步任务队列化 / SQL AST 校验持续增强
+**P0：** 数据源凭据加密 / 异步任务队列化 / 线上 routing fallback 率观测
 
-**P1：** 可观测性（链路日志、模型耗时） / 业务域过滤接入 Copilot
+**P1：** semantic_relations 可视化编辑 / concept_id 跨域手动对齐 UI
 
-**P2：** 多用户与权限体系 / 协作与治理能力
+**P2：** 多用户与权限体系 / 2-hop 语义图扩展
 
 ---
 
-*最后更新：2026-05-12，反映代码库分析管道（codebase_analyzer.py）集成后的最新架构。*
+## 13. 相关专题文档
+
+| 文档 | 内容 |
+|------|------|
+| [企业语义层与域内自治实践](./企业语义层与域内自治实践.md) | 理念、存储、联邦治理 |
+| [COPILOT_ROUTING_OPTIMIZATION](./COPILOT_ROUTING_OPTIMIZATION.md) | 路由 backlog、配置项、trace |
+| [SEMANTIC_LAYER_OPTIMIZATION_BACKLOG](./SEMANTIC_LAYER_OPTIMIZATION_BACKLOG.md) | 语义层能力状态 |
+
+---
+
+*最后更新：2026-05-25，反映知识库语义结构化（Phase 1~3）、Copilot 多信号路由与 semantic_relations 关系图。*

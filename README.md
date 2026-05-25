@@ -1,8 +1,17 @@
 # DataLens — 数据表智能理解与自然语言分析系统
 
-DataLens 是一个轻量级 ChatBI 系统：连接数据源 → 自动理解表结构和字段含义 → 自然语言生成 SQL → 只读执行预览。
+DataLens 是一个轻量级 ChatBI 系统：连接数据源 → 自动理解表结构和字段含义 → 维护业务语义知识库 → 自然语言生成 SQL → 只读执行预览。
 
 **详细架构、数据流、数据模型、API 文档：** 见 [`docs/DATALENS_OVERVIEW.md`](docs/DATALENS_OVERVIEW.md)。
+
+## 文档索引
+
+| 文档 | 说明 |
+|------|------|
+| [DATALENS_OVERVIEW.md](docs/DATALENS_OVERVIEW.md) | 项目全貌（推荐首读） |
+| [企业语义层与域内自治实践.md](docs/企业语义层与域内自治实践.md) | 语义层理念、存储结构、联邦治理 |
+| [COPILOT_ROUTING_OPTIMIZATION.md](docs/COPILOT_ROUTING_OPTIMIZATION.md) | Copilot 多信号路由与 trace |
+| [SEMANTIC_LAYER_OPTIMIZATION_BACKLOG.md](docs/SEMANTIC_LAYER_OPTIMIZATION_BACKLOG.md) | 语义层能力清单与实现状态 |
 
 ---
 
@@ -31,6 +40,11 @@ cp .env.example .env
 - `BACKEND_PORT`：后端端口，默认 `8000`
 - `FRONTEND_PORT`：前端端口，默认 `3000`
 - `NEXT_PUBLIC_API_URL`：前端调用后端地址（本地建议 `http://localhost:8000`）
+- `COPILOT_MAX_TABLES_WITHOUT_DOMAIN`：未选业务域时语义 top_k 表上限（默认 `20`）
+- `SEMANTIC_AUTO_APPROVE_CONFIDENCE`：术语/指标提取置信度 ≥ 此值自动 `approved`（默认 `80`）
+- `SEMANTIC_CHUNK_STRUCTURE_MAX`：单文档语义结构化最多处理的 chunk 数（默认 `40`）
+
+更多 Copilot 路由相关变量见 [`docs/COPILOT_ROUTING_OPTIMIZATION.md`](docs/COPILOT_ROUTING_OPTIMIZATION.md) §5。
 
 ## 3. 本地启动后端（FastAPI）
 

@@ -20,6 +20,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from config import get_settings
 from models import (
     BusinessTerm,
     DataLineage,
@@ -30,6 +31,7 @@ from models import (
     MetricDefinition,
     PipelineRun,
 )
+from services.semantic_relation_sync import concept_slug, sync_semantic_relations_for_kb
 
 _logger = logging.getLogger(__name__)
 
@@ -106,6 +108,16 @@ def _finish_pipeline_run(db: Session, run: PipelineRun, success: bool = True) ->
 # ── Term Extraction ────────────────────────────────────────────────────
 
 
+def _bound_table_refs_from_chunk(chunk: DocumentChunk) -> list[str]:
+    meta = chunk.semantic_meta if isinstance(chunk.semantic_meta, dict) else {}
+    grounding = meta.get("grounding") if isinstance(meta.get("grounding"), dict) else {}
+    return [
+        str(x).strip()
+        for x in (grounding.get("table_refs") or [])
+        if str(x or "").strip()
+    ]
+
+
 async def extract_terms_from_kb(db: Session, kb_id: int) -> int:
     """从知识库中已索引的文档分块提取业务术语。
 
@@ -169,6 +181,10 @@ async def extract_terms_from_kb(db: Session, kb_id: int) -> int:
                 existing.definition = item.get("definition") or existing.definition
                 existing.related_fields = item.get("related_fields", existing.related_fields) or []
                 existing.confidence = round(confidence, 1)
+                if not (existing.concept_id or "").strip():
+                    existing.concept_id = concept_slug(name, "term")
+                if confidence >= get_settings().semantic_auto_approve_confidence:
+                    existing.status = "approved"
                 existing.updated_at = datetime.now(timezone.utc)
             else:
                 term = BusinessTerm(
@@ -178,8 +194,9 @@ async def extract_terms_from_kb(db: Session, kb_id: int) -> int:
                     definition=item.get("definition") or "",
                     source_entry_id=chunk.document.knowledge_entry_id if chunk.document else None,
                     related_fields=item.get("related_fields") or [],
+                    concept_id=concept_slug(name, "term"),
                     confidence=round(confidence, 1),
-                    status="pending_review",
+                    status="approved" if confidence >= get_settings().semantic_auto_approve_confidence else "pending_review",
                 )
                 db.add(term)
 
@@ -247,11 +264,21 @@ async def extract_metrics_from_kb(db: Session, kb_id: int) -> int:
                 )
             ).scalar_one_or_none()
 
+            bound_refs = _bound_table_refs_from_chunk(chunk)
+
             if existing:
                 existing.formula = item.get("formula") or existing.formula
                 existing.caliber = item.get("caliber", existing.caliber)
                 existing.related_terms = item.get("related_terms", existing.related_terms) or []
                 existing.confidence = round(confidence, 1)
+                if not (existing.concept_id or "").strip():
+                    existing.concept_id = concept_slug(name, "metric")
+                if bound_refs:
+                    existing.bound_table_refs = list(
+                        dict.fromkeys((existing.bound_table_refs or []) + bound_refs)
+                    )
+                if confidence >= get_settings().semantic_auto_approve_confidence:
+                    existing.status = "approved"
                 existing.updated_at = datetime.now(timezone.utc)
             else:
                 metric = MetricDefinition(
@@ -261,8 +288,10 @@ async def extract_metrics_from_kb(db: Session, kb_id: int) -> int:
                     caliber=item.get("caliber"),
                     source_entry_id=chunk.document.knowledge_entry_id if chunk.document else None,
                     related_terms=item.get("related_terms") or [],
+                    bound_table_refs=bound_refs,
+                    concept_id=concept_slug(name, "metric"),
                     confidence=round(confidence, 1),
-                    status="pending_review",
+                    status="approved" if confidence >= get_settings().semantic_auto_approve_confidence else "pending_review",
                 )
                 db.add(metric)
 
@@ -408,6 +437,16 @@ async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None
             steps_status["data_lineage"] = {"status": "done", "count": lineage_count}
         else:
             steps_status["data_lineage"] = {"status": "skipped", "reason": "非代码库知识库"}
+        run.steps = steps_status
+        db.commit()
+
+        # Step 4: 语义关系图同步
+        try:
+            rel_stats = sync_semantic_relations_for_kb(db, kb_id)
+            steps_status["semantic_relations"] = {"status": "done", **rel_stats}
+        except Exception:
+            _logger.warning("Semantic relation sync failed for kb=%s", kb_id, exc_info=True)
+            steps_status["semantic_relations"] = {"status": "failed", "reason": "sync_error"}
         run.steps = steps_status
         db.commit()
         return steps_status

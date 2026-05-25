@@ -9,8 +9,9 @@ from pgvector.sqlalchemy import Vector
 from sqlalchemy import cast, select, text
 from sqlalchemy.orm import Session
 
-from models import DocumentChunk, Embedding, KnowledgeEntry
+from models import Document, DocumentChunk, Embedding, KnowledgeEntry
 from services.embedding_service import KNOWLEDGE_EMBEDDING_REF, _embed
+from services.semantic_grounding import infer_semantic_role_hints
 
 _logger = logging.getLogger(__name__)
 
@@ -112,6 +113,7 @@ def search_chunks_hybrid(
             "document_id": chunk.document_id,
             "content": chunk.content[:1200],
             "quality_score": chunk.quality_score,
+            "semantic_meta": chunk.semantic_meta,
             "vector_dist": round(vec_score_map.get(cid, 1.0), 4),
             "bm25_rank": round(bm25_score_map.get(cid, 0.0), 4),
         })
@@ -202,6 +204,7 @@ def search_entries_hybrid(
             "title": entry.title,
             "summary": (entry.summary or "").strip(),
             "snippet": vec_snippet.get(eid, (entry.body or "")[:1200]),
+            "semantic_role": entry.semantic_role,
             "vector_rank": vec_rank.get(eid),
             "bm25_rank": bm25_rank.get(eid),
             "rrf_score": round(
@@ -217,3 +220,101 @@ async def search_entries_hybrid_async(
     db: Session, kb_id: int, query: str, top_k: int = 8
 ) -> list[dict[str, Any]]:
     return await asyncio.to_thread(search_entries_hybrid, db, kb_id, query, top_k)
+
+
+# ---------------------------------------------------------------------------
+# 统一检索（KnowledgeEntry + DocumentChunk）
+# ---------------------------------------------------------------------------
+
+def search_kb_hybrid_unified(
+    db: Session,
+    kb_id: int,
+    query: str,
+    top_k: int = 8,
+) -> list[dict[str, Any]]:
+    """合并 legacy KnowledgeEntry 与新 DocumentChunk 混合检索结果（RRF），分源标注。"""
+    role_hints = infer_semantic_role_hints(query)
+    entries = search_entries_hybrid(db, kb_id, query, top_k=top_k)
+    chunks = search_chunks_hybrid(db, kb_id, query, top_k=top_k)
+
+    entry_rank = {int(h["entry_id"]): i for i, h in enumerate(entries)}
+    chunk_rank = {-int(h["chunk_id"]): i for i, h in enumerate(chunks)}
+    rank_maps = [m for m in (entry_rank, chunk_rank) if m]
+    if not rank_maps:
+        return []
+
+    merged_keys = _rrf_merge(*rank_maps, top_k=max(top_k * 2, top_k))
+    entry_map = {int(h["entry_id"]): h for h in entries}
+    chunk_map = {-int(h["chunk_id"]): h for h in chunks}
+
+    doc_ids = [int(h["document_id"]) for h in chunks]
+    doc_titles: dict[int, str] = {}
+    if doc_ids:
+        docs = db.execute(select(Document).where(Document.id.in_(doc_ids))).scalars().all()
+        doc_titles = {d.id: (d.title or "").strip() or f"document#{d.id}" for d in docs}
+
+    results: list[dict[str, Any]] = []
+    for key in merged_keys:
+        if key > 0:
+            hit = entry_map.get(key)
+            if hit is None:
+                continue
+            results.append(
+                {
+                    "source_type": "entry",
+                    "entry_id": key,
+                    "title": hit.get("title") or "",
+                    "summary": hit.get("summary") or "",
+                    "snippet": hit.get("snippet") or "",
+                    "semantic_role": hit.get("semantic_role"),
+                    "rrf_score": hit.get("rrf_score"),
+                }
+            )
+        else:
+            hit = chunk_map.get(key)
+            if hit is None:
+                continue
+            doc_id = int(hit["document_id"])
+            results.append(
+                {
+                    "source_type": "chunk",
+                    "chunk_id": -key,
+                    "document_id": doc_id,
+                    "title": doc_titles.get(doc_id, f"document#{doc_id}"),
+                    "summary": "",
+                    "snippet": hit.get("content") or "",
+                    "semantic_meta": hit.get("semantic_meta"),
+                    "semantic_role": (
+                        (hit.get("semantic_meta") or {}).get("semantic_role")
+                        if isinstance(hit.get("semantic_meta"), dict)
+                        else None
+                    ),
+                    "rrf_score": None,
+                }
+            )
+        if len(results) >= top_k:
+            break
+
+    if role_hints and len(results) > 1:
+        def _role_boost(item: dict[str, Any]) -> float:
+            role = item.get("semantic_role")
+            if isinstance(item.get("semantic_meta"), dict):
+                role = role or item["semantic_meta"].get("semantic_role")
+            return 0.15 if role in role_hints else 0.0
+
+        results.sort(
+            key=lambda item: (
+                (item.get("rrf_score") or 0.0) + _role_boost(item),
+                item.get("rrf_score") or 0.0,
+            ),
+            reverse=True,
+        )
+        results = results[:top_k]
+
+    return results
+
+
+async def search_kb_hybrid_unified_async(
+    db: Session, kb_id: int, query: str, top_k: int = 8
+) -> list[dict[str, Any]]:
+    return await asyncio.to_thread(search_kb_hybrid_unified, db, kb_id, query, top_k)

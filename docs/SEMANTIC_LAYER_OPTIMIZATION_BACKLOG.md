@@ -5,144 +5,105 @@
 
 ---
 
-## 实现状态总览 (2026-05-12)
+## 实现状态总览 (2026-05-25)
 
 | 能力 | 状态 | 说明 |
 |------|------|------|
 | 列语义 (LLM) | ✅ | `ColumnMeta.semantic_desc/type/is_usable` |
 | 表级五段式摘要 (LLM) | ✅ | `TableSummary.summary/use_cases/key_columns/warnings` |
-| 业务域知识注入表理解 | ✅ | `_build_table_business_context()` → `domain_contexts[]` + `domain_knowledge_entries[]`，注入列分析和表摘要 |
-| 知识条目相关性过滤 | ✅ | 按表名+列名关键词匹配排序，优先保留相关条目 |
-| Profiler 数值分位数 | ✅ | P25/P50/P75 输出到 quality_metrics.distribution |
-| Profiler 风险加权 | ✅ | 空值率权重提升，区分危害等级 |
-| 低质量列跳过 LLM | ✅ | 空值率 >95% 或单值列跳过，节省调用 |
-| 宽表列优先级裁剪 | ✅ | >50 列按 metric>time>id>dimension 排序取前50 |
-| key_columns 幻觉校验 | ✅ | 与真实列名交集，剔除不存在的列 |
-| 表摘要缺失章节 LLM 补全 | ✅ | 定向 LLM 补全替代纯规则兜底 |
-| 列级错误容忍 | ✅ | 单列 LLM 失败不回滚整表 |
-| 业务域与知识库绑定 | ✅ | `BusinessDomainKnowledgeBase` 多对多 |
+| 业务域知识注入表理解 | ✅ | 域描述 + 相关知识条目注入列/表分析 |
+| 知识条目相关性过滤 | ✅ | 按表名+列名关键词匹配排序 |
+| Profiler 增强 | ✅ | 分位数、风险加权、低质量列跳过 LLM |
+| 业务域与知识库绑定 | ✅ | `BusinessDomainKnowledgeBase` |
 | 表绑知识库与固定条目 | ✅ | `TableKnowledgeBase` + `TableKnowledgeEntry` |
-| Few-shot 历史问答 | ✅ | `QueryExample` + 向量检索 → `few_shot_json` |
-| 业务域全局语义 | 🔲 | 域描述注入 Copilot 上下文靠前位置 |
-| 指标目录 / 强结构化规则 | ⏸️ | 新表承载指标表达式，拼入 SqlCopilotContext |
-| 跨表 JOIN 约定 | ⏸️ | 推荐 JOIN 路径、禁止 JOIN 先验 |
+| Few-shot 历史问答 | ✅ | `QueryExample` + 域内过滤向量检索 |
+| 文档流水线 | ✅ | `documents` + `document_chunks` + hybrid 检索 |
+| chunk 语义结构化 | ✅ | `DocumentChunk.semantic_meta`（role + grounding + join_edges） |
+| 术语 / 指标提取 | ✅ | `business_terms` / `metric_definitions` + 审核 + 自动 approved |
+| 数据血缘 | ✅ | `data_lineage`（Git 源 LLM 提取 + join_guide 同步） |
+| 语义关系图 | ✅ | `semantic_relations`（term_column / metric_table / table_join / concept_alias） |
+| concept_id 企业薄层 | ✅ | 术语/指标自动生成 + `concept_alias` 路由 |
+| Copilot 多信号路由 | ✅ | 见 [COPILOT_ROUTING_OPTIMIZATION](./COPILOT_ROUTING_OPTIMIZATION.md) |
+| 指标→表绑定 | ✅ | `MetricDefinition.bound_table_refs` + metric_router |
+| 按 semantic_role 分流检索 | ✅ | 问句推断 role → hybrid 检索加权 |
+| 业务域全局语义靠前注入 | 🔲 | 域描述在 Copilot prompt 中更靠前 |
+| semantic_relations UI 编辑 | 🔲 | 关系图可视化与人工维护 |
 | PII / 脱敏列标记 | ⏸️ | 合规需求 |
+| Formal OWL 本体 | ⏸️ | 轻量 JSON 关系图已覆盖主要场景 |
 
 ---
 
 ## 1. 语义层可增加的信息（按收益方向）
 
-以下信息若维护得当，可提升**表推断**与**逻辑 / SQL 生成**的依据强度（与实现成本大致相关，非严格排序）。
+（保留原 §1 内容 — 仍为规划参考）
 
-### 1.1 表级业务语义（超越物理 DDL）
+以下信息若维护得当，可提升**表推断**与**逻辑 / SQL 生成**的依据强度。
 
-- 表/主题解决的业务问题、核心实体、与上下游表关系（1:n、事实/维度等）。
-- **行粒度**：一行代表什么（订单行、日汇总、快照等），减少错误的聚合与去重策略。
-- **主键 / 自然键 / 软删**：如 `is_deleted`、`valid_from/to`，降低误关联与漏过滤。
-- **时间语义**：业务时区、统计日切分（自然日 vs 账单日）、迟到数据策略。
+### 1.1 ~ 1.8
 
-### 1.2 列级语义与可计算约束
-
-- **度量 vs 维度**、**可加性**（可加 / 半可加 / 不可加）、默认聚合方式。
-- **枚举 / 码表**：状态含义、与维表映射，减少模型猜测常量。
-- **单位与精度**（金额分/元、重量单位等）。
-- **PII / 脱敏**：不可 SELECT 或需脱敏的列（合规 + 减少胡编）。
-
-### 1.3 跨表 JOIN 与路径先验
-
-- 推荐 JOIN 路径、禁止或慎用的 JOIN（笛卡尔、历史脏键）。
-- 与推理链路中「主分析表 / JOIN 涉及」等角色标签对齐的**固化分析路径**说明。
-
-### 1.4 指标与口径层
-
-- 指标目录：名称、定义、表达式或 SQL 片段、维度切片约定、与表/列绑定。
-- **同义词**：口语指标名到统一口径的映射。
-- **口径版本**：变更历史，避免新旧混用。
-
-### 1.5 业务规则与策略（可检索、可引用）
-
-- 默认时间窗、排除测试账号、仅看已支付等过滤规则。
-- 按组织/区域/租户的数据范围（与权限或查询模板对齐）。
-- 典型问题模式与推荐表组合（便于 RAG 命中）。
-
-### 1.6 数据质量与新鲜度
-
-- 分区、更新频率、延迟（T+1、小时级），帮助选对分区与预期。
-- 已知缺口：某段日期缺数、迁移中等，减少无效推理。
-
-### 1.7 负例与边界
-
-- 易错问法与错误 SQL 对照（不要怎样 JOIN、不要用某列做金额等）。
-- 易混淆表的区分说明。
-
-### 1.8 结构化 + 自然语言双轨
-
-- 除长文本外，提供 **JSON/YAML 等机器可读块**（主键、外键置信度、推荐度量、常用 WHERE），供护栏与 prompt 共用，比纯叙述更稳。
+详见历史版本；其中 **1.3 跨表 JOIN**、**1.4 指标口径**、**1.8 结构化双轨** 已通过 `semantic_relations` + `semantic_meta` 部分落地。
 
 ---
 
 ## 2. 当前工程中已有的承载能力
 
-| 能力 | 数据模型（示例） | 进入 Copilot 的路径（概念） |
-|------|------------------|-----------------------------|
-| 列语义 | `ColumnMeta`：`semantic_desc`、`semantic_type`、`comment` 等 | `rag_service._build_priority_context` → `schema_text` → `SqlCopilotContext.schema` |
-| 表级摘要 / 场景 / 关键列 / 风险 | `TableSummary`：`summary`、`use_cases`、`key_columns`、`warnings` | 同上 → `analysis_text` / `summary_text` → `TABLE SUMMARY` 等 |
-| 业务域与知识 | `BusinessDomainDescription`、域绑知识库 | `_collect_knowledge_context_text` → `SqlCopilotContext.knowledge` |
-| 表绑知识库与固定条目 | `TableKnowledgeBase`、`TableKnowledgeEntry` | 同上 |
-| 相似问法 | `QueryExample` + 向量检索 | `few_shot_json` |
+| 能力 | 数据模型 | 进入 Copilot 的路径 |
+|------|----------|---------------------|
+| 列语义 | `ColumnMeta` | `context_builder.build_priority_context` → schema |
+| 表级摘要 | `TableSummary` | 同上 → analysis_text |
+| 业务域与知识 | 域绑 KB + `KnowledgeEntry` | `collect_knowledge_context_text` |
+| 文档分块 | `DocumentChunk` + `semantic_meta` | 统一 hybrid 检索 + grounding 锚表 |
+| 术语 / 指标 | `business_terms` / `metric_definitions` | `metric_router` → 口径注入 + 表加权 |
+| 语义关系图 | `semantic_relations` | `graph_router` 1-hop 扩表 |
+| 相似问法 | `QueryExample` | few_shot_json（域内过滤） |
 
-Prompt 分层拼装入口：`backend/services/llm_service.py` 中 `SqlCopilotContext`、`_sql_generation_user_message`。
-
----
-
-## 3. 通过「功能」接入的推荐方式（与代码位置对应）
-
-### 3.1 表 / 列语义（结构化）
-
-- **功能**：表详情中维护列说明、语义类型、可用性等；必要时扩展 `TableMeta` / `ColumnMeta` 字段或增加 `JSON`（如 `semantic_extra`）。
-- **接入**：扩展 `rag_service._build_priority_context` 中 `schema_lines` / `analysis_lines` 的拼接规则。
-- **相关代码**：`backend/models.py`，`backend/routers/tables.py`、`analyze.py`、`datasources.py`；前端 `app/table/[id]/`、`ColumnCard.tsx` 等。
-
-### 3.2 表级叙述与风险（自然语言）
-
-- **功能**：维护 `TableSummary` 各字段；可通过「语义分析任务」写回或提供表详情页编辑能力。
-- **接入**：依赖现有 `_build_priority_context` 读取逻辑即可；若新增可编辑 API，需与 `TableSummary` 读写对齐。
-
-### 3.3 口径、指标、JOIN 约定、负例（长文本 + RAG）
-
-- **功能**：用知识库条目（Markdown 分节）维护；通过业务域 / 表关联已有知识库能力。
-- **接入**：`_collect_knowledge_context_text` 已聚合进 `knowledge`；主要工作是**内容运营 + 关联配置**，必要时微调检索条数或拼接模板。
-
-### 3.4 业务域全局语义
-
-- **功能**：完善业务域描述与域下知识库绑定。
-- **接入**：会话 `business_domain_id` 已参与知识拉取；若需域描述更靠前，可在 `rag_service.answer` 组装 `SqlCopilotContext` 时追加一节（规划项）。
-
-### 3.5 指标目录 / 强结构化规则（进阶）
-
-- **功能**：新表（如 `metric_definitions`）或 `TableMeta` 上 `JSON` 字段承载指标与表达式。
-- **接入**：新增一段固定格式文本（如 `## METRICS`）拼入 `SqlCopilotContext`；可能需扩展 `SqlCopilotContext` 或 `business_sections`（规划项）。
-
-### 3.6 Few-shot 质量
-
-- **功能**：维护高质量 `QueryExample`（或批量导入）。
-- **接入**：现有相似检索与 `few_shot_json` 链路。
+Prompt 分层入口：`backend/services/llm_service.py` → `SqlCopilotContext`。
 
 ---
 
-## 4. 建议实施顺序（落地时参考）
+## 3. 知识库清洗与结构化（已实现）
 
-1. **零/schema 变更**：填满 `TableSummary`、列语义、知识库（域/表绑定）与 `QueryExample`。
-2. **小改动**：在 `_build_priority_context` 中增加已有字段的展示（如 `warnings`、更多 `ColumnMeta` JSON 子字段的摘要）。
-3. **-schema 迁移**：新增表或 JSON 列承载指标目录、JOIN 图等，再扩展 `SqlCopilotContext` 与表详情/管理端功能。
+### 3.1 文档流水线
+
+```
+extract → clean → chunk → embed → structuring → indexed
+```
+
+| Stage | 模块 | 产出 |
+|-------|------|------|
+| clean | `document_cleaner.py` | 去噪声、标点归一化、块质量分 |
+| chunk | `document_chunker.py` | `DocumentChunk` |
+| embed | `knowledge_pipeline_service.py` | 向量 + tsvector |
+| structuring | `chunk_semantic_structuring.py` | `semantic_meta`、entry role、relations 同步 |
+
+### 3.2 语义提取流水线
+
+触发：文件上传 / Git 同步 / `POST .../run-semantic-pipeline`
+
+| Step | 产出 |
+|------|------|
+| 术语提取 | `business_terms` + `concept_id` |
+| 指标提取 | `metric_definitions` + `bound_table_refs` |
+| 血缘提取 | `data_lineage`（Git 源） |
+| 关系同步 | `semantic_relations` 全量 |
 
 ---
 
-## 5. 文档状态
+## 4. 建议后续（未立项）
 
-- **性质**：产品 / 技术规划备忘。
-- **执行**：**暂不执行**；后续若立项，可拆为独立需求（数据迁移、API、前端、Prompt 变更）分别跟踪。
+1. **semantic_relations 前端**：关系浏览、编辑、跨域 concept 对齐
+2. **域描述 Copilot 注入优化**
+3. **2-hop 图扩展**（当前 1-hop）
+4. **PII 列标记**（合规场景）
 
 ---
 
-*最后更新：基于仓库内 Copilot 管线（`rag_service`、`llm_service`、`models`、表/知识库路由与前端表页）的讨论整理。*
+## 5. 相关文档
+
+- [DATALENS_OVERVIEW](./DATALENS_OVERVIEW.md) — 项目全貌
+- [企业语义层与域内自治实践](./企业语义层与域内自治实践.md) — 理念与存储
+- [COPILOT_ROUTING_OPTIMIZATION](./COPILOT_ROUTING_OPTIMIZATION.md) — 路由细节
+
+---
+
+*最后更新：2026-05-25，反映 Phase 1~3 轻量语义层落地。*

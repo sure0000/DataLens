@@ -221,6 +221,8 @@ class DocumentChunk(Base):
     parent_chunk_id: Mapped[int | None] = mapped_column(ForeignKey("document_chunks.id", ondelete="SET NULL"), nullable=True)
     # 清洗质量分 0.0-1.0
     quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # 轻量语义元数据：semantic_role、grounding(table_refs/column_refs)、confidence
+    semantic_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # 向量（与 Embedding 表并存，新文档走此表）
     embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
     # tsvector 由 PostgreSQL GENERATED ALWAYS AS 自动维护，不在 ORM 中映射（避免 INSERT 时冲突）
@@ -395,6 +397,7 @@ class BusinessTerm(Base):
     definition: Mapped[str] = mapped_column(Text, nullable=False)
     source_entry_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_entries.id", ondelete="SET NULL"), nullable=True)
     related_fields: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
+    concept_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending_review")  # pending_review | approved | rejected
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -413,6 +416,8 @@ class MetricDefinition(Base):
     caliber: Mapped[str | None] = mapped_column(Text, nullable=True)
     source_entry_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_entries.id", ondelete="SET NULL"), nullable=True)
     related_terms: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
+    bound_table_refs: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
+    concept_id: Mapped[str | None] = mapped_column(Text, nullable=True)
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending_review")  # pending_review | approved | rejected
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -451,6 +456,40 @@ class PipelineRun(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SemanticRelation(Base):
+    """轻量语义关系图：术语/指标/表/概念之间的可遍历边（域内厚、企业薄层 concept_id）。"""
+
+    __tablename__ = "semantic_relations"
+    __table_args__ = (
+        UniqueConstraint(
+            "knowledge_base_id",
+            "relation_type",
+            "source_type",
+            "source_ref",
+            "target_type",
+            "target_ref",
+            name="uq_semantic_relation_edge",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    # term_column | metric_table | table_join | concept_alias
+    relation_type: Mapped[str] = mapped_column(Text, nullable=False)
+    source_type: Mapped[str] = mapped_column(Text, nullable=False)  # term | metric | table | concept
+    source_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    target_type: Mapped[str] = mapped_column(Text, nullable=False)  # column | table | concept
+    target_ref: Mapped[str] = mapped_column(Text, nullable=False)
+    concept_id: Mapped[str | None] = mapped_column(Text, nullable=True)
+    join_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_chunk_id: Mapped[int | None] = mapped_column(ForeignKey("document_chunks.id", ondelete="SET NULL"), nullable=True)
+    source_entry_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_entries.id", ondelete="SET NULL"), nullable=True)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="approved")  # draft | approved | deprecated
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class KnowledgeMcpSource(Base):

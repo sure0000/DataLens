@@ -75,6 +75,10 @@ def _ensure_safety_columns(conn) -> None:
         ("knowledge_api_sources", "tags", "JSON"),
         ("knowledge_git_sources", "category", "TEXT"),
         ("knowledge_git_sources", "tags", "JSON"),
+        ("document_chunks", "semantic_meta", "JSONB"),
+        ("metric_definitions", "bound_table_refs", "JSONB"),
+        ("business_terms", "concept_id", "TEXT"),
+        ("metric_definitions", "concept_id", "TEXT"),
     ]
     for table, col, col_type in _cols:
         conn.execute(
@@ -99,6 +103,8 @@ def _ensure_safety_indexes(conn) -> None:
         ("idx_data_lineage_kb", "data_lineage", "knowledge_base_id"),
         ("idx_data_lineage_git", "data_lineage", "git_source_id"),
         ("idx_pipeline_runs_kb", "pipeline_runs", "knowledge_base_id"),
+        ("idx_semantic_relations_kb", "semantic_relations", "knowledge_base_id"),
+        ("idx_semantic_relations_concept", "semantic_relations", "concept_id"),
     ]
     for idx_name, table, col in _indexes:
         conn.execute(

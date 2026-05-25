@@ -10,7 +10,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from config import get_settings
 from models import Document, DocumentChunk, KnowledgeBase, KnowledgeEntry, PipelineConfig
+from services.chunk_semantic_structuring import structure_document_chunks
 from services.document_cleaner import clean_text, filter_chunks
 from services.document_chunker import chunk_text
 from services.embedding_service import _embed
@@ -138,10 +140,27 @@ def run_pipeline(db: Session, doc: Document, raw_text: str) -> None:
 
         timings["embed_ms"] = int((time.monotonic() - t0) * 1000)
 
+        # Stage 5: semantic structuring（轻量本体：role + grounding）
+        t0 = time.monotonic()
+        _set_document_status(db, doc, "structuring")
+        settings = get_settings()
+        struct_result = structure_document_chunks(
+            db,
+            doc.id,
+            max_chunks=settings.semantic_chunk_structure_max,
+        )
+        timings["structure_ms"] = int((time.monotonic() - t0) * 1000)
+        timings["structured_chunks"] = struct_result.get("structured_chunks", 0)
+
         doc.stage_timings = timings
         _set_document_status(db, doc, "indexed")
         db.commit()
-        _logger.info("Pipeline done: doc=%d chunks=%d", doc.id, len(filtered))
+        _logger.info(
+            "Pipeline done: doc=%d chunks=%d structured=%s",
+            doc.id,
+            len(filtered),
+            struct_result.get("structured_chunks", 0),
+        )
 
     except Exception as exc:
         _logger.exception("Pipeline failed for doc=%d", doc.id)
@@ -181,6 +200,7 @@ def get_document_chunks(db: Session, doc_id: int) -> list[dict[str, Any]]:
             "char_start": c.char_start,
             "char_end": c.char_end,
             "quality_score": c.quality_score,
+            "semantic_meta": c.semantic_meta,
         }
         for c in chunks
     ]
