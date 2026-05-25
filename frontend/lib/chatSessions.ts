@@ -3,6 +3,38 @@ export type QueryResult = {
   columns: string[];
   rows: Record<string, unknown>[];
   error?: string;
+  review_required?: boolean;
+};
+
+export type DomainSuggestion = {
+  domain_id: number;
+  domain_name?: string;
+  score?: number;
+  requires_confirmation?: boolean;
+  auto_applicable?: boolean;
+};
+
+export type RoutingTrace = {
+  routing_mode?: string;
+  candidate_table_count?: number;
+  candidate_table_ids?: number[];
+  candidate_sources?: Record<string, string[]>;
+  fallback_reason?: string;
+  top_table_scores?: { table_id: number; fq_name: string; score: number; sources: string[] }[];
+  domain_suggestion?: DomainSuggestion | null;
+  auto_domain_applied?: boolean;
+  embed_calls?: number;
+  kb_search_calls?: number;
+};
+
+export type SqlReview = {
+  review_required?: boolean;
+  trust_level?: string;
+  execution_mode?: string;
+  reasons?: string[];
+  sql_table_ids?: number[];
+  out_of_domain_table_ids?: number[];
+  outside_candidate_table_ids?: number[];
 };
 
 /** 管线 trace 中可点击跳转的实体（由后端 matches 定位原文子串） */
@@ -86,6 +118,10 @@ export type ChatMessage = {
   explanation?: string;
   query_result?: QueryResult;
   pipeline_trace?: PipelineTraceStep[];
+  routing_trace?: RoutingTrace;
+  sql_review?: SqlReview;
+  /** 域推荐确认后用于「切换域并重试」的原问题 */
+  retry_question?: string;
   created_at: string;
 };
 
@@ -176,6 +212,9 @@ function normalizeMessage(raw: Partial<ChatMessage>): ChatMessage {
     explanation: raw.explanation || "",
     query_result: raw.query_result || { ok: false, columns: [], rows: [], error: "历史记录无执行结果" },
     pipeline_trace: normalizePipelineTrace(raw.pipeline_trace),
+    routing_trace: raw.routing_trace,
+    sql_review: raw.sql_review,
+    retry_question: raw.retry_question,
     created_at: raw.created_at || nowIso()
   };
 }

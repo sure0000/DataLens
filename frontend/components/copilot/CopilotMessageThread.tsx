@@ -27,6 +27,7 @@ export type CopilotMessageThreadProps = {
   copyMessage: (m: ChatMessage) => void;
   retryFromAssistant: (messageId: string) => void;
   continueFollowUp: (messageId: string) => void;
+  onApplySuggestedDomain?: (domainId: number, question: string) => void;
 };
 
 const CopilotMessageThread = memo(function CopilotMessageThread({
@@ -39,7 +40,8 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
   saveEditAndResubmit,
   copyMessage,
   retryFromAssistant,
-  continueFollowUp
+  continueFollowUp,
+  onApplySuggestedDomain
 }: CopilotMessageThreadProps) {
   return (
     <>
@@ -122,6 +124,49 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
                 {((m.explanation || "").includes("护栏") || (m.answer || "").includes("不能提供")) && (
                   <div className={`mb-2 rounded-lg px-3 py-2 text-xs ${alertWarning}`}>
                     该回答触发了 QA 安全边界，仅提供合规范围内的替代建议。
+                  </div>
+                )}
+                {m.routing_trace?.domain_suggestion?.requires_confirmation &&
+                  typeof m.routing_trace.domain_suggestion.domain_id === "number" &&
+                  m.retry_question?.trim() && (
+                    <div className={`mb-2 rounded-lg px-3 py-2 text-xs ${alertWarning}`}>
+                      <p>
+                        系统推荐业务域「{m.routing_trace.domain_suggestion.domain_name || m.routing_trace.domain_suggestion.domain_id}」
+                        {typeof m.routing_trace.domain_suggestion.score === "number"
+                          ? `（置信度 ${(m.routing_trace.domain_suggestion.score * 100).toFixed(0)}%）`
+                          : ""}
+                        。当前未绑定业务域，路由范围可能偏大。
+                      </p>
+                      {onApplySuggestedDomain ? (
+                        <button
+                          type="button"
+                          className="mt-2 inline-flex min-h-[1.75rem] items-center justify-center rounded-full border border-app-border bg-[var(--app-card-bg)] px-3 text-[11px] font-medium text-app-primary transition hover:bg-app-hover"
+                          onClick={() =>
+                            onApplySuggestedDomain(
+                              m.routing_trace!.domain_suggestion!.domain_id,
+                              m.retry_question!.trim()
+                            )
+                          }
+                        >
+                          切换到此域并重新提问
+                        </button>
+                      ) : null}
+                    </div>
+                  )}
+                {m.routing_trace?.auto_domain_applied && m.routing_trace?.domain_suggestion?.domain_name && (
+                  <div className="mb-2 rounded-lg border border-app-border bg-app-chip px-3 py-2 text-xs text-app-secondary">
+                    已自动绑定推荐业务域「{m.routing_trace.domain_suggestion.domain_name}」参与本次路由。
+                  </div>
+                )}
+                {m.sql_review?.review_required && (
+                  <div className={`mb-2 rounded-lg px-3 py-2 text-xs ${alertWarning}`}>
+                    <p className="font-medium text-app-primary">SQL 需人工确认后再执行</p>
+                    {(m.sql_review.reasons || []).map((reason) => (
+                      <p key={reason} className="mt-1 text-app-secondary">
+                        {reason}
+                      </p>
+                    ))}
+                    <p className="mt-1 text-app-muted">请核对 SQL 引用的表是否在本业务域与路由候选范围内。</p>
                   </div>
                 )}
                 <div className="mb-2 flex flex-wrap items-center gap-2">

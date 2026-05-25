@@ -319,6 +319,7 @@ function CopilotPageContent() {
 
   const handleSettled = useCallback((res: AskResponse, traceAcc: PipelineTraceStep[]) => {
     const sid = settlingSessionRef.current;
+    const retryQuestion = activeAskRef.current?.payload.question?.trim();
     if (!sid) {
       setActiveAsk(null);
       return;
@@ -334,6 +335,9 @@ function CopilotPageContent() {
       }
       return traceAcc.length ? filterCopilotTraceSteps(stripStreamEphemeralTraceSteps(traceAcc)) : undefined;
     })();
+    const domainSuggestion = res.routing_trace?.domain_suggestion;
+    const needsDomainConfirm =
+      !!domainSuggestion?.requires_confirmation && typeof domainSuggestion.domain_id === "number";
     const assistantMessage: ChatMessage = {
       id: `msg-assistant-${Date.now()}`,
       role: "assistant",
@@ -343,6 +347,9 @@ function CopilotPageContent() {
       explanation: res.explanation || "",
       query_result: res.query_result || { ok: false, columns: [], rows: [], error: "没有返回查询结果" },
       pipeline_trace: mergedPipeline?.length ? mergedPipeline : undefined,
+      routing_trace: res.routing_trace,
+      sql_review: res.sql_review,
+      retry_question: needsDomainConfirm && retryQuestion ? retryQuestion : undefined,
       created_at: new Date().toISOString()
     };
     const next = appendAssistantMessage(sid, assistantMessage);
@@ -378,6 +385,17 @@ function CopilotPageContent() {
       setActiveAsk(null);
     }
   }, [handleSettled]);
+
+  const applySuggestedDomain = useCallback(
+    (domainId: number, question: string) => {
+      const sid = activeSessionId;
+      if (!sid || !question.trim() || activeAsk) return;
+      const state = setSessionBusinessDomain(sid, domainId);
+      syncState(state);
+      submit(question.trim(), { activeSessionId: sid });
+    },
+    [activeAsk, activeSessionId]
+  );
 
   function submit(rawContent?: string, options?: { fromMessageId?: string; activeSessionId?: string }) {
     const content = (rawContent ?? question).trim();
@@ -713,6 +731,7 @@ function CopilotPageContent() {
               copyMessage={copyMessage}
               retryFromAssistant={retryFromAssistant}
               continueFollowUp={continueFollowUp}
+              onApplySuggestedDomain={applySuggestedDomain}
             />
             <CopilotStreamBubble />
 

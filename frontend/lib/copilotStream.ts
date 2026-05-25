@@ -1,5 +1,5 @@
 import { API } from "./api";
-import type { PipelineTraceStep } from "./chatSessions";
+import type { PipelineTraceStep, RoutingTrace, SqlReview } from "./chatSessions";
 
 export type StreamStage = "intent_recognizing" | "answer_generating" | "sql_executing";
 
@@ -20,8 +20,11 @@ export type AskResponse = {
     columns: string[];
     rows: Record<string, unknown>[];
     error?: string;
+    review_required?: boolean;
   };
   pipeline_trace?: PipelineTraceStep[];
+  routing_trace?: RoutingTrace;
+  sql_review?: SqlReview;
 };
 
 /**
