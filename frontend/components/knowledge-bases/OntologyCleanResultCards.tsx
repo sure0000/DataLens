@@ -69,7 +69,7 @@ export default function OntologyCleanResultCards({
           return (
             <Link
               key={key}
-              href={`/knowledge-bases/${kbId}/ontology/${routeKey}`}
+              href={`/knowledge-bases/${kbId}/ontology?tab=governance`}
               className="app-card app-card-interactive flex flex-col gap-2 p-4 no-underline"
             >
               <div className="flex items-center gap-2">

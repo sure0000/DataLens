@@ -67,3 +67,49 @@ def sync_knowledge_base_to_rdf(
         "physical_tables": table_stats,
         "domain_table_count": len(domain_tables),
     }
+
+
+def refresh_kb_pg_semantic_cache(db: Session, kb_id: int) -> dict[str, int]:
+    """Refresh PG-backed table/knowledge embeddings after RDF assertion changes."""
+    from sqlalchemy import delete, select
+
+    from models import Embedding, KnowledgeEntry, TableKnowledgeBase, TableSummary
+    from services.embedding_service import TABLE_EMBEDDING_REF, embed_and_store, replace_knowledge_entry_embedding
+
+    refreshed_tables = 0
+    table_ids = list(
+        db.execute(
+            select(TableKnowledgeBase.table_id).where(TableKnowledgeBase.knowledge_base_id == kb_id)
+        ).scalars().all()
+    )
+    for tid in table_ids:
+        summary = db.execute(
+            select(TableSummary)
+            .where(TableSummary.table_id == tid)
+            .order_by(TableSummary.generated_at.desc())
+        ).scalars().first()
+        text = (summary.summary or "").strip() if summary else ""
+        if not text:
+            continue
+        db.execute(
+            delete(Embedding).where(
+                Embedding.ref_type == TABLE_EMBEDDING_REF,
+                Embedding.ref_id == tid,
+            )
+        )
+        embed_and_store(db, TABLE_EMBEDDING_REF, tid, text, commit=False)
+        refreshed_tables += 1
+
+    refreshed_entries = 0
+    entry_ids = list(
+        db.execute(select(KnowledgeEntry.id).where(KnowledgeEntry.knowledge_base_id == kb_id)).scalars().all()
+    )
+    for eid in entry_ids:
+        entry = db.get(KnowledgeEntry, eid)
+        if not entry:
+            continue
+        replace_knowledge_entry_embedding(db, entry.id, entry.title, entry.body, entry.summary)
+        refreshed_entries += 1
+
+    db.commit()
+    return {"tables": refreshed_tables, "entries": refreshed_entries}

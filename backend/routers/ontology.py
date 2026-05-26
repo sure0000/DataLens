@@ -77,6 +77,14 @@ class AssertionPromoteRequest(BaseModel):
     target_lifecycle: str | None = None
 
 
+class CopilotValidateRequest(BaseModel):
+    question: str | None = None
+    subject: str | None = None
+    table_id: int | None = None
+    entity_name: str | None = None
+    auto_apply: bool = False
+
+
 class ModelingRunRequest(BaseModel):
     source_type: str = "manual"
     source_id: int | None = None
@@ -524,6 +532,28 @@ def get_provenance(
     from services.ontology.provenance import get_provenance_chain
 
     return get_provenance_chain(db, kb_id, subject.strip())
+
+
+@router.post("/knowledge-bases/{kb_id}/copilot-validate")
+def copilot_validate_entity(kb_id: int, body: CopilotValidateRequest, db: Session = Depends(get_db)) -> dict:
+    """Copilot 验证：根据 routing_trace 匹配隔离区并建议/自动修复。"""
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.copilot_validation import run_copilot_validation
+
+    result = run_copilot_validation(
+        db,
+        kb_id,
+        question=body.question,
+        subject_iri=(body.subject or "").strip() or None,
+        table_id=body.table_id,
+        entity_name=(body.entity_name or "").strip() or None,
+        auto_apply=body.auto_apply,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "验证失败"))
+    return result
 
 
 @router.post("/knowledge-bases/{kb_id}/assertions/promote")

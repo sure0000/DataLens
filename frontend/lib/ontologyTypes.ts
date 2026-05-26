@@ -124,8 +124,17 @@ export const TERM_TYPE_LABELS: Record<string, string> = {
   other: "其他",
 };
 
+export type OntologyProvenance = {
+  chunks: { iri: string; content_preview?: string | null }[];
+  documents: { id: number; title: string; status: string }[];
+  evidence_packages: { display_id: string; title: string }[];
+  has_provenance?: boolean;
+};
+
 export const STATUS_LABELS: Record<string, { label: string; tone: "success" | "warn" | "muted" | "danger" }> = {
   approved: { label: "已发布", tone: "success" },
+  linked: { label: "已关联", tone: "warn" },
+  shacl_passed: { label: "SHACL 通过", tone: "warn" },
   pending_review: { label: "待审核", tone: "warn" },
   draft: { label: "草稿", tone: "muted" },
   rejected: { label: "已拒绝", tone: "danger" },
@@ -140,18 +149,3 @@ export const RELATION_TYPE_LABELS: Record<string, string> = {
 };
 
 export const ONTOLOGY_KB_STORAGE_KEY = "ontology_selected_kb_id";
-export const ONTOLOGY_ROLE_STORAGE_KEY = "ontology_viewer_role_v1";
-
-export type OntologyViewerRole = "business" | "governance" | "engineer";
-
-export const ONTOLOGY_ROLE_LABELS: Record<OntologyViewerRole, string> = {
-  business: "业务人员",
-  governance: "数据治理",
-  engineer: "本体工程师",
-};
-
-export const ONTOLOGY_ROLE_DEFAULT_TAB: Record<OntologyViewerRole, OntologyTab> = {
-  business: "semantics",
-  governance: "governance",
-  engineer: "expert",
-};

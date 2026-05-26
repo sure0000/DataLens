@@ -13,15 +13,17 @@ _logger = logging.getLogger(__name__)
 # approvalStatus (stored) → lifecycle phase (UI)
 STATUS_TO_LIFECYCLE: dict[str, str] = {
     "draft": "draft",
-    "pending_review": "linked",
+    "linked": "linked",
+    "shacl_passed": "shacl_passed",
+    "pending_review": "linked",  # legacy alias
     "approved": "production",
     "rejected": "rejected",
 }
 
 LIFECYCLE_TO_STATUS: dict[str, str] = {
     "draft": "draft",
-    "linked": "pending_review",
-    "shacl_passed": "pending_review",
+    "linked": "linked",
+    "shacl_passed": "shacl_passed",
     "production": "approved",
     "rejected": "rejected",
 }
@@ -30,10 +32,12 @@ ALLOWED_STATUSES = frozenset(STATUS_TO_LIFECYCLE.keys())
 
 # Valid promote transitions (from_status -> to_status)
 PROMOTE_TRANSITIONS: dict[str, frozenset[str]] = {
-    "draft": frozenset({"pending_review", "approved", "rejected"}),
-    "pending_review": frozenset({"approved", "rejected", "draft"}),
-    "approved": frozenset({"pending_review", "draft", "rejected"}),
-    "rejected": frozenset({"draft", "pending_review"}),
+    "draft": frozenset({"linked", "pending_review", "rejected"}),
+    "linked": frozenset({"shacl_passed", "rejected", "draft"}),
+    "shacl_passed": frozenset({"approved", "rejected", "linked"}),
+    "pending_review": frozenset({"shacl_passed", "approved", "rejected", "draft", "linked"}),
+    "approved": frozenset({"shacl_passed", "pending_review", "linked", "draft", "rejected"}),
+    "rejected": frozenset({"draft", "linked", "pending_review"}),
 }
 
 

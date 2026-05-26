@@ -118,8 +118,32 @@ def test_assertion_lifecycle_mapping():
     from services.ontology.assertion_lifecycle import lifecycle_phase, LIFECYCLE_TO_STATUS
 
     assert lifecycle_phase("draft") == "draft"
+    assert lifecycle_phase("linked") == "linked"
+    assert lifecycle_phase("shacl_passed") == "shacl_passed"
+    assert lifecycle_phase("pending_review") == "linked"
     assert lifecycle_phase("approved") == "production"
     assert LIFECYCLE_TO_STATUS["production"] == "approved"
+    assert LIFECYCLE_TO_STATUS["linked"] == "linked"
+    assert LIFECYCLE_TO_STATUS["shacl_passed"] == "shacl_passed"
+
+
+def test_copilot_validation_suggest_fixes():
+    from services.ontology.copilot_validation import _match_quarantine_items, _suggest_fixes
+
+    items = [
+        {
+            "item_idx": 1,
+            "reason": "unresolved_table_ref",
+            "reason_label": "无法解析物理表引用",
+            "subject": "https://datalens.local/data/metric/m1",
+            "object": "orders",
+        }
+    ]
+    matched = _match_quarantine_items(items, subject_iri="https://datalens.local/data/metric/m1")
+    assert len(matched) == 1
+    suggestions = _suggest_fixes(matched, [42])
+    assert suggestions[0]["recommended_template"] == "map_table_by_platform_id"
+    assert suggestions[0]["recommended_params"]["platform_id"] == 42
 
 
 def test_quarantine_templates_unresolved():

@@ -220,7 +220,7 @@ export default function SourceDetailPage({
       if (apiSource) return apiKind ? meta.kind === apiKind : false;
       return e.id === sourceId;
     }
-    if (sourceType === "file") {
+    if (sourceType === "file" || sourceType === "manual") {
       return e.id === sourceId;
     }
     return false;
@@ -235,7 +235,7 @@ export default function SourceDetailPage({
       if (apiSource) return apiKind ? meta.kind === apiKind : false;
       return d.knowledge_entry_id === sourceId || d.id === sourceId;
     }
-    if (sourceType === "file") {
+    if (sourceType === "file" || sourceType === "manual") {
       return d.knowledge_entry_id === sourceId || d.id === sourceId;
     }
     return false;
@@ -287,11 +287,13 @@ export default function SourceDetailPage({
       const doc = sourceDocs[0];
       if (doc) statusChip = docStatusChip(doc.status);
     }
-  } else if (sourceType === "file") {
+  } else if (sourceType === "file" || sourceType === "manual") {
     const entry = entries.find((e) => e.id === sourceId);
-    sourceTitle = entry?.title || "文件";
+    sourceTitle = entry?.title || (sourceType === "manual" ? "手动条目" : "文件");
     const label = entry?.source_meta?.label;
-    sourceSubtitle = (label && label !== "上传文件") ? label : (entry?.source_meta?.ref || entry?.source_meta?.kind || "文件");
+    sourceSubtitle = sourceType === "manual"
+      ? "手动条目"
+      : (label && label !== "上传文件") ? label : (entry?.source_meta?.ref || entry?.source_meta?.kind || "文件");
     const doc = sourceDocs[0];
     if (doc) statusChip = docStatusChip(doc.status);
   } else {

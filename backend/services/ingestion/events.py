@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections import defaultdict
 from typing import Any, Callable
 
@@ -101,12 +102,32 @@ def _on_assertion_promoted(**payload: Any) -> None:
     kb_id = payload.get("kb_id")
     if kb_id is None:
         return
+    kid = int(kb_id)
     try:
         from services.ontology_reasoning import materialize_inferred_closure
 
-        materialize_inferred_closure(0, int(kb_id))
+        materialize_inferred_closure(0, kid)
     except Exception:
         _logger.warning("assertion.promoted inference refresh failed kb=%s", kb_id, exc_info=True)
+
+    def _refresh_pg_cache() -> None:
+        try:
+            from database import SessionLocal
+            from services.ontology_sync_service import refresh_kb_pg_semantic_cache
+
+            db = SessionLocal()
+            try:
+                stats = refresh_kb_pg_semantic_cache(db, kid)
+                _logger.info("assertion.promoted PG cache refreshed kb=%s stats=%s", kid, stats)
+            finally:
+                db.close()
+        except Exception:
+            _logger.warning("assertion.promoted PG cache refresh failed kb=%s", kid, exc_info=True)
+
+    try:
+        threading.Thread(target=_refresh_pg_cache, daemon=True, name=f"pg-cache-kb-{kid}").start()
+    except Exception:
+        _logger.warning("assertion.promoted PG cache thread failed kb=%s", kid, exc_info=True)
 
 
 def register_default_handlers() -> None:

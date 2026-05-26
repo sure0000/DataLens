@@ -312,7 +312,7 @@ backend/
 /ontology                      → 本体浏览（统一 OntologyWorkspace）✅
 /knowledge-bases/[id]/ontology → 知识库内本体浏览 ✅
 /knowledge-bases               → 知识库列表（数据接入层）✅
-/knowledge-bases/[id]          → 知识库详情 + 证据包列表
+/knowledge-bases/[id]          → 知识库详情：导入源（语义清洗）+ 证据包登记列表
 /datasources                   → 数据源管理
 /datasources/[id]              → 数据源详情
 /datasources/[id]/tables/[tid] → 表详情

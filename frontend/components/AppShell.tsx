@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Icon, type NavIcon } from "./AppIcons";
 import ConfirmDialog from "./ConfirmDialog";
@@ -33,6 +33,10 @@ function isActive(pathname: string, href: string) {
 export default function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const isOntologyRoute = pathname.startsWith("/ontology") || /^\/knowledge-bases\/\d+\/ontology/.test(pathname);
+  const isModelingNav = isOntologyRoute && searchParams.get("tab") === "governance";
+  const isOntologyBrowseNav = isOntologyRoute && searchParams.get("tab") !== "governance";
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -450,6 +454,22 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <Icon name="book" />
             </Link>
             <Link
+              href="/ontology"
+              className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isOntologyBrowseNav ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
+              title="本体浏览：总览与业务语义等 Tab"
+              aria-label="本体浏览"
+            >
+              <Icon name="book" />
+            </Link>
+            <Link
+              href="/ontology?tab=governance"
+              className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isModelingNav ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
+              title="本体建模：流水线、SHACL 与隔离区"
+              aria-label="本体建模"
+            >
+              <Icon name="spark" />
+            </Link>
+            <Link
               href="/settings"
               className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isActive(pathname, "/settings") ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
               title="偏好设置"
@@ -506,12 +526,21 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </Link>
             <Link
               href="/ontology"
-              className={`app-nav-item rounded-lg ${isActive(pathname, "/ontology") ? "is-active" : ""}`}
+              className={`app-nav-item rounded-lg ${isOntologyBrowseNav ? "is-active" : ""}`}
+            >
+              <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
+                <Icon name="book" />
+              </span>
+              <span>本体浏览</span>
+            </Link>
+            <Link
+              href="/ontology?tab=governance"
+              className={`app-nav-item rounded-lg ${isModelingNav ? "is-active" : ""}`}
             >
               <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
                 <Icon name="spark" />
               </span>
-              <span>本体浏览</span>
+              <span>本体建模</span>
             </Link>
               <Link href="/settings" className={`app-nav-item rounded-lg ${isActive(pathname, "/settings") ? "is-active" : ""}`}>
                 <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">

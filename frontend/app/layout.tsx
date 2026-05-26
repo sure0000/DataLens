@@ -1,5 +1,6 @@
 import "./globals.css";
 import type { ReactNode } from "react";
+import { Suspense } from "react";
 import { Inter } from "next/font/google";
 import AppShell from "../components/AppShell";
 import ErrorBoundary from "../components/ErrorBoundary";
@@ -26,7 +27,9 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         <ProgressBar />
         <ErrorBoundary>
           <ThemeProvider>
-            <AppShell>{children}</AppShell>
+            <Suspense fallback={<div className="min-h-screen bg-app-bg">{children}</div>}>
+              <AppShell>{children}</AppShell>
+            </Suspense>
           </ThemeProvider>
         </ErrorBoundary>
       </body>

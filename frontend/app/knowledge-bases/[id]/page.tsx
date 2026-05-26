@@ -301,6 +301,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     if (source.kind === "git") { sourceId = source.data.id; sourceType = "git"; }
     else if (source.kind === "database") { sourceId = source.data.id; sourceType = "database"; }
     else if (source.kind === "api") { sourceId = source.data.id; sourceType = "api"; }
+    else if (source.kind === "manual") { sourceId = source.entry.id; sourceType = "manual"; }
     else { sourceId = source.entry.id; sourceType = source.kind === "api_entry" ? "api" : "file"; }
 
     setCleaningSourceId(sourceId);
@@ -527,7 +528,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
           { label: kb?.name || "…" },
         ]}
         title={kb?.name || "语义知识库"}
-        subtitle={kb?.description || "数据接入层：登记证据包并完成分块索引；在源卡片触发「语义清洗」进入本体建模流水线。"}
+        subtitle={kb?.description || "数据接入层：登记证据包并查看进度；在下方导入源卡片点击「语义清洗」进入本体建模流水线。"}
         actions={
           <div className="app-toolbar flex-wrap">
             <Link
@@ -611,7 +612,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
           <section className="mt-8 space-y-3">
             <h2 className="app-section-title">证据包登记</h2>
             <p className="text-xs text-app-muted">
-              导入层统一视图：按语义资产类型与连接器登记的证据（写入 RDF 前仅作溯源与流水线输入）。
+              导入层统一视图：按语义资产类型与连接器登记的证据（写入 RDF 前仅作溯源与进度展示）。需推进建模时，请在上方对应导入源上点击「语义清洗」。
             </p>
             <EvidencePackageList kbId={kbId} />
           </section>

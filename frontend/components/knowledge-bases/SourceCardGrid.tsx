@@ -72,6 +72,11 @@ export default function SourceCardGrid({
     }
   }
 
+  const manualEntries = entries.filter((e) => e.source_meta?.kind === "manual");
+  for (const entry of manualEntries) {
+    items.push({ kind: "manual", entry });
+  }
+
   // Database imports
   for (const di of databaseImports) {
     items.push({ kind: "database", data: di });
@@ -82,7 +87,7 @@ export default function SourceCardGrid({
   if (totalSources === 0) {
     return (
       <p className="text-sm text-app-muted">
-        暂无导入源。通过「导入」上传文件、接入数据库、代码库或 API 源来添加。
+        暂无导入源。通过「数据接入」上传文件、接入数据库、代码库、API 或手动条目来添加。
       </p>
     );
   }
@@ -108,6 +113,7 @@ export default function SourceCardGrid({
             item.kind === "api" ? `api-${item.data.id}` :
             item.kind === "database" ? `db-${item.data.id}` :
             item.kind === "api_entry" ? `api-entry-${item.entry.id}` :
+            item.kind === "manual" ? `manual-${item.entry.id}` :
             `file-${item.entry.id}`;
 
           const cleaningKey =
@@ -115,6 +121,7 @@ export default function SourceCardGrid({
             item.kind === "api" ? `source:api:${item.data.id}` :
             item.kind === "database" ? `source:database:${item.data.id}` :
             item.kind === "api_entry" ? `api:${item.entry.id}` :
+            item.kind === "manual" ? `source:manual:${item.entry.id}` :
             `source:file:${item.entry.id}`;
 
           const cleaningStat = cleaningStats?.[cleaningKey];

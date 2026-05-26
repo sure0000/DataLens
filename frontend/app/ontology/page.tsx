@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import OntologyWorkspace from "../../components/ontology/OntologyWorkspace";
 import PageHeader from "../../components/PageHeader";
 
@@ -9,10 +10,12 @@ export default function OntologyPage() {
     <main className="app-page flex min-h-0 flex-col">
       <PageHeader
         title="本体浏览"
-        subtitle="选择知识库后按总览、业务语义、数据资产、关系图谱、清洗治理与专家视图浏览 RDF。"
+        subtitle="选择知识库后按 Tab 浏览 RDF：总览、业务语义、数据资产、关系图谱、清洗治理与专家视图。侧栏「本体建模」直达清洗治理。"
       />
-      <div className="mt-4 min-h-0 flex-1">
-        <OntologyWorkspace />
+      <div className="mt-4 flex min-h-0 flex-1 flex-col">
+        <Suspense fallback={<p className="text-sm text-app-muted">加载中…</p>}>
+          <OntologyWorkspace />
+        </Suspense>
       </div>
     </main>
   );

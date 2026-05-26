@@ -395,7 +395,7 @@ sample_data─┼→ profile_column() ─→ profiles[] ─→┤→ ColumnMeta.
 | `/table/[id]` | 表详情 | 列信息+摘要 |
 | `/business-domains/[id]` | 业务域详情 | 描述+库表选择 |
 | `/knowledge-bases` | 知识库列表 | 管理入口 |
-| `/knowledge-bases/[id]` | 知识库详情 | 条目+Git源管理 |
+| `/knowledge-bases/[id]` | 知识库详情 | 导入源卡片（语义清洗）+ 证据包登记 + 清洗结果 |
 | `/settings` | 设置 | LLM偏好 |
 
 ## 11. 现有限制与风险

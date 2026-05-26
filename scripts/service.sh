@@ -180,6 +180,8 @@ start_frontend() {
   log "启动前端服务: http://localhost:$FRONTEND_PORT"
   (
     cd "$FRONTEND_DIR"
+    # 与根目录 .env 对齐，避免浏览器跨 host（localhost vs 127.0.0.1）连不上 API
+    export NEXT_PUBLIC_API_URL="${NEXT_PUBLIC_API_URL:-http://127.0.0.1:${BACKEND_PORT}}"
     # 直接启动 next，避免 nohup 记录到 npx 壳进程 PID（stop 时杀不掉仍在监听的 node）
     nohup npx --yes next dev -H 0.0.0.0 -p "$FRONTEND_PORT" >>"$FRONTEND_LOG_FILE" 2>&1 &
     echo $! >"$FRONTEND_PID_FILE"

@@ -6,6 +6,7 @@ import ColumnCard from "../../../components/ColumnCard";
 import { api } from "../../../lib/api";
 import { badgeExclusive } from "../../../lib/themeClasses";
 import PageHeader from "../../../components/PageHeader";
+import CopilotValidatePanel from "../../../components/ontology/CopilotValidatePanel";
 
 type Detail = {
   table: {
@@ -178,6 +179,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
   });
 
   const currentSection = detail.summary.sections?.find((s) => s.title === activeTab);
+  const primaryKbId = detail.knowledge_bases?.[0]?.id;
 
   return (
     <main className="app-page">
@@ -211,9 +213,21 @@ export default function TableDetail({ params }: { params: { id: string } }) {
           </span>
         }
         actions={
-          <a className="app-button" href={`/copilot?table=${encodeURIComponent(params.id)}`}>
-            去 Copilot 分析
-          </a>
+          <div className="flex flex-wrap items-center gap-2">
+            {primaryKbId ? (
+              <CopilotValidatePanel
+                kbId={primaryKbId}
+                tableId={Number(params.id)}
+                compact
+                onApplied={() => {
+                  api<Detail>(`/api/table/${params.id}`).then((d) => setDetail(d));
+                }}
+              />
+            ) : null}
+            <a className="app-button" href={`/copilot?table=${encodeURIComponent(params.id)}`}>
+              去 Copilot 分析
+            </a>
+          </div>
         }
       />
 

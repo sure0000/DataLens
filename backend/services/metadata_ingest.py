@@ -132,6 +132,30 @@ def run_metadata_ingest_for_datasource(datasource_id: int) -> None:
                 )
 
             db.commit()
+
+            try:
+                from services.ingestion.connectors import register_evidence_from_import
+
+                register_evidence_from_import(
+                    db,
+                    kb.id,
+                    title=f"[数据源] {ds.name} 元数据",
+                    route_key="database-imports",
+                    source_ref={
+                        "datasource_id": ds.id,
+                        "datasource_name": ds.name,
+                        "kind": "auto_metadata",
+                        "entry_count": len(items),
+                    },
+                    processing_state="ready_for_extraction",
+                )
+            except Exception:
+                _logger.warning(
+                    "Evidence package registration failed for metadata ingest ds=%s kb=%s",
+                    datasource_id,
+                    kb.id,
+                    exc_info=True,
+                )
         except Exception:
             _logger.exception("Metadata ingest background task failed for ds=%s", datasource_id)
             db.rollback()

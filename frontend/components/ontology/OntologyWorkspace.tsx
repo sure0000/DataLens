@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   BookOpen,
   Code2,
@@ -23,7 +24,6 @@ import SparqlConsole from "./SparqlConsole";
 import RelationGraph from "./RelationGraph";
 import ShaclDashboard, { type ShaclReport } from "./ShaclDashboard";
 import TripleViewer, { type RawTriple } from "./TripleViewer";
-import PageHeader from "../PageHeader";
 import Toast from "../Toast";
 import LineageGraph from "../knowledge-bases/LineageGraph";
 import type { LineageData } from "../knowledge-bases/types";
@@ -35,22 +35,20 @@ import {
   GraphNode,
   KnowledgeBaseOption,
   ONTOLOGY_KB_STORAGE_KEY,
-  ONTOLOGY_ROLE_DEFAULT_TAB,
-  ONTOLOGY_ROLE_LABELS,
-  ONTOLOGY_ROLE_STORAGE_KEY,
   KbRdfView,
   OntologyMetric,
+  OntologyProvenance,
   OntologyDimension,
   OntologyRule,
   OntologyStoreInfo,
   OntologyTab,
   OntologyTerm,
-  OntologyViewerRole,
   RELATION_TYPE_LABELS,
   SyncResult,
   TERM_TYPE_LABELS,
 } from "../../lib/ontologyTypes";
 import OntologyStatusBadge from "./OntologyStatusBadge";
+import CopilotValidatePanel from "./CopilotValidatePanel";
 
 const TABS: { id: OntologyTab; label: string; icon: typeof BookOpen }[] = [
   { id: "overview", label: "总览", icon: Layers },
@@ -69,11 +67,11 @@ function confidenceClass(v: number): string {
 
 export default function OntologyWorkspace({
   fixedKbId,
-  embedded = false,
 }: {
   fixedKbId?: number;
-  embedded?: boolean;
 } = {}) {
+  const hideKbSidebar = fixedKbId != null;
+  const searchParams = useSearchParams();
   const { toast, notify, dismiss } = useToast();
   const [kbs, setKbs] = useState<KnowledgeBaseOption[]>([]);
   const [selectedKbId, setSelectedKbId] = useState<number | null>(fixedKbId ?? null);
@@ -99,7 +97,6 @@ export default function OntologyWorkspace({
   const [quarantineItems, setQuarantineItems] = useState<QuarantineItem[]>([]);
   const [semanticsSubTab, setSemanticsSubTab] = useState<"terms" | "metrics" | "dimensions" | "rules">("terms");
   const [runningModeling, setRunningModeling] = useState(false);
-  const [viewerRole, setViewerRole] = useState<OntologyViewerRole>("business");
   const [hierarchyRoots, setHierarchyRoots] = useState<HierarchyNode[]>([]);
 
   const [search, setSearch] = useState("");
@@ -113,19 +110,13 @@ export default function OntologyWorkspace({
   );
 
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const saved = localStorage.getItem(ONTOLOGY_ROLE_STORAGE_KEY) as OntologyViewerRole | null;
-    if (saved && saved in ONTOLOGY_ROLE_DEFAULT_TAB) {
-      setViewerRole(saved);
-      setTab(ONTOLOGY_ROLE_DEFAULT_TAB[saved]);
+    const tabParam = searchParams.get("tab") as OntologyTab | null;
+    if (tabParam && TABS.some((t) => t.id === tabParam)) {
+      setTab(tabParam);
+    } else if (!tabParam) {
+      setTab("overview");
     }
-  }, []);
-
-  const handleRoleChange = (role: OntologyViewerRole) => {
-    setViewerRole(role);
-    setTab(ONTOLOGY_ROLE_DEFAULT_TAB[role]);
-    localStorage.setItem(ONTOLOGY_ROLE_STORAGE_KEY, role);
-  };
+  }, [searchParams]);
 
   const loadKbList = useCallback(async () => {
     setKbListLoading(true);
@@ -144,18 +135,21 @@ export default function OntologyWorkspace({
       if (fixedKbId) {
         setSelectedKbId(fixedKbId);
       } else if (list.length) {
+        const kbParam = searchParams.get("kb");
+        const kbFromUrl = kbParam ? Number(kbParam) : NaN;
         const saved =
           typeof window !== "undefined" ? localStorage.getItem(ONTOLOGY_KB_STORAGE_KEY) : null;
         const savedId = saved ? Number(saved) : NaN;
-        const valid = list.some((k) => k.id === savedId);
-        setSelectedKbId(valid ? savedId : list[0].id);
+        const validUrl = Number.isFinite(kbFromUrl) && list.some((k) => k.id === kbFromUrl);
+        const validSaved = list.some((k) => k.id === savedId);
+        setSelectedKbId(validUrl ? kbFromUrl : validSaved ? savedId : list[0].id);
       }
     } catch (e: unknown) {
       notify(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "加载知识库失败", "error");
     } finally {
       setKbListLoading(false);
     }
-  }, [fixedKbId, notify]);
+  }, [fixedKbId, notify, searchParams]);
 
   const loadWorkspace = useCallback(async () => {
     if (!selectedKbId) return;
@@ -382,54 +376,39 @@ export default function OntologyWorkspace({
   const showEntityPanel = selectedTerm || selectedMetric;
 
   return (
-    <main className={embedded ? "flex min-h-0 flex-col" : "app-page flex min-h-0 flex-col"}>
-      {!embedded && (
-      <PageHeader
-        title="本体浏览"
-        subtitle="展示层：从 RDF 生产图只读浏览业务语义、物理资产、关系图谱与清洗治理状态。"
-        actionsBelowSubtitle
-        actions={
-          <div className="app-toolbar flex-wrap">
-            <button
-              type="button"
-              className={`app-button app-toolbar-action ${syncing ? "is-loading" : ""}`}
-              disabled={!selectedKbId || syncing || loading}
-              onClick={handleSync}
-            >
-              <RefreshCw className="mr-1.5 inline h-4 w-4" aria-hidden />
-              {syncing ? "同步中…" : "同步到 RDF"}
-            </button>
-            <button
-              type="button"
-              className="app-button-secondary app-toolbar-action"
-              disabled={!selectedKbId || loading}
-              onClick={() => loadWorkspace()}
-            >
-              刷新
-            </button>
-            {selectedKbId ? (
-              <Link href={`/knowledge-bases/${selectedKbId}`} className="app-button-secondary app-toolbar-action no-underline">
-                打开知识库
-              </Link>
-            ) : null}
-          </div>
-        }
-      />
-      )}
-
-      {embedded && (
-        <div className="mb-3 flex justify-end gap-2">
-          <button type="button" className={`app-button text-sm ${syncing ? "is-loading" : ""}`} disabled={!selectedKbId || syncing || loading} onClick={handleSync}>
-            {syncing ? "同步中…" : "同步到 RDF"}
-          </button>
-          <button type="button" className="app-button-secondary text-sm" disabled={!selectedKbId || loading} onClick={() => loadWorkspace()}>刷新</button>
-        </div>
-      )}
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
+        <button
+          type="button"
+          className={`app-button-secondary app-toolbar-action text-sm ${syncing ? "is-loading" : ""}`}
+          disabled={!selectedKbId || syncing || loading}
+          onClick={handleSync}
+        >
+          <RefreshCw className="mr-1.5 inline h-4 w-4" aria-hidden />
+          {syncing ? "同步中…" : "同步到 RDF"}
+        </button>
+        <button
+          type="button"
+          className="app-button-secondary app-toolbar-action text-sm"
+          disabled={!selectedKbId || loading}
+          onClick={() => loadWorkspace()}
+        >
+          刷新
+        </button>
+        {selectedKbId && !hideKbSidebar ? (
+          <Link
+            href={`/knowledge-bases/${selectedKbId}`}
+            className="app-button-secondary app-toolbar-action text-sm no-underline"
+          >
+            打开知识库
+          </Link>
+        ) : null}
+      </div>
 
       <Toast message={toast.message} tone={toast.tone} duration={toast.durationMs} onClose={dismiss} />
 
-      <div className={`flex min-h-0 flex-1 flex-col gap-4 ${embedded ? "" : "mt-4 lg:flex-row"}`}>
-        {!embedded && (
+      <div className={`flex min-h-0 flex-1 flex-col gap-4 ${hideKbSidebar ? "" : "lg:flex-row"}`}>
+        {!hideKbSidebar && (
         <>
         {/* 知识库侧栏 */}
         <aside className="w-full shrink-0 lg:w-56 xl:w-64">
@@ -487,7 +466,7 @@ export default function OntologyWorkspace({
               <p className="mt-3 text-sm text-app-secondary">
                 {kbListLoading || loading
                   ? "正在加载本体数据…"
-                  : embedded
+                  : hideKbSidebar
                     ? "无法加载该知识库的本体数据。"
                     : "请从左侧选择一个知识库，开始浏览本体数据。"}
               </p>
@@ -510,26 +489,7 @@ export default function OntologyWorkspace({
                 />
               </div>
 
-              {/* 角色视角 + 标签页 */}
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-b border-app-border pb-2">
-                <div className="flex flex-wrap gap-1">
-                  {(Object.keys(ONTOLOGY_ROLE_LABELS) as OntologyViewerRole[]).map((role) => (
-                    <button
-                      key={role}
-                      type="button"
-                      className={`rounded-md px-2.5 py-1 text-xs ${
-                        viewerRole === role
-                          ? "bg-app-activeBg font-medium text-app-primary"
-                          : "text-app-muted hover:text-app-secondary"
-                      }`}
-                      onClick={() => handleRoleChange(role)}
-                    >
-                      {ONTOLOGY_ROLE_LABELS[role]}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="mt-2 flex flex-wrap items-center gap-2 border-b border-app-border pb-2">
+              <div className="mt-4 flex flex-wrap items-center gap-2 border-b border-app-border pb-2">
                 {TABS.map(({ id, label, icon: Icon }) => (
                   <button
                     key={id}
@@ -757,7 +717,7 @@ export default function OntologyWorkspace({
           </aside>
         ) : null}
       </div>
-    </main>
+    </div>
   );
 }
 
@@ -1227,6 +1187,10 @@ function GovernanceTab({
 
   return (
     <div className="space-y-6">
+      <p className="rounded-lg border border-app-border bg-app-hover/50 px-3 py-2 text-xs text-app-secondary">
+        <span className="font-medium text-app-primary">本体建模</span>
+        ：建模流水线、五层清洗结果、SHACL 校验与隔离区治理。侧栏「本体建模」入口直达本页。
+      </p>
       <ModelingPipelineStatus
         status={modelingStatus}
         compact
@@ -1294,6 +1258,9 @@ function ExpertTab({
 
   return (
     <div className="space-y-4">
+      <p className="rounded-lg border border-dashed border-app-border px-3 py-2 text-xs text-app-muted">
+        专家视图：需熟悉 RDF / SPARQL。日常浏览请使用总览、业务语义等 Tab。
+      </p>
       <StoreTab
         store={store}
         globalStore={globalStore}
@@ -1412,11 +1379,7 @@ function EntityDetailPanel({
   onPromoted?: () => void;
 }) {
   const [promoting, setPromoting] = useState(false);
-  const [provenance, setProvenance] = useState<{
-    chunks: { iri: string; content_preview?: string | null }[];
-    documents: { id: number; title: string; status: string }[];
-    evidence_packages: { display_id: string; title: string }[];
-  } | null>(null);
+  const [provenance, setProvenance] = useState<OntologyProvenance | null>(null);
   const entity = term || metric;
   const isTerm = !!term;
   const subjectIri = term?.iri || metric?.iri;
@@ -1427,12 +1390,9 @@ function EntityDetailPanel({
       return;
     }
     let cancelled = false;
-    api<{
-      chunks: { iri: string; content_preview?: string | null }[];
-      documents: { id: number; title: string; status: string }[];
-      evidence_packages: { display_id: string; title: string }[];
-      has_provenance?: boolean;
-    }>(`/api/ontology/knowledge-bases/${kbId}/provenance?subject=${encodeURIComponent(subjectIri)}`)
+    api<OntologyProvenance>(
+      `/api/ontology/knowledge-bases/${kbId}/provenance?subject=${encodeURIComponent(subjectIri)}`,
+    )
       .then((res) => {
         if (!cancelled) setProvenance(res);
       })
@@ -1537,7 +1497,15 @@ function EntityDetailPanel({
             </ul>
           </div>
         ) : null}
-        {subjectIri && (entity.status === "draft" || entity.status === "pending_review") ? (
+        {subjectIri ? (
+          <CopilotValidatePanel
+            kbId={kbId}
+            subjectIri={subjectIri}
+            entityName={entity.name}
+            onApplied={onPromoted}
+          />
+        ) : null}
+        {subjectIri && (entity.status === "draft" || entity.status === "pending_review" || entity.status === "linked" || entity.status === "shacl_passed") ? (
           <button
             type="button"
             className={`app-button w-full text-sm ${promoting ? "is-loading" : ""}`}

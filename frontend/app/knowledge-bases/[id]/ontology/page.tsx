@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { Suspense } from "react";
 import OntologyWorkspace from "../../../../components/ontology/OntologyWorkspace";
 import PageHeader from "../../../../components/PageHeader";
 
@@ -20,15 +21,17 @@ export default function KnowledgeBaseOntologyPage({ params }: { params: { id: st
           { label: "本体浏览" },
         ]}
         title="本体浏览"
-        subtitle="按业务语义、数据资产、关系图谱与清洗治理分层查看 RDF 生产图。"
+        subtitle="从 RDF 生产图浏览业务语义、数据资产、关系图谱；清洗治理与侧栏「本体建模」对应同一能力。"
         actions={
           <Link href={`/knowledge-bases/${kbId}`} className="app-button-secondary app-toolbar-action no-underline">
             返回数据接入
           </Link>
         }
       />
-      <div className="mt-4 min-h-0 flex-1">
-        <OntologyWorkspace fixedKbId={kbId} embedded />
+      <div className="mt-4 flex min-h-0 flex-1 flex-col">
+        <Suspense fallback={<p className="text-sm text-app-muted">加载中…</p>}>
+          <OntologyWorkspace fixedKbId={kbId} />
+        </Suspense>
       </div>
     </main>
   );

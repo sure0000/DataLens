@@ -11,6 +11,7 @@ export type SourceItem =
   | { kind: "api"; data: ApiSource }
   | { kind: "file"; entry: Entry; doc?: DocRow }
   | { kind: "api_entry"; entry: Entry; doc?: DocRow }
+  | { kind: "manual"; entry: Entry }
   | { kind: "database"; data: DatabaseImport };
 
 interface SourceCardProps {
@@ -320,6 +321,53 @@ export default function SourceCard({
               重试
             </button>
           )}
+          <button
+            className={`app-button-secondary text-[11px] h-7 px-2.5 ${cleaningSourceId === entry.id ? "is-loading" : ""}`}
+            type="button"
+            disabled={cleaningSourceId === entry.id}
+            onClick={(e) => { e.preventDefault(); onSemanticClean?.(source); }}
+          >
+            {cleaningSourceId === entry.id ? "清洗中…" : "语义清洗"}
+          </button>
+          {tags.length === 0 && sharedTagRow}
+        </div>
+      </article>
+    );
+  }
+
+  // Manual entry
+  if (source.kind === "manual") {
+    const { entry } = source;
+    const chip = { text: "手动", className: chipSuccess };
+
+    return (
+      <article className="app-card app-card-interactive group flex flex-col gap-2 p-3 overflow-hidden">
+        <Link
+          href={`/knowledge-bases/${kbId}/sources/${entry.id}?type=manual`}
+          className="no-underline flex-1 min-w-0"
+        >
+          <div className="flex items-start gap-2">
+            <span className="shrink-0 mt-0.5 text-app-secondary">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 20h9" />
+                <path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+              </svg>
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-[13px] text-app-primary truncate leading-snug">{entry.title}</p>
+              <p className="text-[11px] text-app-muted mt-0.5 truncate leading-snug">手动条目</p>
+            </div>
+            <span className={`inline-flex shrink-0 items-center rounded-full border px-1.5 py-0 text-[10px] font-medium leading-5 ${chip.className}`}>
+              {chip.text}
+            </span>
+          </div>
+          <p className="mt-1.5 text-[11px] text-app-muted truncate leading-snug">
+            {new Date(entry.created_at).toLocaleString()}
+          </p>
+          <CleaningInfo cleaningStat={cleaningStat} ontologyCounts={ontologyCounts} isCleaning={cleaningSourceId === entry.id} />
+        </Link>
+        {tags.length > 0 && sharedTagRow}
+        <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
           <button
             className={`app-button-secondary text-[11px] h-7 px-2.5 ${cleaningSourceId === entry.id ? "is-loading" : ""}`}
             type="button"

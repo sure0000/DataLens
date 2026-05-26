@@ -180,6 +180,25 @@ def create_git_source(kb_id: int, body: GitSourceCreate, db: Session = Depends(g
     db.commit()
     db.refresh(row)
     try:
+        from services.ingestion.connectors import register_evidence_from_import
+
+        register_evidence_from_import(
+            db,
+            kb_id,
+            title=f"[Git] {row.name}",
+            route_key="git-sources",
+            source_ref={
+                "git_source_id": row.id,
+                "provider": row.provider,
+                "owner": row.owner,
+                "repo": row.repo,
+                "branch": row.branch or "",
+            },
+            processing_state="registered",
+        )
+    except Exception:  # noqa: BLE001
+        pass
+    try:
         refresh_git_sync_schedules()
     except Exception:  # noqa: BLE001
         pass
