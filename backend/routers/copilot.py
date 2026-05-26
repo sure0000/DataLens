@@ -2,7 +2,7 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
@@ -30,6 +30,26 @@ async def ask(body: AskBody, db: Session = Depends(get_db)) -> dict:
         body.business_domain_id,
         chat_model=body.chat_model,
     )
+
+
+@router.get("/ask/ontology-trace")
+async def ask_ontology_trace(
+    question: str = Query(..., description="User question for ontology routing"),
+    domain_id: int | None = Query(None, description="Business domain ID"),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Return the ontology routing trace for a question.
+
+    Shows which concepts, tables, and lineage expansions would be used
+    without generating SQL or executing against a database.
+    """
+    from services.copilot.pipeline import route_question
+
+    try:
+        result = route_question(db, question, domain_id=domain_id)
+        return {"status": "ok", **result}
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
 
 
 @router.post("/ask/stream")

@@ -1,0 +1,158 @@
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix dl:      <https://datalens.local/ontology/> .
+
+# ═══════════════════════════════════════════════════════════════
+# DataLens Enterprise Ontology — Layer 0 TBox
+#
+# Named Graph: graph/enterprise
+#
+# Provides:
+#   - Top-level enterprise concepts shared across all domains
+#   - Cross-domain alignment properties
+#   - SKOS mapping vocabulary
+#   - Organizational context
+# ═══════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────
+# 1. ORGANIZATIONAL CONTEXT
+# ─────────────────────────────────────────────────────────────
+
+dl:Organization a owl:Class ;
+  rdfs:label "组织"@zh , "Organization"@en ;
+  rdfs:comment "企业或部门"@zh .
+
+dl:Team a owl:Class ;
+  rdfs:label "团队"@zh , "Team"@en ;
+  rdfs:comment "负责特定业务域或数据资产的组织单元"@zh .
+
+# ─────────────────────────────────────────────────────────────
+# 2. ORGANIZATIONAL OBJECT PROPERTIES
+# ─────────────────────────────────────────────────────────────
+
+dl:ownsDomain a owl:ObjectProperty ;
+  rdfs:domain dl:Organization ;
+  rdfs:range dl:BusinessDomain ;
+  rdfs:label "拥有领域"@zh , "owns domain"@en .
+
+dl:ownsTeam a owl:ObjectProperty ;
+  rdfs:domain dl:Organization ;
+  rdfs:range dl:Team ;
+  rdfs:label "拥有团队"@zh , "owns team"@en .
+
+dl:stewardsDomain a owl:ObjectProperty ;
+  rdfs:domain dl:Team ;
+  rdfs:range dl:BusinessDomain ;
+  rdfs:label "管辖领域"@zh , "stewards domain"@en .
+
+# ─────────────────────────────────────────────────────────────
+# 3. CROSS-DOMAIN ALIGNMENT (SKOS Mapping Vocabulary)
+# ─────────────────────────────────────────────────────────────
+
+# skos:exactMatch, skos:closeMatch, skos:broadMatch, skos:narrowMatch, skos:relatedMatch
+# are defined by the SKOS specification. We declare them here to ensure
+# they are in the TBox predicate whitelist.
+
+skos:exactMatch a owl:ObjectProperty , owl:SymmetricProperty , owl:TransitiveProperty ;
+  rdfs:label "精确匹配"@zh , "exact match"@en ;
+  rdfs:comment "跨域/跨系统的概念等价 — 财务域「营收」= 运营域「收入」"@zh .
+
+skos:closeMatch a owl:ObjectProperty , owl:SymmetricProperty ;
+  rdfs:label "近似匹配"@zh , "close match"@en ;
+  rdfs:comment "含义相近但不等价 — 语义近似，需人工确认"@zh .
+
+skos:broadMatch a owl:ObjectProperty ;
+  rdfs:label "上位匹配"@zh , "broad match"@en ;
+  rdfs:comment "A 在另一个体系中的上位概念"@zh .
+
+skos:narrowMatch a owl:ObjectProperty ;
+  rdfs:label "下位匹配"@zh , "narrow match"@en ;
+  owl:inverseOf skos:broadMatch .
+
+skos:relatedMatch a owl:ObjectProperty , owl:SymmetricProperty ;
+  rdfs:label "相关匹配"@zh , "related match"@en ;
+  rdfs:comment "跨域关联 — 两个概念在不同领域中语义相关"@zh .
+
+# ─────────────────────────────────────────────────────────────
+# 4. SKOS HIERARCHY PROPERTIES (within a ConceptScheme)
+# ─────────────────────────────────────────────────────────────
+
+skos:broader a owl:ObjectProperty ;
+  rdfs:label "上位概念"@zh , "broader"@en ;
+  rdfs:comment "概念层级中的直接上位 — 支付指标 broader 交易指标"@zh .
+
+skos:narrower a owl:ObjectProperty ;
+  rdfs:label "下位概念"@zh , "narrower"@en ;
+  owl:inverseOf skos:broader .
+
+skos:related a owl:ObjectProperty , owl:SymmetricProperty ;
+  rdfs:label "相关概念"@zh , "related"@en ;
+  rdfs:comment "非层级的横向关联 — 订单量 related 客单价"@zh .
+
+skos:prefLabel a owl:AnnotationProperty ;
+  rdfs:label "首选标签"@zh , "preferred label"@en .
+
+skos:definition a owl:AnnotationProperty ;
+  rdfs:label "定义"@zh , "definition"@en .
+
+skos:altLabel a owl:AnnotationProperty ;
+  rdfs:label "替代标签"@zh , "alternative label"@en ;
+  rdfs:comment "同义词或缩略语 — GMV altLabel '总交易额'"@zh .
+
+skos:scopeNote a owl:AnnotationProperty ;
+  rdfs:label "范围注释"@zh , "scope note"@en .
+
+# ─────────────────────────────────────────────────────────────
+# 5. DATATYPE PROPERTIES (Enterprise Governance)
+# ─────────────────────────────────────────────────────────────
+
+dl:businessOwner a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range xsd:string ;
+  rdfs:label "业务负责人"@zh , "business owner"@en ;
+  rdfs:comment "对概念/数据资产负最终业务责任的人"@zh .
+
+dl:steward a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range xsd:string ;
+  rdfs:label "数据管家"@zh , "data steward"@en ;
+  rdfs:comment "负责概念/数据资产日常维护与质量的人"@zh .
+
+dl:validFrom a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range xsd:dateTime ;
+  rdfs:label "生效时间"@zh , "valid from"@en .
+
+dl:validUntil a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range xsd:dateTime ;
+  rdfs:label "失效时间"@zh , "valid until"@en .
+
+dl:version a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range xsd:string ;
+  rdfs:label "版本"@zh , "version"@en .
+
+dl:changeNote a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range xsd:string ;
+  rdfs:label "变更说明"@zh , "change note"@en .
+
+# ─────────────────────────────────────────────────────────────
+# 6. DOMAIN-LEVEL ANNOTATIONS
+# ─────────────────────────────────────────────────────────────
+
+dcterms:created a owl:DatatypeProperty ;
+  rdfs:range xsd:dateTime ;
+  rdfs:label "创建时间"@zh .
+
+dcterms:modified a owl:DatatypeProperty ;
+  rdfs:range xsd:dateTime ;
+  rdfs:label "修改时间"@zh .
+
+dcterms:description a owl:DatatypeProperty ;
+  rdfs:range xsd:string ;
+  rdfs:label "描述"@zh .

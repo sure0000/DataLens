@@ -1,4 +1,4 @@
-@prefix prov: <http://www.w3.org/ns/prov#> .
-@prefix dl:   <https://datalens.local/ontology/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
 
-# Provenance annotations for ABox assertions
+# Thin wrapper — provenance annotations are now in tbox/enterprise.ttl.
+owl:imports <tbox/enterprise.ttl> .

@@ -5,11 +5,34 @@
 
 dl:MetricShape a sh:NodeShape ;
   sh:targetClass dl:Metric ;
+  sh:severity sh:Violation ;
   sh:property [
     sh:path skos:prefLabel ;
+    sh:name "首选标签"@zh ;
     sh:minCount 1 ;
+    sh:datatype xsd:string ;
   ] ;
   sh:property [
     sh:path dl:formula ;
+    sh:name "公式"@zh ;
+    sh:description "每个指标必须有计算公式"@zh ;
     sh:minCount 1 ;
+    sh:datatype xsd:string ;
+  ] ;
+  sh:property [
+    sh:path dl:computedFromTable ;
+    sh:name "计算来源表"@zh ;
+    sh:description "每个指标必须声明其从哪张物理表取数"@zh ;
+    sh:minCount 1 ;
+  ] ;
+  sh:property [
+    sh:path dl:confidence ;
+    sh:minInclusive 0.0 ;
+    sh:maxInclusive 100.0 ;
+    sh:datatype xsd:decimal ;
+  ] ;
+  sh:property [
+    sh:path dl:approvalStatus ;
+    sh:in ("approved" "pending_review" "draft" "rejected") ;
+    sh:datatype xsd:string ;
   ] .

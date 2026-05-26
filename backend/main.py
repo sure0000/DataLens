@@ -14,6 +14,8 @@ from routers.datasources import router as datasources_router
 from routers.knowledge_bases import router as knowledge_bases_router
 from routers.knowledge_git_sources import router as knowledge_git_sources_router
 from routers.knowledge_api_sources import router as knowledge_api_sources_router
+from routers.knowledge_database_imports import router as knowledge_database_imports_router
+from routers.knowledge_ingestion import router as knowledge_ingestion_router
 from routers.api_sources import router as api_sources_router
 
 from routers.diagnostics import router as diagnostics_router
@@ -74,6 +76,8 @@ app.include_router(business_domains_router)
 app.include_router(knowledge_bases_router)
 app.include_router(knowledge_git_sources_router)
 app.include_router(knowledge_api_sources_router)
+app.include_router(knowledge_database_imports_router)
+app.include_router(knowledge_ingestion_router)
 app.include_router(api_sources_router)
 
 app.include_router(diagnostics_router)

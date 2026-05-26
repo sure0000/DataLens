@@ -60,13 +60,19 @@
 - SQL 安全护栏：sqlglot AST 只读校验 + 前缀白名单双重保护
 - LLM 无 Key 兜底：未配置 API Key 时用规则和本地向量提供基本链路可用性
 - 大模型多厂商接入：DeepSeek / OpenAI / 自定义兼容端点
+- **OWL/RDF 本体引擎**：Apache Jena Fuseki 三元组存储、SPARQL 查询与推理、OWL 2 RL 增量推理
+- **本体建模工作台**：术语/指标/关系/层级的可视化浏览与同步管理
+- **SHACL 校验写入**：三元组写入前强制校验，通过入 production graph，失败入 quarantine
+- **Copilot 本体路由**：OntologyRouter（SPARQL 概念/表路由）、ContextAssembler（LLM 上下文组装）、CopilotPipeline（统一入口）
+- **前端本体组件**：ConceptHierarchyTree、RelationGraph、MetricDerivationChain、TripleViewer、QuarantineList、ShaclDashboard、ConfidenceDistribution
 
 ### Out of Scope（当前不做）
 
 - 完整企业级数据血缘与治理平台（已有轻量 `data_lineage` + `semantic_relations`）
 - 复杂权限 / 多租户 / 审计合规
 - 团队协作工作流（审批、评审、共享空间）
-- Formal OWL/RDF 本体引擎
+
+> **已纳入 Scope（2026-05）**: 基于 Apache Jena Fuseki 的 OWL/RDF 本体引擎、SPARQL 语义路由、SHACL 校验写入门、OWL 2 RL 增量推理。
 
 ## 4. 端到端业务流程
 
@@ -417,9 +423,11 @@ sample_data─┼→ profile_column() ─→ profiles[] ─→┤→ ColumnMeta.
 | 文档 | 内容 |
 |------|------|
 | [企业语义层与域内自治实践](./企业语义层与域内自治实践.md) | 理念、存储、联邦治理 |
+| [本体建模：企业数据来源与自动化抽取](./ONTOLOGY_ENTERPRISE_DATA_SOURCES.md) | 本体要素全景、企业数据源映射矩阵、LLM 自动抽取流水线 |
 | [COPILOT_ROUTING_OPTIMIZATION](./COPILOT_ROUTING_OPTIMIZATION.md) | 路由 backlog、配置项、trace |
 | [SEMANTIC_LAYER_OPTIMIZATION_BACKLOG](./SEMANTIC_LAYER_OPTIMIZATION_BACKLOG.md) | 语义层能力状态 |
+| [本体三层架构与 UI 优化方案](./ONTOLOGY_LAYER_UI_OPTIMIZATION.md) | 企业数据分类、导入/清洗/展示层设计、UI 线框、演进优先级 |
 
 ---
 
-*最后更新：2026-05-25，反映知识库语义结构化（Phase 1~3）、Copilot 多信号路由与 semantic_relations 关系图。*
+*最后更新：2026-05-26，反映知识库语义结构化（Phase 1~3）、Copilot 多信号路由与 semantic_relations 关系图。*

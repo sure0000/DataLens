@@ -14,12 +14,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models import (
-    BusinessTerm,
-    DataLineage,
     DocumentChunk,
-    MetricDefinition,
-    SemanticRelation,
 )
+# BusinessTerm, DataLineage, MetricDefinition, SemanticRelation removed in Phase 1
+# This entire module will be deleted in Phase 4
 
 _logger = logging.getLogger(__name__)
 

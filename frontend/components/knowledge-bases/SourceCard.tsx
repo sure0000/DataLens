@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import type { ApiSource, DocRow, Entry, GitSource } from "./types";
+import type { ApiSource, DatabaseImport, DocRow, Entry, GitSource, OntologyCounts, SourceCleaningStat } from "./types";
 import { chipSuccess } from "../../lib/themeClasses";
 import { docStatusChip, gitSyncStatusChip } from "./utils";
 
@@ -10,7 +10,8 @@ export type SourceItem =
   | { kind: "git"; data: GitSource }
   | { kind: "api"; data: ApiSource }
   | { kind: "file"; entry: Entry; doc?: DocRow }
-  | { kind: "api_entry"; entry: Entry; doc?: DocRow };
+  | { kind: "api_entry"; entry: Entry; doc?: DocRow }
+  | { kind: "database"; data: DatabaseImport };
 
 interface SourceCardProps {
   source: SourceItem;
@@ -21,13 +22,57 @@ interface SourceCardProps {
   onAddTag?: (source: SourceItem, tag: string) => void;
   onRemoveTag?: (source: SourceItem, tag: string) => void;
   tagLoading?: boolean;
+  onSemanticClean?: (source: SourceItem) => void;
+  cleaningSourceId?: number | null;
+  cleaningStat?: SourceCleaningStat;
+  ontologyCounts?: OntologyCounts;
 }
 
 function getTags(source: SourceItem): string[] {
   if (source.kind === "git") return source.data.tags ?? [];
   if (source.kind === "api") return source.data.tags ?? [];
+  if (source.kind === "database") return [];
   if (source.kind === "api_entry") return source.entry.tags ?? [];
   return source.entry.tags ?? [];
+}
+
+function formatCleaningDate(iso: string): string {
+  const d = new Date(iso);
+  return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()} ${d.toLocaleTimeString("zh-CN", { hour12: false })}`;
+}
+
+function CleaningInfo({
+  cleaningStat,
+  ontologyCounts,
+  isCleaning,
+}: {
+  cleaningStat?: SourceCleaningStat;
+  ontologyCounts?: OntologyCounts;
+  isCleaning: boolean;
+}) {
+  if (isCleaning) {
+    return <p className="mt-1 text-[11px] text-blue-600 font-medium">清洗中…</p>;
+  }
+
+  const hasStat = cleaningStat && (cleaningStat.status === "completed" || cleaningStat.status === "failed");
+  const hasOntology = ontologyCounts && (ontologyCounts.entity > 0 || ontologyCounts.relation > 0);
+
+  if (hasStat || hasOntology) {
+    const parts: string[] = [];
+    if (cleaningStat?.status === "completed") {
+      parts.push(`清洗完毕 ${cleaningStat.completed_at ? formatCleaningDate(cleaningStat.completed_at) : ""}`);
+    } else if (cleaningStat?.status === "failed") {
+      parts.push(`清洗失败 ${cleaningStat.completed_at ? formatCleaningDate(cleaningStat.completed_at) : ""}`);
+    }
+    if (hasOntology) {
+      const entity = ontologyCounts?.entity ?? 0;
+      const relation = ontologyCounts?.relation ?? 0;
+      parts.push(`实体（${entity}），关系（${relation}）`);
+    }
+    return <p className="mt-1 text-[11px] text-app-muted">{parts.join(" · ")}</p>;
+  }
+
+  return <p className="mt-1 text-[11px] text-app-muted">未清洗</p>;
 }
 
 function TagRow({
@@ -107,6 +152,10 @@ export default function SourceCard({
   onAddTag,
   onRemoveTag,
   tagLoading,
+  onSemanticClean,
+  cleaningSourceId,
+  cleaningStat,
+  ontologyCounts,
 }: SourceCardProps) {
   const tags = getTags(source);
   const sharedTagRow = (
@@ -148,6 +197,7 @@ export default function SourceCard({
           {s.last_error && (
             <p className="mt-1 text-[11px] app-text-danger line-clamp-2 leading-snug break-words">{s.last_error}</p>
           )}
+          <CleaningInfo cleaningStat={cleaningStat} ontologyCounts={ontologyCounts} isCleaning={cleaningSourceId === s.id} />
         </Link>
         {tags.length > 0 && sharedTagRow}
         <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
@@ -158,6 +208,14 @@ export default function SourceCard({
             onClick={(e) => { e.preventDefault(); onSyncGit?.(s.id); }}
           >
             {gitSyncingId === s.id ? "同步中…" : "同步"}
+          </button>
+          <button
+            className={`app-button-secondary text-[11px] h-7 px-2.5 ${cleaningSourceId === s.id ? "is-loading" : ""}`}
+            type="button"
+            disabled={cleaningSourceId === s.id}
+            onClick={(e) => { e.preventDefault(); onSemanticClean?.(source); }}
+          >
+            {cleaningSourceId === s.id ? "清洗中…" : "语义清洗"}
           </button>
           {tags.length === 0 && sharedTagRow}
         </div>
@@ -205,6 +263,7 @@ export default function SourceCard({
           {s.last_error && (
             <p className="mt-1 text-[11px] app-text-danger line-clamp-2 leading-snug break-words">{s.last_error}</p>
           )}
+          <CleaningInfo cleaningStat={cleaningStat} ontologyCounts={ontologyCounts} isCleaning={cleaningSourceId === s.id} />
         </Link>
         {tags.length > 0 && sharedTagRow}
       </article>
@@ -252,6 +311,7 @@ export default function SourceCard({
             </span>
           </div>
           <p className="mt-1.5 text-[11px] text-app-muted truncate leading-snug">{metaParts.join(" · ")}</p>
+          <CleaningInfo cleaningStat={cleaningStat} ontologyCounts={ontologyCounts} isCleaning={cleaningSourceId === entry.id} />
         </Link>
         {tags.length > 0 && sharedTagRow}
         <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
@@ -260,7 +320,67 @@ export default function SourceCard({
               重试
             </button>
           )}
+          <button
+            className={`app-button-secondary text-[11px] h-7 px-2.5 ${cleaningSourceId === entry.id ? "is-loading" : ""}`}
+            type="button"
+            disabled={cleaningSourceId === entry.id}
+            onClick={(e) => { e.preventDefault(); onSemanticClean?.(source); }}
+          >
+            {cleaningSourceId === entry.id ? "清洗中…" : "语义清洗"}
+          </button>
           {tags.length === 0 && sharedTagRow}
+        </div>
+      </article>
+    );
+  }
+
+  // Database import
+  if (source.kind === "database") {
+    const s = source.data;
+    const dbCount = s.database_names.length;
+    const dbList = s.database_names.join(", ");
+    const isCleaning = cleaningSourceId === s.id;
+
+    return (
+      <article className="app-card app-card-interactive group flex flex-col gap-2 p-3 overflow-hidden">
+        <Link
+          href={`/knowledge-bases/${kbId}/sources/${s.id}?type=database`}
+          className="no-underline flex-1 min-w-0"
+        >
+          <div className="flex items-start gap-2">
+            <span className="shrink-0 mt-0.5 text-cyan-600">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <ellipse cx="12" cy="6" rx="8" ry="3" />
+                <path d="M4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6" />
+                <path d="M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
+              </svg>
+            </span>
+            <div className="min-w-0 flex-1">
+              <p className="font-semibold text-[13px] text-app-primary truncate leading-snug">
+                {s.datasource_name}
+              </p>
+              <p className="text-[11px] text-app-muted mt-0.5 truncate leading-snug">
+                {dbCount} 个数据库：{dbList}
+              </p>
+            </div>
+          </div>
+          <p className="mt-1.5 text-[11px] text-app-muted truncate leading-snug">
+            导入于 {new Date(s.created_at).toLocaleString()}
+          </p>
+          {s.last_error && (
+            <p className="mt-1 text-[11px] app-text-danger line-clamp-2 leading-snug break-words">{s.last_error}</p>
+          )}
+          <CleaningInfo cleaningStat={cleaningStat} ontologyCounts={ontologyCounts} isCleaning={isCleaning} />
+        </Link>
+        <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
+          <button
+            className={`app-button text-[11px] h-7 px-2.5 ${isCleaning ? "is-loading" : ""}`}
+            type="button"
+            disabled={isCleaning}
+            onClick={(e) => { e.preventDefault(); onSemanticClean?.(source); }}
+          >
+            {isCleaning ? "清洗中…" : "语义清洗"}
+          </button>
         </div>
       </article>
     );
@@ -301,6 +421,7 @@ export default function SourceCard({
           </span>
         </div>
         <p className="mt-1.5 text-[11px] text-app-muted truncate leading-snug">{fileMetaParts.join(" · ")}</p>
+        <CleaningInfo cleaningStat={cleaningStat} ontologyCounts={ontologyCounts} isCleaning={cleaningSourceId === entry.id} />
       </Link>
       {tags.length > 0 && sharedTagRow}
       <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
@@ -309,6 +430,14 @@ export default function SourceCard({
             重试
           </button>
         )}
+        <button
+          className={`app-button-secondary text-[11px] h-7 px-2.5 ${cleaningSourceId === entry.id ? "is-loading" : ""}`}
+          type="button"
+          disabled={cleaningSourceId === entry.id}
+          onClick={(e) => { e.preventDefault(); onSemanticClean?.(source); }}
+        >
+          {cleaningSourceId === entry.id ? "清洗中…" : "语义清洗"}
+        </button>
         {tags.length === 0 && sharedTagRow}
       </div>
     </article>

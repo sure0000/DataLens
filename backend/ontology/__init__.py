@@ -58,6 +58,38 @@ def concept_slug(name: str, prefix: str = "term") -> str:
     return f"{prefix}.{n}" if n else ""
 
 
+def dimension_iri(domain_id: int, slug: str) -> str:
+    return f"{GRAPH_NS}domain/{domain_id}/dimension/{slug}"
+
+
+def rule_iri(domain_id: int, slug: str) -> str:
+    return f"{GRAPH_NS}domain/{domain_id}/rule/{slug}"
+
+
+def view_iri(view_id: int) -> str:
+    return f"{DATA_NS}view/{view_id}"
+
+
+def datasource_iri(ds_id: int) -> str:
+    return f"{DATA_NS}datasource/{ds_id}"
+
+
+def document_iri(doc_id: int) -> str:
+    return f"{DATA_NS}document/{doc_id}"
+
+
+def domain_iri(domain_id: int) -> str:
+    return f"{DATA_NS}domain/{domain_id}"
+
+
+def organization_iri(org_slug: str) -> str:
+    return f"{DATA_NS}organization/{org_slug}"
+
+
+def team_iri(team_slug: str) -> str:
+    return f"{DATA_NS}team/{team_slug}"
+
+
 def platform_id_from_table_iri(iri: str) -> int | None:
     m = re.match(rf"^{re.escape(DATA_NS)}table/(\d+)$", iri or "")
     return int(m.group(1)) if m else None

@@ -129,6 +129,22 @@ export function computeOutputCards(
     });
   }
 
+  // Ontology / RDF output
+  const rdf = stats?.rdf_stats;
+  if (rdf && (rdf.triple_count ?? 0) > 0) {
+    cards.push({
+      id: "ontology",
+      label: `本体建模 (${rdf.triple_count} 三元组)`,
+      icon: "ontology",
+      previews: [
+        ...(rdf.term_count ? [{ text: `${rdf.term_count} 个业务术语`, subtext: "术语" }] : []),
+        ...(rdf.metric_count ? [{ text: `${rdf.metric_count} 个指标口径`, subtext: "指标" }] : []),
+        ...(rdf.physical_table_count ? [{ text: `${rdf.physical_table_count} 张物理表`, subtext: "表结构" }] : []),
+      ].slice(0, 3),
+      totalCount: rdf.triple_count ?? 0,
+    });
+  }
+
   return cards;
 }
 

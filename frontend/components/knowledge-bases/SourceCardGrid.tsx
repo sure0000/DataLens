@@ -1,12 +1,13 @@
 "use client";
 
-import type { DocRow, Entry, GitSource } from "./types";
+import type { DatabaseImport, DocRow, Entry, GitSource, OntologyCounts, SourceCleaningStat } from "./types";
 import SourceCard, { type SourceItem } from "./SourceCard";
 
 interface SourceCardGridProps {
   gitSources: GitSource[];
   entries: Entry[];
   documents: DocRow[];
+  databaseImports: DatabaseImport[];
   kbId: number;
   gitSyncingId?: number | null;
   onSyncGit?: (id: number) => void;
@@ -15,12 +16,17 @@ interface SourceCardGridProps {
   onAddTag?: (source: SourceItem, tag: string) => void;
   onRemoveTag?: (source: SourceItem, tag: string) => void;
   tagLoading?: boolean;
+  onSemanticClean?: (source: SourceItem) => void;
+  cleaningSourceId?: number | null;
+  cleaningStats?: Record<string, SourceCleaningStat> | null;
+  ontologyCounts?: OntologyCounts;
 }
 
 export default function SourceCardGrid({
   gitSources,
   entries,
   documents,
+  databaseImports,
   kbId,
   gitSyncingId,
   onSyncGit,
@@ -29,6 +35,10 @@ export default function SourceCardGrid({
   onAddTag,
   onRemoveTag,
   tagLoading,
+  onSemanticClean,
+  cleaningSourceId,
+  cleaningStats,
+  ontologyCounts,
 }: SourceCardGridProps) {
   // Build flat source items list
   const items: SourceItem[] = [];
@@ -62,12 +72,17 @@ export default function SourceCardGrid({
     }
   }
 
+  // Database imports
+  for (const di of databaseImports) {
+    items.push({ kind: "database", data: di });
+  }
+
   const totalSources = items.length;
 
   if (totalSources === 0) {
     return (
       <p className="text-sm text-app-muted">
-        暂无导入源。通过「导入」上传文件或接入代码/API 源来添加。
+        暂无导入源。通过「导入」上传文件、接入数据库、代码库或 API 源来添加。
       </p>
     );
   }
@@ -91,8 +106,19 @@ export default function SourceCardGrid({
           const key =
             item.kind === "git" ? `git-${item.data.id}` :
             item.kind === "api" ? `api-${item.data.id}` :
+            item.kind === "database" ? `db-${item.data.id}` :
             item.kind === "api_entry" ? `api-entry-${item.entry.id}` :
             `file-${item.entry.id}`;
+
+          const cleaningKey =
+            item.kind === "git" ? `source:git:${item.data.id}` :
+            item.kind === "api" ? `source:api:${item.data.id}` :
+            item.kind === "database" ? `source:database:${item.data.id}` :
+            item.kind === "api_entry" ? `api:${item.entry.id}` :
+            `source:file:${item.entry.id}`;
+
+          const cleaningStat = cleaningStats?.[cleaningKey];
+
           return (
             <SourceCard
               key={key}
@@ -104,6 +130,10 @@ export default function SourceCardGrid({
               onAddTag={onAddTag}
               onRemoveTag={onRemoveTag}
               tagLoading={tagLoading}
+              onSemanticClean={onSemanticClean}
+              cleaningSourceId={cleaningSourceId}
+              cleaningStat={cleaningStat}
+              ontologyCounts={ontologyCounts}
             />
           );
         })}

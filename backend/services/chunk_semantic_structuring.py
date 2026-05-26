@@ -9,7 +9,8 @@ from sqlalchemy import select
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from models import Document, DocumentChunk, DataLineage, KnowledgeEntry
+from models import Document, DocumentChunk, KnowledgeEntry
+# DataLineage removed in Phase 1 ontology refactoring
 from prompts import load_prompt
 from services.semantic_extraction import _call_llm_json, _get_llm_client
 from services.semantic_grounding import dominant_semantic_role

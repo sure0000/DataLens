@@ -1,0 +1,43 @@
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix dl:   <https://datalens.local/ontology/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+dl:HierarchyShape a sh:NodeShape ;
+  sh:targetClass dl:BusinessConcept ;
+  sh:severity sh:Warning ;
+  sh:property [
+    sh:path skos:broader ;
+    sh:name "上位概念"@zh ;
+    sh:description "禁止概念的上位概念指向自身（自环）"@zh ;
+    sh:nodeKind sh:IRI ;
+  ] ;
+  sh:property [
+    sh:path skos:prefLabel ;
+    sh:name "首选标签"@zh ;
+    sh:minCount 1 ;
+  ] .
+
+# SPARQL-based constraint: no self-referencing broader
+dl:NoSelfBroaderConstraint a sh:NodeShape ;
+  sh:targetClass dl:BusinessConcept ;
+  sh:severity sh:Violation ;
+  sh:sparql [
+    sh:message "概念不能将自己的 skos:broader 指向自己（自环）"@zh ;
+    sh:prefixes [
+      sh:declare [
+        sh:prefix "skos" ;
+        sh:namespace "http://www.w3.org/2004/02/skos/core#" ;
+      ] ;
+      sh:declare [
+        sh:prefix "dl" ;
+        sh:namespace "https://datalens.local/ontology/" ;
+      ] ;
+    ] ;
+    sh:select """
+      SELECT $this
+      WHERE {
+        $this skos:broader $this .
+      }
+      """ ;
+  ] .

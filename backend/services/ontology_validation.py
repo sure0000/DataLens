@@ -20,16 +20,29 @@ def _load_shapes_graph() -> Graph:
     return g
 
 
+def _load_tbox_graph() -> Graph:
+    """Load all TBox files (tbox/ directory + legacy root) for SHACL validation."""
+    g = Graph()
+    base = Path(__file__).resolve().parent.parent / "ontology"
+    tbox_dir = base / "tbox"
+    if tbox_dir.is_dir():
+        for path in sorted(tbox_dir.glob("*.ttl")):
+            g.parse(str(path), format="turtle")
+    else:
+        for name in ["core.ttl", "physical.ttl", "business.ttl", "lineage.ttl", "provenance.ttl"]:
+            path = base / name
+            if path.exists():
+                g.parse(str(path), format="turtle")
+    return g
+
+
 def validate_data_graph(data: Graph, *, inference: str = "none") -> dict[str, Any]:
     """Validate ABox graph against SHACL shapes. Returns report dict."""
     if shacl_validate is None:
         return {"conforms": True, "skipped": True, "message": "pyshacl not installed"}
 
     shapes = _load_shapes_graph()
-    tbox = Graph()
-    tbox_path = Path(__file__).resolve().parent.parent / "ontology" / "core.ttl"
-    if tbox_path.exists():
-        tbox.parse(str(tbox_path), format="turtle")
+    tbox = _load_tbox_graph()
 
     conforms, report_graph, report_text = shacl_validate(
         data_graph=data,

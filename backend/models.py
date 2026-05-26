@@ -381,66 +381,18 @@ class KnowledgeApiSource(Base):
 
 
 # ---------------------------------------------------------------------------
-# 语义层模型 — 清洗流水线产出（术语、指标、血缘）
+# 语义层模型 — 已迁移至 RDF 三元组存储（Phase 1）
+#
+# BusinessTerm, MetricDefinition, DataLineage, SemanticRelation 四张表
+# 已从 ORM 中移除。语义数据现以 RDF 三元组形式存储在 Fuseki / 本地图中，
+# 通过 services/ontology/writer.py (OntologyWriter) 统一写入，
+# 通过 services/ontology/validator.py + quarantine.py 进行质量管控。
+#
+# 注意：引用这些旧模型的服务/路由将在 Phase 4 中删除或重写：
+#   - routers/knowledge_semantic.py        → Phase 4 删除
+#   - services/semantic_relation_sync.py    → Phase 4 删除
+#   - services/routing/*.py                → Phase 4 删除
 # ---------------------------------------------------------------------------
-
-
-class BusinessTerm(Base):
-    """AI 从文档中提取的业务术语，支持人工审核。"""
-
-    __tablename__ = "business_terms"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    type: Mapped[str] = mapped_column(Text, nullable=False)  # metric | enum | time | dimension | other
-    definition: Mapped[str] = mapped_column(Text, nullable=False)
-    source_entry_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_entries.id", ondelete="SET NULL"), nullable=True)
-    related_fields: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
-    concept_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    confidence: Mapped[float] = mapped_column(Float, default=0.0)
-    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending_review")  # pending_review | approved | rejected
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class MetricDefinition(Base):
-    """AI 从文档中提取的指标口径定义，支持人工审核。"""
-
-    __tablename__ = "metric_definitions"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
-    name: Mapped[str] = mapped_column(Text, nullable=False)
-    formula: Mapped[str] = mapped_column(Text, nullable=False)
-    caliber: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_entry_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_entries.id", ondelete="SET NULL"), nullable=True)
-    related_terms: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
-    bound_table_refs: Mapped[list | None] = mapped_column(JSON, nullable=True, default=list)
-    concept_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    confidence: Mapped[float] = mapped_column(Float, default=0.0)
-    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending_review")  # pending_review | approved | rejected
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class DataLineage(Base):
-    """数据血缘关系 — 从代码库（dbt/SQL/ORM）自动解析的表间依赖。"""
-
-    __tablename__ = "data_lineage"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
-    git_source_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_git_sources.id", ondelete="SET NULL"), nullable=True)
-    source_table: Mapped[str] = mapped_column(Text, nullable=False)
-    target_table: Mapped[str] = mapped_column(Text, nullable=False)
-    source_field: Mapped[str | None] = mapped_column(Text, nullable=True)
-    target_field: Mapped[str | None] = mapped_column(Text, nullable=True)
-    layer: Mapped[str] = mapped_column(Text, nullable=False)  # ODS | DWD | DWS | ADS
-    transform_logic: Mapped[str | None] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")  # done | processing | pending
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class PipelineRun(Base):
@@ -452,44 +404,11 @@ class PipelineRun(Base):
     knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
     status: Mapped[str] = mapped_column(Text, nullable=False, default="running")  # running | completed | failed
     source_type: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     steps: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-
-class SemanticRelation(Base):
-    """轻量语义关系图：术语/指标/表/概念之间的可遍历边（域内厚、企业薄层 concept_id）。"""
-
-    __tablename__ = "semantic_relations"
-    __table_args__ = (
-        UniqueConstraint(
-            "knowledge_base_id",
-            "relation_type",
-            "source_type",
-            "source_ref",
-            "target_type",
-            "target_ref",
-            name="uq_semantic_relation_edge",
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
-    # term_column | metric_table | table_join | concept_alias
-    relation_type: Mapped[str] = mapped_column(Text, nullable=False)
-    source_type: Mapped[str] = mapped_column(Text, nullable=False)  # term | metric | table | concept
-    source_ref: Mapped[str] = mapped_column(Text, nullable=False)
-    target_type: Mapped[str] = mapped_column(Text, nullable=False)  # column | table | concept
-    target_ref: Mapped[str] = mapped_column(Text, nullable=False)
-    concept_id: Mapped[str | None] = mapped_column(Text, nullable=True)
-    join_key: Mapped[str | None] = mapped_column(Text, nullable=True)
-    source_chunk_id: Mapped[int | None] = mapped_column(ForeignKey("document_chunks.id", ondelete="SET NULL"), nullable=True)
-    source_entry_id: Mapped[int | None] = mapped_column(ForeignKey("knowledge_entries.id", ondelete="SET NULL"), nullable=True)
-    confidence: Mapped[float] = mapped_column(Float, default=0.0)
-    status: Mapped[str] = mapped_column(Text, nullable=False, default="approved")  # draft | approved | deprecated
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class KnowledgeMcpSource(Base):
@@ -514,6 +433,42 @@ class KnowledgeMcpSource(Base):
     last_import_entries: Mapped[int | None] = mapped_column(Integer, nullable=True)
     last_import_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_import_kb_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class EvidencePackage(Base):
+    """导入层证据包 — 登记企业数据接入单元（与连接器实现解耦）。"""
+
+    __tablename__ = "evidence_packages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(
+        ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False
+    )
+    asset_kind: Mapped[str] = mapped_column(Text, nullable=False)
+    connector: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    source_ref: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    processing_state: Mapped[str] = mapped_column(Text, nullable=False, default="registered")
+    linked_entry_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    linked_document_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class KnowledgeDatabaseImport(Base):
+    """知识库数据库导入 — 从数据源模块导入数据库 schema 元数据作为知识源。"""
+
+    __tablename__ = "knowledge_database_imports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    knowledge_base_id: Mapped[int] = mapped_column(ForeignKey("knowledge_bases.id", ondelete="CASCADE"), nullable=False)
+    datasource_id: Mapped[int] = mapped_column(ForeignKey("data_sources.id"), nullable=False)
+    datasource_name: Mapped[str] = mapped_column(Text, nullable=False)
+    database_names: Mapped[list] = mapped_column(JSON, nullable=False)
+    status: Mapped[str] = mapped_column(Text, default="imported")  # imported | cleaning | cleaned | error
+    last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

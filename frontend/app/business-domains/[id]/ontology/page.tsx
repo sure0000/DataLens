@@ -21,7 +21,7 @@ export default function DomainOntologyPage() {
         }>(`/api/business-domains/${domainId}`);
         const first = res.knowledge_bases?.[0];
         if (!cancelled && first) {
-          router.replace(`/knowledge-bases/${first.id}?tab=ontology`);
+          router.replace(`/knowledge-bases/${first.id}/ontology`);
         }
       } catch {
         /* 无绑定知识库时留在本页 */

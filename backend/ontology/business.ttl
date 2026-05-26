@@ -1,4 +1,5 @@
-@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
-@prefix dl:   <https://datalens.local/ontology/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
 
-# Business terms and metrics use skos:prefLabel, skos:definition, skos:altLabel
+# Thin wrapper — SKOS business concept annotations are now in tbox/core.ttl and tbox/enterprise.ttl.
+owl:imports <tbox/core.ttl> .
+owl:imports <tbox/enterprise.ttl> .

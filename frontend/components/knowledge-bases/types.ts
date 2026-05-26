@@ -232,3 +232,58 @@ export interface OutputCardData {
   previews: { text: string; subtext?: string; confidence?: number }[];
   totalCount: number;
 }
+
+/** 数据库导入源 */
+export type DatabaseImport = {
+  id: number;
+  knowledge_base_id: number;
+  datasource_id: number;
+  datasource_name: string;
+  database_names: string[];
+  status: string;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+/** 数据库导入详情中的表信息 */
+export type DatabaseTableNode = {
+  id: number;
+  table_name: string;
+  database_name: string;
+  status: string;
+  row_count: number | null;
+  ai_summary: string | null;
+  use_cases: string | null;
+  analyzed_at: string | null;
+};
+
+/** 本体清洗五层中的一层 */
+export type OntologyCleaningLayer = {
+  label: string;
+  description: string;
+  total: number;
+  ontology_class: string;
+  items: Record<string, string>[];
+};
+
+/** 本体清洗五层结果 */
+export type OntologyCleaningResults = {
+  ok: boolean;
+  kb_id: number;
+  layers: Record<string, OntologyCleaningLayer>;
+  last_cleaning_at: string | null;
+};
+
+/** Per-source cleaning status (from pipeline_runs) */
+export type SourceCleaningStat = {
+  status: "running" | "completed" | "failed";
+  started_at: string | null;
+  completed_at: string | null;
+};
+
+/** Ontology entity/relation counts for source cards */
+export type OntologyCounts = {
+  entity: number;
+  relation: number;
+};

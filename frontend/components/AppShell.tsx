@@ -502,7 +502,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
                 <Icon name="book" />
               </span>
-              <span>语义知识库</span>
+              <span>数据接入</span>
+            </Link>
+            <Link
+              href="/ontology"
+              className={`app-nav-item rounded-lg ${isActive(pathname, "/ontology") ? "is-active" : ""}`}
+            >
+              <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
+                <Icon name="spark" />
+              </span>
+              <span>本体浏览</span>
             </Link>
               <Link href="/settings" className={`app-nav-item rounded-lg ${isActive(pathname, "/settings") ? "is-active" : ""}`}>
                 <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">

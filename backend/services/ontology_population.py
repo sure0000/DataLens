@@ -8,15 +8,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models import (
-    BusinessTerm,
     ColumnMeta,
-    DataLineage,
     DocumentChunk,
-    MetricDefinition,
-    SemanticRelation,
     TableMeta,
     TableSummary,
 )
+# BusinessTerm, DataLineage, MetricDefinition, SemanticRelation removed in Phase 1
 from ontology import (
     NS,
     chunk_iri,

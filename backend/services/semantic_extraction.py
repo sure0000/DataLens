@@ -22,15 +22,14 @@ from sqlalchemy.orm import Session
 
 from config import get_settings
 from models import (
-    BusinessTerm,
-    DataLineage,
     Document,
     DocumentChunk,
     KnowledgeEntry,
     KnowledgeGitSource,
-    MetricDefinition,
     PipelineRun,
 )
+# BusinessTerm, DataLineage, MetricDefinition removed in Phase 1 ontology refactoring
+# This module will be rewritten in Phase 2 to write directly to RDF via OntologyWriter
 from services.semantic_relation_sync import concept_slug, sync_semantic_relations_for_kb
 
 _logger = logging.getLogger(__name__)
@@ -87,11 +86,12 @@ def _get_llm_client(db: Session) -> tuple[Any, str] | None:
         return None
 
 
-def _start_pipeline_run(db: Session, kb_id: int, source_type: str | None = None) -> PipelineRun:
+def _start_pipeline_run(db: Session, kb_id: int, source_type: str | None = None, source_id: int | None = None) -> PipelineRun:
     run = PipelineRun(
         knowledge_base_id=kb_id,
         status="running",
         source_type=source_type,
+        source_id=source_id,
         steps={"term_extraction": "pending", "metric_caliber": "pending", "data_lineage": "pending"},
     )
     db.add(run)
@@ -386,7 +386,7 @@ async def extract_lineage_from_kb(db: Session, kb_id: int) -> int:
 # ── Pipeline Orchestration ─────────────────────────────────────────────
 
 
-async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None = None, skip_if_running: bool = True) -> dict[str, Any]:
+async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None = None, source_id: int | None = None, skip_if_running: bool = True) -> dict[str, Any]:
     """编排执行完整的语义清洗流水线。"""
     if skip_if_running:
         existing = db.execute(
@@ -411,7 +411,7 @@ async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None
                 _logger.info("Semantic pipeline already running for kb=%s (run_id=%s), skipping", kb_id, existing.id)
                 return {"status": "skipped", "reason": "已有正在运行的流水线", "run_id": existing.id}
 
-    run = _start_pipeline_run(db, kb_id, source_type)
+    run = _start_pipeline_run(db, kb_id, source_type, source_id)
     steps_status: dict[str, Any] = {}
     _pipeline_timeout = 600  # 整体超时 10 分钟
 
@@ -500,19 +500,41 @@ async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None
     }
 
 
-def trigger_semantic_pipeline_background(kb_id: int, source_type: str = "auto", skip_if_running: bool = True) -> None:
+def trigger_semantic_pipeline_background(kb_id: int, source_type: str = "auto", source_id: int | None = None, skip_if_running: bool = True) -> None:
     """在后台线程中触发语义提取流水线（术语、指标、血缘）。
 
     可从任意上下文（文件导入、API 导入、Git 同步）调用，不阻塞调用方。
     内置去重：若该知识库已有 running 状态的 PipelineRun 则跳过（除非 skip_if_running=False）。
     """
     def _run():
+        import traceback
         from database import SessionLocal
         db2 = SessionLocal()
         try:
-            asyncio.run(run_semantic_pipeline(db2, kb_id, source_type=source_type, skip_if_running=skip_if_running))
+            from services.extraction.orchestrator import run_extraction_pipeline
+            asyncio.run(run_extraction_pipeline(db2, kb_id, source_type=source_type, source_id=source_id, skip_if_running=skip_if_running))
         except Exception:
             _logger.exception("Background semantic pipeline failed for kb=%s", kb_id)
+            # Mark any orphaned running runs as failed
+            try:
+                from models import PipelineRun
+                from datetime import datetime, timezone
+                orphaned = db2.execute(
+                    __import__('sqlalchemy').select(PipelineRun).where(
+                        PipelineRun.knowledge_base_id == kb_id,
+                        PipelineRun.status == "running",
+                    )
+                ).scalars().all()
+                for r in orphaned:
+                    r.status = "failed"
+                    r.completed_at = datetime.now(timezone.utc)
+                    r.steps = {
+                        k: (v if isinstance(v, dict) else {"status": "failed", "reason": traceback.format_exc()[-500:]})
+                        for k, v in (r.steps or {}).items()
+                    }
+                db2.commit()
+            except Exception:
+                pass
         finally:
             db2.close()
 

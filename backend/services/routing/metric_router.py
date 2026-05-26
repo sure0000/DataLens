@@ -8,7 +8,9 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
-from models import BusinessTerm, ColumnMeta, MetricDefinition, SemanticRelation, TableKnowledgeEntry, TableMeta
+from models import ColumnMeta, TableKnowledgeEntry, TableMeta
+# BusinessTerm, MetricDefinition, SemanticRelation removed in Phase 1
+# This module will be deleted in Phase 4
 from services.semantic_grounding import table_ids_from_bound_refs
 
 

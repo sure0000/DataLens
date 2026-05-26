@@ -1,42 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ConfirmDialog from "../../../../../components/ConfirmDialog";
 import PageHeader from "../../../../../components/PageHeader";
 import Toast from "../../../../../components/Toast";
-import { api, ApiError, formatApiError } from "../../../../../lib/api";
+import { api } from "../../../../../lib/api";
 
 import type {
   ApiSource,
-  BusinessTerm,
   ChunkRow,
+  DatabaseImport,
+  DatabaseTableNode,
   DocRow,
   Entry,
   GitSource,
   KB,
-  LineageData,
-  MetricDef,
-  PipelineStats,
 } from "../../../../../components/knowledge-bases/types";
 
-import { linkAccent, tabActive, tabInactive } from "../../../../../lib/themeClasses";
-import {
-  computeOutputCards,
-  computePipelineSteps,
-  docStatusChip,
-  filterLineageByGitSource,
-  gitSyncStatusChip,
-} from "../../../../../components/knowledge-bases/utils";
-
-import CleanPipeline from "../../../../../components/knowledge-bases/CleanPipeline";
-import LineageGraph from "../../../../../components/knowledge-bases/LineageGraph";
-import MetricList from "../../../../../components/knowledge-bases/MetricList";
-import SourceResultCards from "../../../../../components/knowledge-bases/SourceResultCards";
-import TermList from "../../../../../components/knowledge-bases/TermList";
-
-type TabId = "documents" | "terms" | "metrics";
+import { linkAccent } from "../../../../../lib/themeClasses";
+import { docStatusChip, gitSyncStatusChip } from "../../../../../components/knowledge-bases/utils";
 
 export default function SourceDetailPage({
   params,
@@ -58,27 +42,18 @@ export default function SourceDetailPage({
   const [documents, setDocuments] = useState<DocRow[]>([]);
   const [loading, setLoading] = useState(false);
 
-  // ── V2 semantic data ──
-  const [stats, setStats] = useState<PipelineStats | null>(null);
-  const [terms, setTerms] = useState<BusinessTerm[]>([]);
-  const [metrics, setMetrics] = useState<MetricDef[]>([]);
-  const [lineage, setLineage] = useState<LineageData | null>(null);
+  // ── Database import detail ──
+  const [dbImport, setDbImport] = useState<DatabaseImport | null>(null);
+  const [dbTables, setDbTables] = useState<DatabaseTableNode[]>([]);
+  const [dbDetailLoading, setDbDetailLoading] = useState(false);
 
-  // ── Tabs ──
-  const [activeTab, setActiveTab] = useState<TabId>("documents");
-
-  // ── Chunk expansion ──
-  const [expandedDocId, setExpandedDocId] = useState<number | null>(null);
-  const [chunks, setChunks] = useState<ChunkRow[]>([]);
+  // ── Chunks: auto-loaded for all source documents ──
+  const [docChunks, setDocChunks] = useState<Record<number, ChunkRow[]>>({});
   const [chunksLoading, setChunksLoading] = useState(false);
-  const [selectedDocId, setSelectedDocId] = useState<number | null>(null);
 
   // ── Settings menu ──
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
-
-  // ── Pipeline trigger ──
-  const [pipelineRunning, setPipelineRunning] = useState(false);
 
   // ── Confirm dialog ──
   const [confirmState, setConfirmState] = useState<{
@@ -109,21 +84,6 @@ export default function SourceDetailPage({
     setMessageText(""); setMessageTone("success"); setToastDurationMs(4000);
   }, []);
 
-  async function runSemanticPipeline() {
-    setPipelineRunning(true);
-    try {
-      const res = await api<{ status: string; run_id?: number }>(`/api/knowledge-bases/${kbId}/semantic-pipeline/run`, { method: "POST" });
-      if (res.status === "skipped") {
-        notifyUser("语义提取已在运行中，请稍后刷新查看结果", "info");
-      } else {
-        notifyUser("语义提取完成，正在刷新数据…", "success");
-      }
-      await loadV2Data();
-    } catch (e: unknown) {
-      notifyUser(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "启动失败", "error");
-    } finally { setPipelineRunning(false); }
-  }
-
   // ═══════════════════════════════════════════════════
   // Data fetching
   // ═══════════════════════════════════════════════════
@@ -135,17 +95,18 @@ export default function SourceDetailPage({
     } catch { setDocuments([]); }
   }
 
-  async function loadV2Data() {
-    const [statsRes, termsRes, metricsRes, lineageRes] = await Promise.all([
-      api<PipelineStats>(`/api/knowledge-bases/${kbId}/pipeline-stats`).catch(() => null),
-      api<{ terms: BusinessTerm[] }>(`/api/knowledge-bases/${kbId}/terms`).catch(() => ({ terms: [] })),
-      api<{ metrics: MetricDef[] }>(`/api/knowledge-bases/${kbId}/metrics`).catch(() => ({ metrics: [] })),
-      api<LineageData>(`/api/knowledge-bases/${kbId}/lineage`).catch(() => null),
-    ]);
-    setStats(statsRes as PipelineStats | null);
-    setTerms((termsRes as { terms: BusinessTerm[] })?.terms ?? []);
-    setMetrics((metricsRes as { metrics: MetricDef[] })?.metrics ?? []);
-    setLineage(lineageRes as LineageData | null);
+  async function loadDatabaseDetail() {
+    setDbDetailLoading(true);
+    try {
+      const res = await api<{ import: DatabaseImport; tables: DatabaseTableNode[] }>(
+        `/api/knowledge-bases/${kbId}/database-imports/${sourceId}`
+      );
+      setDbImport(res.import);
+      setDbTables(res.tables ?? []);
+    } catch {
+      setDbImport(null);
+      setDbTables([]);
+    } finally { setDbDetailLoading(false); }
   }
 
   async function loadAll() {
@@ -161,11 +122,11 @@ export default function SourceDetailPage({
       setKb(res.knowledge_base);
       setEntries(res.entries);
       setGitSources(gitRes.git_sources ?? []);
-      // Merge KB-bound and global API sources so we can find the config for both
-      const merged = [...(kbApiRes.api_sources ?? []), ...(globalApiRes.api_sources ?? [])];
-      setApiSources(merged);
+      setApiSources([...(kbApiRes.api_sources ?? []), ...(globalApiRes.api_sources ?? [])]);
       loadDocuments();
-      loadV2Data();
+      if (sourceType === "database") {
+        loadDatabaseDetail();
+      }
     } catch {
       setKb(null); setEntries([]); setGitSources([]);
     } finally {
@@ -202,6 +163,8 @@ export default function SourceDetailPage({
       action: async () => {
         if (sourceType === "git" && gitSource) {
           await api(`/api/knowledge-bases/${kbId}/git-sources/${sourceId}`, { method: "DELETE" });
+        } else if (sourceType === "database") {
+          await api(`/api/knowledge-bases/${kbId}/database-imports/${sourceId}`, { method: "DELETE" });
         } else if (sourceType === "api") {
           if (apiSource) {
             await api(`/api/api-sources/${sourceId}`, { method: "DELETE" });
@@ -227,14 +190,18 @@ export default function SourceDetailPage({
   // Chunk loading
   // ═══════════════════════════════════════════════════
 
-  async function loadChunks(docId: number) {
+  async function loadAllChunks(docs: DocRow[]) {
+    if (docs.length === 0) { setDocChunks({}); return; }
     setChunksLoading(true);
-    setSelectedDocId(docId);
-    setExpandedDocId(docId);
-    try {
-      const res = await api<{ chunks: ChunkRow[] }>(`/api/knowledge-bases/${kbId}/documents/${docId}/chunks`);
-      setChunks(res.chunks ?? []);
-    } catch { setChunks([]); } finally { setChunksLoading(false); }
+    const map: Record<number, ChunkRow[]> = {};
+    for (const doc of docs) {
+      try {
+        const res = await api<{ chunks: ChunkRow[] }>(`/api/knowledge-bases/${kbId}/documents/${doc.id}/chunks`);
+        map[doc.id] = res.chunks ?? [];
+      } catch { map[doc.id] = []; }
+    }
+    setDocChunks(map);
+    setChunksLoading(false);
   }
 
   // ═══════════════════════════════════════════════════
@@ -250,9 +217,7 @@ export default function SourceDetailPage({
       return meta.kind === "git_file" && String(meta.git_source_id) === String(sourceId);
     }
     if (sourceType === "api") {
-      // If sourceId matches an API source config, filter by kind
       if (apiSource) return apiKind ? meta.kind === apiKind : false;
-      // Otherwise sourceId is an entry ID (API-imported entry)
       return e.id === sourceId;
     }
     if (sourceType === "file") {
@@ -267,9 +232,7 @@ export default function SourceDetailPage({
       return meta.kind === "git_file" && String(meta.git_source_id) === String(sourceId);
     }
     if (sourceType === "api") {
-      // If sourceId matches an API source config, filter by kind
       if (apiSource) return apiKind ? meta.kind === apiKind : false;
-      // Otherwise sourceId is an entry ID
       return d.knowledge_entry_id === sourceId || d.id === sourceId;
     }
     if (sourceType === "file") {
@@ -279,61 +242,15 @@ export default function SourceDetailPage({
   }
 
   // Filtered data
-  const sourceEntries = entries.filter(isSourceEntry);
   const sourceDocs = documents.filter(isSourceDoc);
-  const sourceEntryIds = new Set(sourceEntries.map((e) => e.id));
 
-  // Terms and metrics traced back to source entries via source_entry_id
-  const sourceTerms = terms.filter((t) => t.source_entry_id != null && sourceEntryIds.has(t.source_entry_id));
-  const sourceMetrics = metrics.filter((m) => m.source_entry_id != null && sourceEntryIds.has(m.source_entry_id));
-
-  // Lineage filtered by git_source_id
-  const sourceLineage: LineageData | null =
-    sourceType === "git" && lineage
-      ? filterLineageByGitSource(lineage, sourceId)
-      : null;
+  // Auto-load chunks for all source documents
+  useEffect(() => {
+    loadAllChunks(sourceDocs);
+  }, [documents, sourceType, apiSource]);
 
   // Source config
   const gitSource = sourceType === "git" ? gitSources.find((s) => s.id === sourceId) : null;
-
-  // Build synthetic stats for this source
-  const sourceStats: PipelineStats | null = stats
-    ? {
-        ...stats,
-        total_documents: sourceDocs.length,
-        indexed_documents: sourceDocs.filter((d) => d.status === "indexed").length,
-        documents_by_status: sourceDocs.reduce(
-          (acc, d) => {
-            acc[d.status] = (acc[d.status] || 0) + 1;
-            return acc;
-          },
-          {} as Record<string, number>,
-        ),
-        term_count: sourceTerms.length,
-        metric_count: sourceMetrics.length,
-        terms_by_status: sourceTerms.reduce(
-          (acc, t) => {
-            acc[t.status] = (acc[t.status] || 0) + 1;
-            return acc;
-          },
-          {} as Record<string, number>,
-        ),
-        metrics_by_status: sourceMetrics.reduce(
-          (acc, m) => {
-            acc[m.status] = (acc[m.status] || 0) + 1;
-            return acc;
-          },
-          {} as Record<string, number>,
-        ),
-        lineage_stats: sourceLineage
-          ? sourceLineage.stats
-          : { done: 0, processing: 0, pending: 0 },
-      }
-    : null;
-
-  const hasGit = sourceType === "git";
-  const pipelineSteps = computePipelineSteps(sourceStats, hasGit);
-  const outputCards = computeOutputCards(sourceStats, sourceTerms, sourceMetrics);
 
   // Compute title and subtitle
   let sourceTitle: string;
@@ -344,9 +261,11 @@ export default function SourceDetailPage({
     sourceTitle = gitSource.name;
     sourceSubtitle = `${gitSource.provider === "gitlab" ? "GitLab" : "GitHub"} · ${gitSource.owner}/${gitSource.repo}`;
     statusChip = gitSyncStatusChip(gitSource.last_sync_status);
+  } else if (sourceType === "database") {
+    sourceTitle = dbImport?.datasource_name || "数据库导入";
+    sourceSubtitle = dbImport ? `${dbImport.database_names.length} 个数据库：${dbImport.database_names.join(", ")}` : "";
   } else if (sourceType === "api") {
     if (apiSource) {
-      // KB-bound or global API source config found
       const integrationLabel =
         apiSource.integration === "notion" ? "Notion" :
         apiSource.integration === "confluence" ? "Confluence" :
@@ -355,15 +274,16 @@ export default function SourceDetailPage({
       sourceSubtitle = `${integrationLabel} · ${apiSource.object_id}`;
       statusChip = gitSyncStatusChip(apiSource.last_sync_status);
     } else {
-      // API-imported entry: sourceId is the entry ID
-      const entry = entries.find((e) => e.id === sourceId) || sourceEntries[0];
-      sourceTitle = entry?.title || "API 导入";
-      const metaKind = entry?.source_meta?.kind || "";
+      const entry = entries.find((e) => e.id === sourceId);
+      const sourceEntries = entries.filter(isSourceEntry);
+      const e = entry || sourceEntries[0];
+      sourceTitle = e?.title || "API 导入";
+      const metaKind = e?.source_meta?.kind || "";
       const integrationLabel =
         metaKind === "notion_api" ? "Notion" :
         metaKind === "confluence_api" ? "Confluence" :
         metaKind === "feishu_api" ? "飞书" : metaKind.replace("_api", "");
-      sourceSubtitle = `${integrationLabel} · ${entry?.source_meta?.ref || entry?.source_meta?.label || "导入"}`;
+      sourceSubtitle = `${integrationLabel} · ${e?.source_meta?.ref || e?.source_meta?.label || "导入"}`;
       const doc = sourceDocs[0];
       if (doc) statusChip = docStatusChip(doc.status);
     }
@@ -429,16 +349,6 @@ export default function SourceDetailPage({
               </button>
               {settingsMenuOpen && (
                 <div className="absolute right-0 top-full mt-1 z-50 min-w-[140px] rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] py-1 shadow-lg">
-                  {sourceDocs.some((d) => d.status === "indexed") && (
-                    <button
-                      className="block w-full px-4 py-2 text-left text-sm text-[var(--app-text-primary)] hover:bg-[var(--app-bg-hover)] disabled:opacity-50"
-                      type="button"
-                      disabled={pipelineRunning}
-                      onClick={() => { setSettingsMenuOpen(false); runSemanticPipeline(); }}
-                    >
-                      {pipelineRunning ? "启动中…" : "运行语义提取"}
-                    </button>
-                  )}
                   <button
                     className="block w-full px-4 py-2 text-left text-sm text-[var(--app-text-danger)] hover:bg-[var(--app-bg-hover)]"
                     type="button"
@@ -473,84 +383,105 @@ export default function SourceDetailPage({
             </div>
           )}
 
-          {/* ── Pipeline visualization ── */}
-          <div className="mt-4">
-            <CleanPipeline steps={pipelineSteps} />
-          </div>
-
-          {/* ── Output cards ── */}
-          {outputCards.length > 0 && (
-            <div className="mt-4">
-              <SourceResultCards cards={outputCards} onViewAll={(cardId) => setActiveTab(cardId as TabId)} />
-            </div>
+          {/* ── Database: table list ── */}
+          {sourceType === "database" && (
+            <section className="mt-6">
+              <h2 className="app-section-title mb-3">数据表</h2>
+              {dbDetailLoading && <p className="text-sm text-app-muted">加载中…</p>}
+              {!dbDetailLoading && dbTables.length === 0 && (
+                <p className="text-sm text-app-muted">此数据库导入暂无表数据，请先在数据源中分析表。</p>
+              )}
+              {!dbDetailLoading && dbTables.length > 0 && (
+                <div className="overflow-hidden rounded-xl border border-app-border bg-[var(--app-card-bg)]">
+                  <table className="app-table">
+                    <thead>
+                      <tr>
+                        <th className="px-3 py-2.5">表名</th>
+                        <th className="px-3 py-2.5">数据库</th>
+                        <th className="w-28 px-3 py-2.5">状态</th>
+                        <th className="px-3 py-2.5">AI 分析摘要</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {dbTables.map((t) => (
+                        <tr key={`tbl-${t.id}`} className="hover:bg-app-hover">
+                          <td className="px-3 py-2.5">
+                            <Link
+                              href={`/datasources/${dbImport?.datasource_id}/tables/${t.table_name}`}
+                              className={`text-sm font-medium ${linkAccent}`}
+                            >
+                              {t.table_name}
+                            </Link>
+                          </td>
+                          <td className="px-3 py-2.5 text-xs text-app-muted">{t.database_name}</td>
+                          <td className="px-3 py-2.5">
+                            <span className={`inline-flex items-center rounded-full border px-1.5 py-0 text-[11px] font-medium ${
+                              t.status === "done" ? "bg-emerald-50 text-emerald-700 border-emerald-200" :
+                              t.status === "analyzing" ? "bg-amber-50 text-amber-700 border-amber-200" :
+                              t.status === "error" ? "bg-red-50 text-red-700 border-red-200" :
+                              "bg-gray-50 text-gray-600 border-gray-200"
+                            }`}>
+                              {t.status === "done" ? "已分析" :
+                               t.status === "analyzing" ? "分析中" :
+                               t.status === "error" ? "失败" : "待分析"}
+                            </span>
+                          </td>
+                          <td className="px-3 py-2.5 text-xs text-app-muted max-w-xs truncate">
+                            {t.ai_summary || "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
           )}
 
-          {/* ── Lineage graph (Git only) ── */}
-          {sourceType === "git" && sourceLineage && (
-            <div className="mt-4">
-              <LineageGraph data={sourceLineage} />
-            </div>
+          {/* ── Documents / Chunks ── */}
+          {sourceType !== "database" && (
+            <section className="mt-6">
+              <h2 className="app-section-title mb-3">文档分块 ({sourceDocs.length})</h2>
+              {chunksLoading && <p className="text-sm text-app-muted">加载分块中…</p>}
+              {!chunksLoading && sourceDocs.length === 0 && (
+                <p className="text-sm text-app-muted">此源暂无文档。</p>
+              )}
+              {!chunksLoading && sourceDocs.map((doc) => (
+                <div key={`doc-${doc.id}`} className="mb-6">
+                  <div className="flex items-center gap-2 mb-2">
+                    <h3 className="text-sm font-semibold text-app-primary">{doc.title}</h3>
+                    <span className={`inline-flex items-center rounded-full border px-1.5 py-0 text-[11px] font-medium ${docStatusChip(doc.status).className}`}>
+                      {docStatusChip(doc.status).text}
+                    </span>
+                    {doc.char_count != null && (
+                      <span className="text-xs text-app-muted">{doc.char_count.toLocaleString()} 字符</span>
+                    )}
+                  </div>
+                  {(docChunks[doc.id] ?? []).length === 0 ? (
+                    <p className="text-xs text-app-muted pl-2 border-l-2 border-app-border">暂无分块数据</p>
+                  ) : (
+                    <div className="space-y-2">
+                      {(docChunks[doc.id] ?? []).map((c) => (
+                        <div key={c.id} className="rounded-lg border border-app-border bg-app-hover p-3">
+                          <div className="flex items-center justify-between gap-2 mb-1">
+                            <span className="text-xs text-app-muted">块 #{c.chunk_index + 1}</span>
+                            {c.quality_score != null && (
+                              <span className={`text-[11px] font-medium ${
+                                c.quality_score >= 0.7 ? "app-text-success" : c.quality_score >= 0.4 ? "text-amber-600" : "app-text-danger"
+                              }`}>
+                                质量 {c.quality_score.toFixed(2)}
+                              </span>
+                            )}
+                          </div>
+                          <pre className="whitespace-pre-wrap break-words text-xs text-app-secondary">{c.content}</pre>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </section>
           )}
-
-          {/* ── Tab bar ── */}
-          <div className="mt-6 flex items-center gap-1 border-b border-app-border">
-            <button
-              type="button"
-              className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === "documents"
-                  ? tabActive
-                  : tabInactive
-              }`}
-              onClick={() => setActiveTab("documents")}
-            >
-              文档 ({sourceDocs.length})
-            </button>
-            <button
-              type="button"
-              className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === "terms"
-                  ? tabActive
-                  : tabInactive
-              }`}
-              onClick={() => setActiveTab("terms")}
-            >
-              术语 ({sourceTerms.length})
-            </button>
-            <button
-              type="button"
-              className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeTab === "metrics"
-                  ? tabActive
-                  : tabInactive
-              }`}
-              onClick={() => setActiveTab("metrics")}
-            >
-              指标 ({sourceMetrics.length})
-            </button>
-          </div>
-
-          {/* ── Tab content ── */}
-          <div className="mt-4">
-            {activeTab === "documents" && (
-              <SourceDocumentsTab
-                documents={sourceDocs}
-                expandedDocId={expandedDocId}
-                chunks={chunks}
-                chunksLoading={chunksLoading}
-                selectedDocId={selectedDocId}
-                onLoadChunks={loadChunks}
-                onCloseChunks={() => { setExpandedDocId(null); setChunks([]); }}
-              />
-            )}
-
-            {activeTab === "terms" && (
-              <TermList terms={sourceTerms} loading={loading} />
-            )}
-
-            {activeTab === "metrics" && (
-              <MetricList metrics={sourceMetrics} loading={loading} />
-            )}
-          </div>
         </>
       )}
 
@@ -566,139 +497,5 @@ export default function SourceDetailPage({
         onConfirm={handleConfirm}
       />
     </main>
-  );
-}
-
-// ═══════════════════════════════════════════════════
-// SourceDocumentsTab — documents list for a source
-// ═══════════════════════════════════════════════════
-
-function SourceDocumentsTab({
-  documents,
-  expandedDocId,
-  chunks,
-  chunksLoading,
-  selectedDocId,
-  onLoadChunks,
-  onCloseChunks,
-}: {
-  documents: DocRow[];
-  expandedDocId: number | null;
-  chunks: ChunkRow[];
-  chunksLoading: boolean;
-  selectedDocId: number | null;
-  onLoadChunks: (docId: number) => void;
-  onCloseChunks: () => void;
-}) {
-  if (documents.length === 0) {
-    return <p className="text-sm text-app-muted">此源暂无文档。</p>;
-  }
-
-  return (
-    <>
-      <div className="overflow-hidden rounded-xl border border-app-border bg-[var(--app-card-bg)]">
-        <table className="app-table">
-          <thead>
-            <tr>
-              <th className="px-3 py-2.5">文档</th>
-              <th className="w-28 px-3 py-2.5">状态</th>
-              <th className="w-44 px-3 py-2.5">创建时间</th>
-            </tr>
-          </thead>
-          <tbody>
-            {documents.map((doc) => {
-              const chip = docStatusChip(doc.status);
-              return (
-                <tr key={`doc-${doc.id}`} className="hover:bg-app-hover">
-                  <td className="px-3 py-2.5">
-                    <button
-                      className={`text-left text-sm font-medium truncate max-w-full ${linkAccent}`}
-                      type="button"
-                      title={doc.title}
-                      onClick={() => onLoadChunks(doc.id)}
-                    >
-                      {doc.title}
-                    </button>
-                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
-                      <span className="text-xs text-app-muted">
-                        {doc.source_meta?.label || doc.source_type}
-                      </span>
-                      {doc.char_count != null && (
-                        <span className="text-xs text-app-muted">
-                          {doc.char_count.toLocaleString()} 字符
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2.5">
-                    <span className={`inline-flex items-center rounded-full border px-1.5 py-0 text-[11px] font-medium ${chip.className}`}>
-                      {chip.text}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2.5 text-xs text-app-muted whitespace-nowrap">
-                    {new Date(doc.created_at).toLocaleString()}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-
-      {/* Chunk viewer modal */}
-      {expandedDocId != null && (
-        <div className="app-modal-backdrop" role="presentation" onClick={onCloseChunks}>
-          <div
-            className="app-card max-h-[85vh] w-full max-w-2xl overflow-auto p-5"
-            role="dialog"
-            aria-modal="true"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="app-section-title">分块详情</h2>
-              <button className="app-control-button" type="button" onClick={onCloseChunks}>
-                关闭
-              </button>
-            </div>
-            <div className="space-y-3">
-              {chunksLoading && selectedDocId === expandedDocId && (
-                <p className="text-sm text-app-muted">加载中…</p>
-              )}
-              {!chunksLoading && chunks.length === 0 && (
-                <p className="text-sm text-app-muted">该文档暂无分块数据。</p>
-              )}
-              {chunks.map((c) => (
-                <div
-                  key={c.id}
-                  className="rounded-lg border border-app-border bg-app-hover p-3"
-                >
-                  <div className="flex items-center justify-between gap-2 mb-1">
-                    <span className="text-xs text-app-muted">
-                      块 #{c.chunk_index + 1}
-                    </span>
-                    {c.quality_score != null && (
-                      <span
-                        className={`text-[11px] font-medium ${
-                          c.quality_score >= 0.7
-                            ? "app-text-success"
-                            : c.quality_score >= 0.4
-                            ? "text-amber-600"
-                            : "app-text-danger"
-                        }`}
-                      >
-                        质量 {c.quality_score.toFixed(2)}
-                      </span>
-                    )}
-                  </div>
-                  <pre className="whitespace-pre-wrap break-words text-xs text-app-secondary">
-                    {c.content}
-                  </pre>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-    </>
   );
 }

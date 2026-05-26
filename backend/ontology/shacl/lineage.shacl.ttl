@@ -1,0 +1,51 @@
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix dl:   <https://datalens.local/ontology/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+dl:LineageShape a sh:NodeShape ;
+  sh:targetClass dl:LineageAssertion ;
+  sh:severity sh:Warning ;
+  sh:property [
+    sh:path dl:sourceField ;
+    sh:name "源字段"@zh ;
+    sh:datatype xsd:string ;
+  ] ;
+  sh:property [
+    sh:path dl:targetField ;
+    sh:name "目标字段"@zh ;
+    sh:datatype xsd:string ;
+  ] ;
+  sh:property [
+    sh:path dl:layer ;
+    sh:name "数据层级"@zh ;
+    sh:in ("ODS" "DWD" "DWS" "ADS" "DM") ;
+    sh:datatype xsd:string ;
+  ] ;
+  sh:property [
+    sh:path dl:confidence ;
+    sh:minInclusive 0.0 ;
+    sh:maxInclusive 100.0 ;
+    sh:datatype xsd:decimal ;
+  ] .
+
+# Ensure at least one of sourceField or targetField is present
+dl:LineageFieldConstraint a sh:NodeShape ;
+  sh:targetClass dl:LineageAssertion ;
+  sh:severity sh:Violation ;
+  sh:sparql [
+    sh:message "血缘断言至少需要一个 sourceField 或 targetField"@zh ;
+    sh:prefixes [
+      sh:declare [
+        sh:prefix "dl" ;
+        sh:namespace "https://datalens.local/ontology/" ;
+      ] ;
+    ] ;
+    sh:select """
+      SELECT $this
+      WHERE {
+        $this a dl:LineageAssertion .
+        FILTER NOT EXISTS { $this dl:sourceField ?sf . }
+        FILTER NOT EXISTS { $this dl:targetField ?tf . }
+      }
+      """ ;
+  ] .

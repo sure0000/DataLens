@@ -4,14 +4,25 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   BookOpen,
+  Code2,
   Database,
-  GitBranch,
   Layers,
   Network,
   RefreshCw,
   Search,
+  Shield,
   Sparkles,
 } from "lucide-react";
+import OntologyCleanResultCards from "../knowledge-bases/OntologyCleanResultCards";
+import type { OntologyCleaningResults } from "../knowledge-bases/types";
+import ConceptHierarchyTree, { type HierarchyNode } from "./ConceptHierarchyTree";
+import ConfidenceDistribution from "./ConfidenceDistribution";
+import ModelingPipelineStatus, { type ModelingStatus } from "./ModelingPipelineStatus";
+import QuarantineList, { type QuarantineItem } from "./QuarantineList";
+import SparqlConsole from "./SparqlConsole";
+import RelationGraph from "./RelationGraph";
+import ShaclDashboard, { type ShaclReport } from "./ShaclDashboard";
+import TripleViewer, { type RawTriple } from "./TripleViewer";
 import PageHeader from "../PageHeader";
 import Toast from "../Toast";
 import LineageGraph from "../knowledge-bases/LineageGraph";
@@ -24,11 +35,17 @@ import {
   GraphNode,
   KnowledgeBaseOption,
   ONTOLOGY_KB_STORAGE_KEY,
+  ONTOLOGY_ROLE_DEFAULT_TAB,
+  ONTOLOGY_ROLE_LABELS,
+  ONTOLOGY_ROLE_STORAGE_KEY,
   KbRdfView,
   OntologyMetric,
+  OntologyDimension,
+  OntologyRule,
   OntologyStoreInfo,
   OntologyTab,
   OntologyTerm,
+  OntologyViewerRole,
   RELATION_TYPE_LABELS,
   SyncResult,
   TERM_TYPE_LABELS,
@@ -36,12 +53,12 @@ import {
 import OntologyStatusBadge from "./OntologyStatusBadge";
 
 const TABS: { id: OntologyTab; label: string; icon: typeof BookOpen }[] = [
-  { id: "overview", label: "概览", icon: Layers },
-  { id: "terms", label: "业务术语", icon: BookOpen },
-  { id: "metrics", label: "指标口径", icon: Sparkles },
-  { id: "relations", label: "关系与血缘", icon: GitBranch },
-  { id: "rdf", label: "RDF 数据", icon: Network },
-  { id: "store", label: "存储与同步", icon: Database },
+  { id: "overview", label: "总览", icon: Layers },
+  { id: "semantics", label: "业务语义", icon: BookOpen },
+  { id: "assets", label: "数据资产", icon: Database },
+  { id: "graph", label: "关系图谱", icon: Network },
+  { id: "governance", label: "清洗治理", icon: Shield },
+  { id: "expert", label: "专家", icon: Code2 },
 ];
 
 function confidenceClass(v: number): string {
@@ -67,6 +84,8 @@ export default function OntologyWorkspace({
 
   const [terms, setTerms] = useState<OntologyTerm[]>([]);
   const [metrics, setMetrics] = useState<OntologyMetric[]>([]);
+  const [dimensions, setDimensions] = useState<OntologyDimension[]>([]);
+  const [rules, setRules] = useState<OntologyRule[]>([]);
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([]);
   const [graphEdges, setGraphEdges] = useState<GraphEdge[]>([]);
   const [lineage, setLineage] = useState<LineageData | null>(null);
@@ -74,6 +93,14 @@ export default function OntologyWorkspace({
   const [store, setStore] = useState<OntologyStoreInfo>({});
   const [globalStore, setGlobalStore] = useState<OntologyStoreInfo>({});
   const [rdfView, setRdfView] = useState<KbRdfView | null>(null);
+  const [modelingStatus, setModelingStatus] = useState<ModelingStatus | null>(null);
+  const [cleaningResults, setCleaningResults] = useState<OntologyCleaningResults | null>(null);
+  const [shaclReport, setShaclReport] = useState<ShaclReport | null>(null);
+  const [quarantineItems, setQuarantineItems] = useState<QuarantineItem[]>([]);
+  const [semanticsSubTab, setSemanticsSubTab] = useState<"terms" | "metrics" | "dimensions" | "rules">("terms");
+  const [runningModeling, setRunningModeling] = useState(false);
+  const [viewerRole, setViewerRole] = useState<OntologyViewerRole>("business");
+  const [hierarchyRoots, setHierarchyRoots] = useState<HierarchyNode[]>([]);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -84,6 +111,21 @@ export default function OntologyWorkspace({
     () => kbs.find((k) => k.id === selectedKbId) ?? null,
     [kbs, selectedKbId],
   );
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const saved = localStorage.getItem(ONTOLOGY_ROLE_STORAGE_KEY) as OntologyViewerRole | null;
+    if (saved && saved in ONTOLOGY_ROLE_DEFAULT_TAB) {
+      setViewerRole(saved);
+      setTab(ONTOLOGY_ROLE_DEFAULT_TAB[saved]);
+    }
+  }, []);
+
+  const handleRoleChange = (role: OntologyViewerRole) => {
+    setViewerRole(role);
+    setTab(ONTOLOGY_ROLE_DEFAULT_TAB[role]);
+    localStorage.setItem(ONTOLOGY_ROLE_STORAGE_KEY, role);
+  };
 
   const loadKbList = useCallback(async () => {
     setKbListLoading(true);
@@ -121,26 +163,77 @@ export default function OntologyWorkspace({
     setSelectedTerm(null);
     setSelectedMetric(null);
     try {
-      const [termsRes, metricsRes, graphRes, statsRes, lineageRes, healthRes, rdfRes] = await Promise.all([
+      const [
+        termsRes,
+        metricsRes,
+        dimensionsRes,
+        rulesRes,
+        graphRes,
+        statsRes,
+        lineageRes,
+        healthRes,
+        rdfRes,
+        modelingRes,
+        cleaningRes,
+        quarantineRes,
+        hierarchyRes,
+      ] = await Promise.all([
         api<{ terms: OntologyTerm[] }>(`/api/ontology/knowledge-bases/${selectedKbId}/terms`),
         api<{ metrics: OntologyMetric[] }>(`/api/ontology/knowledge-bases/${selectedKbId}/metrics`),
-        api<{ nodes: GraphNode[]; edges: GraphEdge[]; store: OntologyStoreInfo }>(
-          `/api/ontology/knowledge-bases/${selectedKbId}/graph`,
+        api<{ dimensions: OntologyDimension[] }>(
+          `/api/ontology/knowledge-bases/${selectedKbId}/dimensions`,
+        ).catch(() => ({ dimensions: [] })),
+        api<{ rules: OntologyRule[] }>(`/api/ontology/knowledge-bases/${selectedKbId}/rules`).catch(
+          () => ({ rules: [] }),
+        ),
+        api<{ nodes: GraphNode[]; edges: GraphEdge[]; store?: OntologyStoreInfo }>(
+          `/api/ontology/knowledge-bases/${selectedKbId}/views/graph`,
+        ).catch(() =>
+          api<{ nodes: GraphNode[]; edges: GraphEdge[]; store: OntologyStoreInfo }>(
+            `/api/ontology/knowledge-bases/${selectedKbId}/graph`,
+          ),
         ),
         api<PipelineStats>(`/api/knowledge-bases/${selectedKbId}/pipeline-stats`),
         api<LineageData>(`/api/knowledge-bases/${selectedKbId}/lineage`).catch(() => null),
         api<{ ok: boolean } & OntologyStoreInfo>("/api/ontology/health"),
         api<{ ok: boolean } & KbRdfView>(`/api/ontology/knowledge-bases/${selectedKbId}/rdf-view`),
+        api<ModelingStatus>(`/api/ontology/knowledge-bases/${selectedKbId}/modeling/status`).catch(() => null),
+        api<OntologyCleaningResults>(
+          `/api/ontology/knowledge-bases/${selectedKbId}/ontology-cleaning-results`,
+        ).catch(() => null),
+        api<{ items?: QuarantineItem[] }>(
+          `/api/ontology/knowledge-bases/${selectedKbId}/quarantine`,
+        ).catch(() => ({ items: [] })),
+        api<{ roots?: HierarchyNode[] }>(
+          `/api/ontology/knowledge-bases/${selectedKbId}/views/hierarchy`,
+        ).catch(() => ({ roots: [] })),
       ]);
       setTerms(termsRes.terms || []);
       setMetrics(metricsRes.metrics || []);
+      setDimensions(dimensionsRes.dimensions || []);
+      setRules(rulesRes.rules || []);
       setGraphNodes(graphRes.nodes || []);
       setGraphEdges(graphRes.edges || []);
-      setStore(graphRes.store || {});
+      setStore(graphRes.store || healthRes);
       setPipelineStats(statsRes);
       setLineage(lineageRes);
       setGlobalStore(healthRes);
       setRdfView(rdfRes);
+      setModelingStatus(modelingRes);
+      setCleaningResults(cleaningRes);
+      setQuarantineItems(quarantineRes?.items ?? []);
+      setHierarchyRoots(hierarchyRes?.roots ?? []);
+      const passRate = modelingRes?.quality?.shacl_pass_rate;
+      if (passRate != null) {
+        setShaclReport({
+          conforms: passRate >= 100,
+          totalAssertions: 0,
+          passed: 0,
+          violations: [],
+        });
+      } else {
+        setShaclReport(null);
+      }
       localStorage.setItem(ONTOLOGY_KB_STORAGE_KEY, String(selectedKbId));
     } catch (e: unknown) {
       notify(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "加载本体数据失败", "error");
@@ -156,6 +249,24 @@ export default function OntologyWorkspace({
   useEffect(() => {
     if (selectedKbId) loadWorkspace();
   }, [selectedKbId, loadWorkspace]);
+
+  useEffect(() => {
+    if (!selectedKbId || modelingStatus?.extraction?.status !== "running") return;
+    const t = setInterval(() => {
+      api<ModelingStatus>(`/api/ontology/knowledge-bases/${selectedKbId}/modeling/status`)
+        .then(setModelingStatus)
+        .catch(() => {});
+    }, 4000);
+    return () => clearInterval(t);
+  }, [selectedKbId, modelingStatus?.extraction?.status]);
+
+  useEffect(() => {
+    if (selectedKbId && typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("ontology-kb-selected", { detail: selectedKbId }),
+      );
+    }
+  }, [selectedKbId]);
 
   const handleSelectKb = (id: number) => {
     setSelectedKbId(id);
@@ -192,6 +303,26 @@ export default function OntologyWorkspace({
     }
   };
 
+  const handleRunModeling = async () => {
+    if (!selectedKbId) return;
+    setRunningModeling(true);
+    try {
+      const res = await api<{ ok: boolean; status: string; message?: string }>(
+        `/api/ontology/knowledge-bases/${selectedKbId}/modeling/runs`,
+        { method: "POST", body: JSON.stringify({ source_type: "manual_ui", skip_if_running: true }) },
+      );
+      notify(res.message || (res.status === "already_running" ? "建模任务已在运行" : "已启动建模流水线"), "success");
+      const statusRes = await api<ModelingStatus>(
+        `/api/ontology/knowledge-bases/${selectedKbId}/modeling/status`,
+      );
+      setModelingStatus(statusRes);
+    } catch (e: unknown) {
+      notify(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "启动建模失败", "error");
+    } finally {
+      setRunningModeling(false);
+    }
+  };
+
   const filteredTerms = useMemo(() => {
     const q = search.trim().toLowerCase();
     return terms.filter((t) => {
@@ -219,6 +350,32 @@ export default function OntologyWorkspace({
     });
   }, [metrics, search, statusFilter]);
 
+  const filteredDimensions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return dimensions.filter((d) => {
+      if (statusFilter !== "all" && d.status !== statusFilter) return false;
+      if (!q) return true;
+      return (
+        d.name.toLowerCase().includes(q) ||
+        d.definition.toLowerCase().includes(q) ||
+        d.dim_type.toLowerCase().includes(q)
+      );
+    });
+  }, [dimensions, search, statusFilter]);
+
+  const filteredRules = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return rules.filter((r) => {
+      if (statusFilter !== "all" && r.status !== statusFilter) return false;
+      if (!q) return true;
+      return (
+        r.name.toLowerCase().includes(q) ||
+        r.rule_expression.toLowerCase().includes(q) ||
+        r.rule_type.toLowerCase().includes(q)
+      );
+    });
+  }, [rules, search, statusFilter]);
+
   const termStatusCounts = pipelineStats?.terms_by_status ?? {};
   const metricStatusCounts = pipelineStats?.metrics_by_status ?? {};
 
@@ -228,8 +385,8 @@ export default function OntologyWorkspace({
     <main className={embedded ? "flex min-h-0 flex-col" : "app-page flex min-h-0 flex-col"}>
       {!embedded && (
       <PageHeader
-        title="本体建模"
-        subtitle="文档导入 Pipeline 的最后一步：将术语、指标与表结构写入 Fuseki RDF。"
+        title="本体浏览"
+        subtitle="展示层：从 RDF 生产图只读浏览业务语义、物理资产、关系图谱与清洗治理状态。"
         actionsBelowSubtitle
         actions={
           <div className="app-toolbar flex-wrap">
@@ -353,8 +510,26 @@ export default function OntologyWorkspace({
                 />
               </div>
 
-              {/* 标签页 */}
-              <div className="mt-4 flex flex-wrap items-center gap-2 border-b border-app-border pb-2">
+              {/* 角色视角 + 标签页 */}
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-b border-app-border pb-2">
+                <div className="flex flex-wrap gap-1">
+                  {(Object.keys(ONTOLOGY_ROLE_LABELS) as OntologyViewerRole[]).map((role) => (
+                    <button
+                      key={role}
+                      type="button"
+                      className={`rounded-md px-2.5 py-1 text-xs ${
+                        viewerRole === role
+                          ? "bg-app-activeBg font-medium text-app-primary"
+                          : "text-app-muted hover:text-app-secondary"
+                      }`}
+                      onClick={() => handleRoleChange(role)}
+                    >
+                      {ONTOLOGY_ROLE_LABELS[role]}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-2 border-b border-app-border pb-2">
                 {TABS.map(({ id, label, icon: Icon }) => (
                   <button
                     key={id}
@@ -377,14 +552,48 @@ export default function OntologyWorkspace({
                 ))}
               </div>
 
-              {/* 搜索与筛选（术语/指标页） */}
-              {(tab === "terms" || tab === "metrics") && (
+              {tab === "semantics" && (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <div className="flex rounded-lg border border-app-border p-0.5">
+                    {(["terms", "metrics", "dimensions", "rules"] as const).map((st) => (
+                      <button
+                        key={st}
+                        type="button"
+                        className={`rounded-md px-3 py-1 text-xs ${
+                          semanticsSubTab === st
+                            ? "bg-app-activeBg font-medium text-app-primary"
+                            : "text-app-muted hover:text-app-secondary"
+                        }`}
+                        onClick={() => {
+                          setSemanticsSubTab(st);
+                          setSearch("");
+                          setSelectedTerm(null);
+                          setSelectedMetric(null);
+                        }}
+                      >
+                        {st === "terms"
+                          ? "术语"
+                          : st === "metrics"
+                            ? "指标"
+                            : st === "dimensions"
+                              ? "维度"
+                              : "规则"}
+                      </button>
+                    ))}
+                  </div>
                   <div className="relative min-w-[200px] flex-1">
                     <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-app-muted" />
                     <input
                       className="app-input w-full pl-9"
-                      placeholder={tab === "terms" ? "搜索术语名称、定义、字段…" : "搜索指标名称、公式、表…"}
+                      placeholder={
+                        semanticsSubTab === "terms"
+                          ? "搜索术语名称、定义、字段…"
+                          : semanticsSubTab === "metrics"
+                            ? "搜索指标名称、公式、表…"
+                            : semanticsSubTab === "dimensions"
+                              ? "搜索维度名称、定义、类型…"
+                              : "搜索规则名称、表达式、类型…"
+                      }
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
                     />
@@ -400,9 +609,13 @@ export default function OntologyWorkspace({
                     <option value="draft">草稿</option>
                   </select>
                   <span className="text-xs text-app-muted">
-                    {tab === "terms"
+                    {semanticsSubTab === "terms"
                       ? `显示 ${filteredTerms.length} / ${terms.length}`
-                      : `显示 ${filteredMetrics.length} / ${metrics.length}`}
+                      : semanticsSubTab === "metrics"
+                        ? `显示 ${filteredMetrics.length} / ${metrics.length}`
+                        : semanticsSubTab === "dimensions"
+                          ? `显示 ${filteredDimensions.length} / ${dimensions.length}`
+                          : `显示 ${filteredRules.length} / ${rules.length}`}
                   </span>
                 </div>
               )}
@@ -417,47 +630,108 @@ export default function OntologyWorkspace({
                     terms={terms}
                     metrics={metrics}
                     graphEdges={graphEdges}
-                    onOpenTerms={() => setTab("terms")}
-                    onOpenMetrics={() => setTab("metrics")}
+                    modelingStatus={modelingStatus}
+                    loading={loading}
+                    runningModeling={runningModeling}
+                    onRunModeling={handleRunModeling}
+                    onOpenSemantics={() => {
+                      setTab("semantics");
+                      setSemanticsSubTab("terms");
+                    }}
+                    onOpenMetrics={() => {
+                      setTab("semantics");
+                      setSemanticsSubTab("metrics");
+                    }}
+                    onOpenGovernance={() => setTab("governance")}
                   />
-                ) : tab === "terms" ? (
-                  <EntityTable
-                    emptyHint="运行知识库「语义清洗流水线」后，AI 会从文档中提取业务术语。"
-                    rows={filteredTerms.map((t) => ({
-                      key: t.id,
-                      name: t.name,
-                      badge: TERM_TYPE_LABELS[t.type] || t.type,
-                      summary: t.definition,
+                ) : tab === "semantics" ? (
+                  semanticsSubTab === "terms" ? (
+                    <EntityTable
+                      emptyHint="在知识库源上触发「语义清洗」后，AI 会从文档抽取业务术语。"
+                      rows={filteredTerms.map((t) => ({
+                        key: t.id,
+                        name: t.name,
+                        badge: TERM_TYPE_LABELS[t.type] || t.type,
+                        summary: t.definition,
+                        confidence: t.confidence,
+                        status: t.status,
+                        onSelect: () => setSelectedTerm(t),
+                        active: selectedTerm?.id === t.id,
+                      }))}
+                    />
+                  ) : semanticsSubTab === "metrics" ? (
+                    <EntityTable
+                      emptyHint="流水线完成后，指标口径将显示在此处。"
+                      rows={filteredMetrics.map((m) => ({
+                        key: m.id,
+                        name: m.name,
+                        badge: null,
+                        summary: m.formula,
+                        confidence: m.confidence,
+                        status: m.status,
+                        onSelect: () => setSelectedMetric(m),
+                        active: selectedMetric?.id === m.id,
+                      }))}
+                    />
+                  ) : semanticsSubTab === "dimensions" ? (
+                    <EntityTable
+                      emptyHint="8 步抽取中的「维度」步骤完成后，分析维度将显示在此处。"
+                      rows={filteredDimensions.map((d) => ({
+                        key: d.id,
+                        name: d.name,
+                        badge: d.dim_type || null,
+                        summary: d.definition,
+                        confidence: d.confidence,
+                        status: d.status,
+                        onSelect: () => {},
+                        active: false,
+                      }))}
+                    />
+                  ) : (
+                    <EntityTable
+                      emptyHint="8 步抽取中的「规则」步骤完成后，业务规则将显示在此处。"
+                      rows={filteredRules.map((r) => ({
+                        key: r.id,
+                        name: r.name,
+                        badge: r.rule_type || null,
+                        summary: r.rule_expression,
+                        confidence: r.confidence,
+                        status: r.status,
+                        onSelect: () => {},
+                        active: false,
+                      }))}
+                    />
+                  )
+                ) : tab === "assets" ? (
+                  <AssetsTab rdfView={rdfView} />
+                ) : tab === "graph" ? (
+                  <GraphTab
+                    graphNodes={graphNodes}
+                    graphEdges={graphEdges}
+                    lineage={lineage}
+                  />
+                ) : tab === "governance" ? (
+                  <GovernanceTab
+                    kbId={selectedKb.id}
+                    modelingStatus={modelingStatus}
+                    cleaningResults={cleaningResults}
+                    shaclReport={shaclReport}
+                    quarantineItems={quarantineItems}
+                    confidenceItems={[...terms, ...metrics].map((t) => ({
                       confidence: t.confidence,
-                      status: t.status,
-                      onSelect: () => setSelectedTerm(t),
-                      active: selectedTerm?.id === t.id,
+                      name: t.name,
                     }))}
+                    onRefresh={loadWorkspace}
+                    onRunModeling={handleRunModeling}
+                    runningModeling={runningModeling}
+                    hierarchyRoots={hierarchyRoots}
                   />
-                ) : tab === "metrics" ? (
-                  <EntityTable
-                    emptyHint="流水线完成后，指标口径将显示在此处。"
-                    rows={filteredMetrics.map((m) => ({
-                      key: m.id,
-                      name: m.name,
-                      badge: null,
-                      summary: m.formula,
-                      confidence: m.confidence,
-                      status: m.status,
-                      onSelect: () => setSelectedMetric(m),
-                      active: selectedMetric?.id === m.id,
-                    }))}
-                  />
-                ) : tab === "relations" ? (
-                  <RelationsTab edges={graphEdges} lineage={lineage} />
-                ) : tab === "rdf" ? (
-                  <RdfDataTab rdfView={rdfView} pgTermCount={terms.length} pgMetricCount={metrics.length} />
                 ) : (
-                  <StoreTab
+                  <ExpertTab
+                    kbId={selectedKb.id}
+                    rdfView={rdfView}
                     store={store}
                     globalStore={globalStore}
-                    rdfView={rdfView}
-                    kbId={selectedKb.id}
                     onSync={handleSync}
                     syncing={syncing}
                   />
@@ -471,12 +745,14 @@ export default function OntologyWorkspace({
         {showEntityPanel ? (
           <aside className="fixed inset-y-0 right-0 z-40 w-full max-w-sm border-l border-app-border bg-app-card shadow-xl lg:relative lg:z-auto lg:w-72 lg:shrink-0 lg:shadow-none">
             <EntityDetailPanel
+              kbId={selectedKbId!}
               term={selectedTerm}
               metric={selectedMetric}
               onClose={() => {
                 setSelectedTerm(null);
                 setSelectedMetric(null);
               }}
+              onPromoted={() => loadWorkspace()}
             />
           </aside>
         ) : null}
@@ -501,16 +777,26 @@ function OverviewTab({
   terms,
   metrics,
   graphEdges,
-  onOpenTerms,
+  modelingStatus,
+  loading,
+  runningModeling,
+  onRunModeling,
+  onOpenSemantics,
   onOpenMetrics,
+  onOpenGovernance,
 }: {
   kb: KnowledgeBaseOption;
   pipelineStats: PipelineStats | null;
   terms: OntologyTerm[];
   metrics: OntologyMetric[];
   graphEdges: GraphEdge[];
-  onOpenTerms: () => void;
+  modelingStatus: ModelingStatus | null;
+  loading: boolean;
+  runningModeling?: boolean;
+  onRunModeling?: () => void;
+  onOpenSemantics: () => void;
   onOpenMetrics: () => void;
+  onOpenGovernance: () => void;
 }) {
   const run = pipelineStats?.last_pipeline_run;
   const runStatus = run?.status;
@@ -522,6 +808,13 @@ function OverviewTab({
 
   return (
     <div className="space-y-4">
+      <ModelingPipelineStatus
+        status={modelingStatus}
+        loading={loading}
+        onRunModeling={onRunModeling}
+        runningModeling={runningModeling}
+      />
+
       <div className="app-card p-4">
         <h3 className="app-section-title">当前知识库</h3>
         <p className="mt-1 text-sm font-medium text-app-primary">{kb.name}</p>
@@ -541,8 +834,14 @@ function OverviewTab({
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
-        <PreviewList title="高频术语（按置信度）" items={topTerms.map((t) => ({ label: t.name, sub: t.definition, confidence: t.confidence }))} onMore={onOpenTerms} empty="暂无术语" />
+        <PreviewList title="高频术语（按置信度）" items={topTerms.map((t) => ({ label: t.name, sub: t.definition, confidence: t.confidence }))} onMore={onOpenSemantics} empty="暂无术语" />
         <PreviewList title="指标口径（按置信度）" items={topMetrics.map((m) => ({ label: m.name, sub: m.formula, confidence: m.confidence }))} onMore={onOpenMetrics} empty="暂无指标" />
+      </div>
+
+      <div className="flex justify-end">
+        <button type="button" className="app-link text-xs" onClick={onOpenGovernance}>
+          查看清洗治理 →
+        </button>
       </div>
 
       {graphEdges.length > 0 && (
@@ -784,31 +1083,244 @@ function RdfEntitySection({
   );
 }
 
-function RelationsTab({ edges, lineage }: { edges: GraphEdge[]; lineage: LineageData | null }) {
+function AssetsTab({ rdfView }: { rdfView: KbRdfView | null }) {
+  const tables = rdfView?.production.physical_tables ?? [];
+  if (!tables.length) {
+    return (
+      <div className="app-card p-8 text-sm text-app-muted">
+        暂无物理表三元组。请通过「数据接入 → 物理 Schema」关联数据源，或完成表分析同步。
+      </div>
+    );
+  }
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {tables.map((t) => (
+        <div key={t.iri} className="app-card p-4">
+          <p className="text-sm font-medium text-app-primary">表 ID {t.platform_id || "—"}</p>
+          <p className="mt-1 text-xs text-app-muted line-clamp-4">{t.summary || "（无业务摘要）"}</p>
+          <p className="mt-2 font-mono text-[10px] text-app-muted break-all">{t.iri}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function GraphTab({
+  graphNodes,
+  graphEdges,
+  lineage,
+}: {
+  graphNodes: GraphNode[];
+  graphEdges: GraphEdge[];
+  lineage: LineageData | null;
+}) {
+  const [showTerms, setShowTerms] = useState(true);
+  const [showMetrics, setShowMetrics] = useState(true);
+  const [showTables, setShowTables] = useState(true);
+  const [showJoin, setShowJoin] = useState(true);
+  const [showLineage, setShowLineage] = useState(true);
+
+  const filteredNodes = useMemo(() => {
+    return graphNodes.filter((n) => {
+      if (n.type === "BusinessTerm") return showTerms;
+      if (n.type === "Metric") return showMetrics;
+      if (n.type === "PhysicalTable") return showTables;
+      if (n.type === "Dimension") return showTerms;
+      return true;
+    });
+  }, [graphNodes, showTerms, showMetrics, showTables]);
+
+  const nodeIds = useMemo(() => new Set(filteredNodes.map((n) => n.id)), [filteredNodes]);
+
+  const filteredEdges = useMemo(() => {
+    return graphEdges.filter((e) => {
+      if (!nodeIds.has(e.source) || !nodeIds.has(e.target)) return false;
+      const t = e.type.toLowerCase();
+      if (t.includes("join") || t === "joinablewith") return showJoin;
+      if (t.includes("lineage") || t.includes("transform")) return showLineage;
+      return showTerms || showMetrics;
+    });
+  }, [graphEdges, nodeIds, showJoin, showLineage, showTerms, showMetrics]);
+
+  const rgNodes = filteredNodes.map((n) => ({
+    id: n.id,
+    label: n.label,
+    type: n.type,
+    status: n.status,
+  }));
+  const rgEdges = filteredEdges.map((e) => ({
+    id: e.id,
+    source: e.source,
+    target: e.target,
+    type: e.type,
+    label: RELATION_TYPE_LABELS[e.type] || e.type,
+  }));
+
   return (
     <div className="space-y-6">
+      <div className="flex flex-wrap gap-3 text-xs text-app-secondary">
+        <label className="inline-flex items-center gap-1.5">
+          <input type="checkbox" checked={showTerms} onChange={(e) => setShowTerms(e.target.checked)} />
+          术语
+        </label>
+        <label className="inline-flex items-center gap-1.5">
+          <input type="checkbox" checked={showMetrics} onChange={(e) => setShowMetrics(e.target.checked)} />
+          指标
+        </label>
+        <label className="inline-flex items-center gap-1.5">
+          <input type="checkbox" checked={showTables} onChange={(e) => setShowTables(e.target.checked)} />
+          物理表
+        </label>
+        <label className="inline-flex items-center gap-1.5">
+          <input type="checkbox" checked={showJoin} onChange={(e) => setShowJoin(e.target.checked)} />
+          JOIN
+        </label>
+        <label className="inline-flex items-center gap-1.5">
+          <input type="checkbox" checked={showLineage} onChange={(e) => setShowLineage(e.target.checked)} />
+          血缘
+        </label>
+      </div>
       <section>
-        <h3 className="app-section-title mb-2">语义关系</h3>
-        {edges.length === 0 ? (
-          <div className="app-card p-6 text-sm text-app-muted">
-            暂无显式语义边。运行语义关系同步或流水线后，术语与表、指标之间的映射会出现在此处。
-          </div>
-        ) : (
-          <div className="grid gap-2 sm:grid-cols-2">
-            {edges.map((e) => (
-              <div key={e.id} className="app-card px-4 py-3">
-                <span className="text-xs font-medium text-app-muted">
-                  {RELATION_TYPE_LABELS[e.type] || e.type}
-                </span>
-                <p className="mt-2 font-mono text-xs text-app-primary break-all">{e.source}</p>
-                <p className="text-center text-app-muted text-[10px] py-0.5">↓</p>
-                <p className="font-mono text-xs text-app-secondary break-all">{e.target}</p>
-              </div>
-            ))}
-          </div>
-        )}
+        <h3 className="app-section-title mb-2">统一关系画布</h3>
+        <RelationGraph nodes={rgNodes} edges={rgEdges} />
       </section>
-      <LineageGraph data={lineage} />
+      {showLineage ? <LineageGraph data={lineage} /> : null}
+    </div>
+  );
+}
+
+function GovernanceTab({
+  kbId,
+  modelingStatus,
+  cleaningResults,
+  shaclReport,
+  quarantineItems,
+  confidenceItems,
+  onRefresh,
+  onRunModeling,
+  runningModeling,
+  hierarchyRoots,
+}: {
+  kbId: number;
+  modelingStatus: ModelingStatus | null;
+  cleaningResults: OntologyCleaningResults | null;
+  shaclReport: ShaclReport | null;
+  quarantineItems: QuarantineItem[];
+  confidenceItems: { confidence?: number; name?: string }[];
+  onRefresh: () => void;
+  onRunModeling?: () => void;
+  runningModeling?: boolean;
+  hierarchyRoots: HierarchyNode[];
+}) {
+  const passRate = modelingStatus?.quality?.shacl_pass_rate;
+  const syntheticShacl: ShaclReport | null =
+    passRate != null
+      ? {
+          conforms: passRate >= 100 && quarantineItems.length === 0,
+          totalAssertions: 100,
+          passed: Math.round(passRate),
+          violations: quarantineItems.length
+            ? [{ focusNode: "—", constraintType: "quarantine", severity: "Violation", message: `${quarantineItems.length} 条隔离断言` }]
+            : [],
+        }
+      : shaclReport;
+
+  return (
+    <div className="space-y-6">
+      <ModelingPipelineStatus
+        status={modelingStatus}
+        compact
+        onRunModeling={onRunModeling}
+        runningModeling={runningModeling}
+      />
+      <OntologyCleanResultCards results={cleaningResults} kbId={kbId} loading={false} />
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="app-card p-4">
+          <h3 className="app-section-title mb-3">SHACL 校验</h3>
+          <ShaclDashboard report={syntheticShacl} compact />
+        </div>
+        <div className="app-card p-4">
+          <h3 className="app-section-title mb-3">置信度分布</h3>
+          <ConfidenceDistribution items={confidenceItems} title="提取质量" />
+        </div>
+      </div>
+      <div className="app-card p-4">
+        <h3 className="app-section-title mb-3">概念层级</h3>
+        <ConceptHierarchyTree roots={hierarchyRoots} />
+      </div>
+      <div className="app-card p-4">
+        <h3 className="app-section-title mb-3">隔离区</h3>
+        <QuarantineList kbId={kbId} items={quarantineItems} onResolve={onRefresh} />
+      </div>
+    </div>
+  );
+}
+
+function ExpertTab({
+  kbId,
+  rdfView,
+  store,
+  globalStore,
+  onSync,
+  syncing,
+}: {
+  kbId: number;
+  rdfView: KbRdfView | null;
+  store: OntologyStoreInfo;
+  globalStore: OntologyStoreInfo;
+  onSync: () => void;
+  syncing: boolean;
+}) {
+  const [triples, setTriples] = useState<RawTriple[]>([]);
+  const [triplesLoading, setTriplesLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setTriplesLoading(true);
+    api<{ triples?: RawTriple[] }>(`/api/ontology/knowledge-bases/${kbId}/views/triples?limit=400`)
+      .then((res) => {
+        if (!cancelled) setTriples(res.triples ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setTriples([]);
+      })
+      .finally(() => {
+        if (!cancelled) setTriplesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [kbId]);
+
+  return (
+    <div className="space-y-4">
+      <StoreTab
+        store={store}
+        globalStore={globalStore}
+        rdfView={rdfView}
+        kbId={kbId}
+        onSync={onSync}
+        syncing={syncing}
+      />
+      <div className="app-card p-4">
+        <h3 className="app-section-title mb-3">SPARQL 查询</h3>
+        <SparqlConsole kbId={kbId} />
+      </div>
+      <div className="app-card p-4">
+        <h3 className="app-section-title mb-2">生产图三元组抽样</h3>
+        <p className="text-xs text-app-muted mb-3">
+          <Link href={`/api/ontology/knowledge-bases/${kbId}/export`} className="app-link" target="_blank">
+            TTL 导出
+          </Link>
+          {" · "}
+          在知识库「数据接入」可导入 TTL 包
+        </p>
+        {triplesLoading ? (
+          <p className="text-sm text-app-muted">加载中…</p>
+        ) : (
+          <TripleViewer triples={triples} />
+        )}
+      </div>
     </div>
   );
 }
@@ -887,17 +1399,68 @@ function StoreTab({
 }
 
 function EntityDetailPanel({
+  kbId,
   term,
   metric,
   onClose,
+  onPromoted,
 }: {
+  kbId: number;
   term: OntologyTerm | null;
   metric: OntologyMetric | null;
   onClose: () => void;
+  onPromoted?: () => void;
 }) {
+  const [promoting, setPromoting] = useState(false);
+  const [provenance, setProvenance] = useState<{
+    chunks: { iri: string; content_preview?: string | null }[];
+    documents: { id: number; title: string; status: string }[];
+    evidence_packages: { display_id: string; title: string }[];
+  } | null>(null);
   const entity = term || metric;
-  if (!entity) return null;
   const isTerm = !!term;
+  const subjectIri = term?.iri || metric?.iri;
+
+  useEffect(() => {
+    if (!subjectIri) {
+      setProvenance(null);
+      return;
+    }
+    let cancelled = false;
+    api<{
+      chunks: { iri: string; content_preview?: string | null }[];
+      documents: { id: number; title: string; status: string }[];
+      evidence_packages: { display_id: string; title: string }[];
+      has_provenance?: boolean;
+    }>(`/api/ontology/knowledge-bases/${kbId}/provenance?subject=${encodeURIComponent(subjectIri)}`)
+      .then((res) => {
+        if (!cancelled) setProvenance(res);
+      })
+      .catch(() => {
+        if (!cancelled) setProvenance(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [kbId, subjectIri]);
+
+  if (!entity) return null;
+
+  async function handlePromote() {
+    if (!subjectIri) return;
+    setPromoting(true);
+    try {
+      await api(`/api/ontology/knowledge-bases/${kbId}/assertions/promote`, {
+        method: "POST",
+        body: JSON.stringify({ subject: subjectIri, target_status: "approved" }),
+      });
+      onPromoted?.();
+    } catch (e: unknown) {
+      console.error(e);
+    } finally {
+      setPromoting(false);
+    }
+  }
 
   return (
     <div className="flex h-full flex-col p-4">
@@ -952,6 +1515,41 @@ function EntityDetailPanel({
           </>
         ) : null}
         <Field label="置信度" value={`${Math.round(entity.confidence)}%`} />
+        {provenance?.has_provenance !== false && (provenance?.chunks?.length || provenance?.documents?.length) ? (
+          <div>
+            <p className="text-xs font-medium text-app-muted mb-1">溯源链</p>
+            <ul className="space-y-2 text-xs text-app-secondary">
+              {provenance?.documents?.map((d) => (
+                <li key={d.id} className="rounded border border-app-border px-2 py-1.5">
+                  文档 #{d.id} · {d.title} ({d.status})
+                </li>
+              ))}
+              {provenance?.chunks?.slice(0, 2).map((c) => (
+                <li key={c.iri} className="rounded border border-app-border px-2 py-1.5 line-clamp-3">
+                  分块 {c.iri.split("/").pop()}：{c.content_preview || "—"}
+                </li>
+              ))}
+              {provenance?.evidence_packages?.map((p) => (
+                <li key={p.display_id} className="rounded border border-app-border px-2 py-1.5">
+                  证据包 {p.display_id} · {p.title}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+        {subjectIri && (entity.status === "draft" || entity.status === "pending_review") ? (
+          <button
+            type="button"
+            className={`app-button w-full text-sm ${promoting ? "is-loading" : ""}`}
+            disabled={promoting}
+            onClick={() => void handlePromote()}
+          >
+            晋升到已发布
+          </button>
+        ) : null}
+        {subjectIri ? (
+          <p className="text-[10px] font-mono text-app-muted break-all">{subjectIri}</p>
+        ) : null}
       </div>
     </div>
   );

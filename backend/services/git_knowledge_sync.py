@@ -505,7 +505,12 @@ def run_git_source_sync(db: Session, source_id: int) -> dict[str, Any]:
         total = created + updated
         if total > 0:
             _trigger_codebase_analysis(kb_id)
-            _trigger_semantic_extraction(kb_id)
+            try:
+                from services.ingestion.events import emit
+
+                emit("git.sync.completed", kb_id=kb_id, source_id=source_id, files=total)
+            except Exception:
+                _trigger_semantic_extraction(kb_id)
         if total == 0 and deleted == 0:
             msg = "所有文件均为最新，无需同步。"
         else:

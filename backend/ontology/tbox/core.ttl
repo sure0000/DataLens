@@ -1,0 +1,542 @@
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
+@prefix schema:  <https://schema.org/> .
+@prefix prov:    <http://www.w3.org/ns/prov#> .
+@prefix dl:      <https://datalens.local/ontology/> .
+
+# ═══════════════════════════════════════════════════════════════
+# DataLens Core Ontology — TBox (Schema Layer)
+#
+# Four-layer architecture:
+#   Layer 0: Enterprise (enterprise.ttl)
+#   Layer 1: Domain (domain/{id})
+#   Layer 2: Application / KB ABox (kb/{id})
+#   Layer 3: Inference closure (inferred/{scope})
+#
+# This file defines:
+#   - All OWL classes
+#   - Object properties (relationships)
+#   - Datatype properties (attributes)
+#   - Property characteristics (transitive, symmetric, functional)
+#   - Class disjointness axioms
+#   - rdfs:domain / rdfs:range constraints
+# ═══════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────
+# 1. CLASS HIERARCHY
+# ─────────────────────────────────────────────────────────────
+
+# --- Top-level organizational classes ---
+
+dl:ConceptScheme a owl:Class ;
+  rdfs:subClassOf skos:ConceptScheme ;
+  rdfs:label "概念体系"@zh , "Concept Scheme"@en ;
+  rdfs:comment "领域级别的 SKOS 概念体系，组织该领域内所有 BusinessConcept"@zh .
+
+dl:BusinessDomain a owl:Class ;
+  rdfs:label "业务域"@zh , "Business Domain"@en ;
+  rdfs:comment "企业的业务划分单元，如财务域、运营域、营销域"@zh .
+
+# --- Business concept hierarchy (TBox core) ---
+
+dl:BusinessConcept a owl:Class ;
+  rdfs:subClassOf skos:Concept ;
+  rdfs:label "业务概念"@zh , "Business Concept"@en ;
+  rdfs:comment "所有业务语义实体的抽象基类 — 术语、指标、维度、规则的上位"@zh .
+
+dl:BusinessTerm a owl:Class ;
+  rdfs:subClassOf dl:BusinessConcept ;
+  rdfs:label "业务术语"@zh , "Business Term"@en ;
+  rdfs:comment "企业对数据字段的统一业务命名与定义，如 GMV、客单价、留存率"@zh .
+
+dl:Metric a owl:Class ;
+  rdfs:subClassOf dl:BusinessConcept ;
+  rdfs:label "指标"@zh , "Metric"@en ;
+  rdfs:comment "可量化、可计算、可聚合的业务度量，带有计算公式与统计口径"@zh .
+
+dl:Dimension a owl:Class ;
+  rdfs:subClassOf dl:BusinessConcept ;
+  rdfs:label "维度"@zh , "Dimension"@en ;
+  rdfs:comment "用于分组、筛选、下钻的分析维度 — 时间、地理、品类、渠道"@zh .
+
+dl:BusinessRule a owl:Class ;
+  rdfs:subClassOf dl:BusinessConcept ;
+  rdfs:label "业务规则"@zh , "Business Rule"@en ;
+  rdfs:comment "业务约束、校验规则、派生逻辑的形式化表达"@zh .
+
+# --- Data asset hierarchy ---
+
+dl:DataAsset a owl:Class ;
+  rdfs:label "数据资产"@zh , "Data Asset"@en ;
+  rdfs:comment "所有可被查询、分析、治理的数据对象的抽象基类"@zh .
+
+dl:PhysicalTable a owl:Class ;
+  rdfs:subClassOf dl:DataAsset , schema:Table ;
+  rdfs:label "物理表"@zh , "Physical Table"@en ;
+  rdfs:comment "数据库中的物理表或视图，包含列、行数、业务摘要等元信息"@zh .
+
+dl:PhysicalColumn a owl:Class ;
+  rdfs:subClassOf dl:DataAsset , schema:PropertyValue ;
+  rdfs:label "物理列"@zh , "Physical Column"@en ;
+  rdfs:comment "物理表中的列，含语义类型、语义描述、数据类型"@zh .
+
+dl:View a owl:Class ;
+  rdfs:subClassOf dl:DataAsset ;
+  rdfs:label "逻辑视图"@zh , "Logical View"@en ;
+  rdfs:comment "由多表 JOIN / 聚合构成的逻辑视图，可以物化也可以动态查询"@zh .
+
+dl:DataSource a owl:Class ;
+  rdfs:label "数据源"@zh , "Data Source"@en ;
+  rdfs:comment "外部数据库连接配置，数据资产的物理归属"@zh .
+
+# --- Knowledge management classes ---
+
+dl:KnowledgeBase a owl:Class ;
+  rdfs:label "知识库"@zh , "Knowledge Base"@en ;
+  rdfs:comment "文档、代码、API 文档的语义容器，LLM 提取的术语与指标归属其中"@zh .
+
+dl:Document a owl:Class ;
+  rdfs:label "文档"@zh , "Document"@en ;
+  rdfs:comment "导入知识库的原始文档 — Wiki 页、代码文件、API 规范等"@zh .
+
+dl:DocumentChunk a owl:Class ;
+  rdfs:label "文档片段"@zh , "Document Chunk"@en ;
+  rdfs:comment "文档的分块 — 向量检索与语义提取的最小粒度"@zh .
+
+# --- Relation / provenance classes ---
+
+dl:LineageAssertion a owl:Class ;
+  rdfs:label "血缘断言"@zh , "Lineage Assertion"@en ;
+  rdfs:comment "表间数据流血缘 — 源表→目标表，含字段映射与转换逻辑"@zh .
+
+dl:JoinRelation a owl:Class ;
+  rdfs:label "JOIN 关系"@zh , "Join Relation"@en ;
+  rdfs:comment "两个物理表之间的 JOIN 条件 — 左表、右表、JOIN 键"@zh .
+
+dl:QuarantinedAssertion a owl:Class ;
+  rdfs:label "隔离区断言"@zh , "Quarantined Assertion"@en ;
+  rdfs:comment "未通过 SHACL 校验或实体链接的三元组，暂存隔离区等待人工裁决"@zh .
+
+# ------------------------------------------------------------------
+# 2. CLASS DISJOINTNESS AXIOMS
+# ------------------------------------------------------------------
+
+dl:BusinessTerm  owl:disjointWith  dl:Metric .
+dl:BusinessTerm  owl:disjointWith  dl:Dimension .
+dl:Metric        owl:disjointWith  dl:Dimension .
+dl:BusinessConcept  owl:disjointWith  dl:DataAsset .
+dl:PhysicalTable  owl:disjointWith  dl:BusinessConcept .
+dl:Document      owl:disjointWith  dl:BusinessConcept .
+dl:Document      owl:disjointWith  dl:DataAsset .
+
+# ------------------------------------------------------------------
+# 3. OBJECT PROPERTIES (relationships between individuals)
+# ------------------------------------------------------------------
+
+# --- BusinessConcept → DataAsset mappings ---
+
+dl:mapsToColumn a owl:ObjectProperty ;
+  rdfs:domain dl:BusinessTerm ;
+  rdfs:range dl:PhysicalColumn ;
+  rdfs:label "映射到列"@zh , "maps to column"@en ;
+  rdfs:comment "术语对应到物理表中的具体列"@zh .
+
+dl:computedFromTable a owl:ObjectProperty ;
+  rdfs:domain dl:Metric ;
+  rdfs:range dl:PhysicalTable ;
+  rdfs:label "计算来源表"@zh , "computed from table"@en ;
+  rdfs:comment "指标的计算数据来源 — 该指标从哪个物理表取数"@zh .
+
+dl:aggregatesOver a owl:ObjectProperty ;
+  rdfs:domain dl:Metric ;
+  rdfs:range dl:Dimension ;
+  rdfs:label "聚合维度"@zh , "aggregates over"@en ;
+  rdfs:comment "指标按哪些维度进行聚合 — 如 GMV 按时间、地域"@zh .
+
+# --- Concept-to-concept relationships ---
+
+dl:derivedFrom a owl:ObjectProperty ;
+  rdf:type owl:TransitiveProperty ;
+  rdfs:domain dl:Metric ;
+  rdfs:range dl:Metric ;
+  rdfs:label "派生自"@zh , "derived from"@en ;
+  rdfs:comment "指标派生链 — 如客单价 derivedFrom (GMV, 订单量)"@zh .
+
+dl:dependsOn a owl:ObjectProperty ;
+  rdfs:domain dl:BusinessTerm ;
+  rdfs:range dl:BusinessTerm ;
+  rdfs:label "依赖于"@zh , "depends on"@en ;
+  rdfs:comment "术语间的依赖 — 理解 A 需要先理解 B"@zh .
+
+dl:relatedTo a owl:ObjectProperty ;
+  rdfs:domain dl:BusinessConcept ;
+  rdfs:range dl:BusinessConcept ;
+  rdfs:label "关联到"@zh , "related to"@en ;
+  rdfs:comment "概念间的非层级关联 — 比 skos:related 更语义明确"@zh .
+
+dl:aliasOf a owl:ObjectProperty ;
+  rdfs:subPropertyOf skos:exactMatch ;
+  rdfs:domain dl:BusinessConcept ;
+  rdfs:range dl:BusinessConcept ;
+  rdfs:label "别名"@zh , "alias of"@en .
+
+# --- Table-to-table relationships ---
+
+dl:joinableWith a owl:ObjectProperty ;
+  rdf:type owl:SymmetricProperty ;
+  rdfs:domain dl:PhysicalTable ;
+  rdfs:range dl:PhysicalTable ;
+  rdfs:label "可 JOIN"@zh , "joinable with"@en ;
+  rdfs:comment "两表之间存在 JOIN 条件 — 对称属性"@zh .
+
+dl:transformsFrom a owl:ObjectProperty ;
+  rdf:type owl:TransitiveProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range dl:PhysicalTable ;
+  rdfs:label "血缘来源"@zh , "transforms from"@en ;
+  rdfs:comment "数据血缘 — ODS→DWD→DWS→ADS 的传递链。domain 放宽为 owl:Thing 以允许 LineageAssertion 作为物化节点。"@zh .
+
+# --- Table → Concept references ---
+
+dl:hasMeasure a owl:ObjectProperty ;
+  rdfs:domain dl:PhysicalTable ;
+  rdfs:range dl:Metric ;
+  rdfs:label "含有指标"@zh , "has measure"@en .
+
+dl:hasDimension a owl:ObjectProperty ;
+  rdfs:domain dl:PhysicalTable ;
+  rdfs:range dl:Dimension ;
+  rdfs:label "含有维度"@zh , "has dimension"@en .
+
+# --- Join relation properties ---
+
+dl:leftTable a owl:ObjectProperty ;
+  rdfs:domain dl:JoinRelation ;
+  rdfs:range dl:PhysicalTable ;
+  rdfs:label "左表"@zh , "left table"@en .
+
+dl:rightTable a owl:ObjectProperty ;
+  rdfs:domain dl:JoinRelation ;
+  rdfs:range dl:PhysicalTable ;
+  rdfs:label "右表"@zh , "right table"@en .
+
+# --- Containment / structure ---
+
+schema:isPartOf a owl:ObjectProperty ;
+  rdfs:domain dl:PhysicalColumn ;
+  rdfs:range dl:PhysicalTable ;
+  rdfs:label "属于"@zh , "is part of"@en .
+
+dl:materializedFrom a owl:ObjectProperty ;
+  rdfs:domain dl:View ;
+  rdfs:range dl:PhysicalTable ;
+  rdfs:label "物化自"@zh , "materialized from"@en .
+
+dl:belongsToDataSource a owl:ObjectProperty ;
+  rdfs:domain dl:DataAsset ;
+  rdfs:range dl:DataSource ;
+  rdfs:label "归属数据源"@zh , "belongs to data source"@en .
+
+dl:belongsToDomain a owl:ObjectProperty ;
+  rdf:type owl:FunctionalProperty ;
+  rdfs:domain dl:BusinessConcept ;
+  rdfs:range dl:BusinessDomain ;
+  rdfs:label "归属领域"@zh , "belongs to domain"@en .
+
+# --- Knowledge organization ---
+
+dl:hasSource a owl:ObjectProperty ;
+  rdfs:domain dl:KnowledgeBase ;
+  rdfs:range dl:DataSource ;
+  rdfs:label "关联数据源"@zh .
+
+dl:producesConcept a owl:ObjectProperty ;
+  rdfs:domain dl:KnowledgeBase ;
+  rdfs:range dl:BusinessConcept ;
+  rdfs:label "产出概念"@zh , "produces concept"@en .
+
+dl:documentedBy a owl:ObjectProperty ;
+  rdfs:domain dl:KnowledgeBase ;
+  rdfs:range dl:Document ;
+  rdfs:label "文档来源"@zh .
+
+dl:hasChunk a owl:ObjectProperty ;
+  rdfs:domain dl:Document ;
+  rdfs:range dl:DocumentChunk ;
+  rdfs:label "含有片段"@zh .
+
+dl:partOf a owl:ObjectProperty ;
+  rdfs:domain dl:DocumentChunk ;
+  rdfs:range dl:Document ;
+  rdfs:label "属于文档"@zh ;
+  owl:inverseOf dl:hasChunk .
+
+# --- Provenance ---
+
+dl:groundedBy a owl:ObjectProperty ;
+  rdfs:domain dl:BusinessConcept ;
+  rdfs:range dl:DocumentChunk ;
+  rdfs:label "证据来源"@zh , "grounded by"@en ;
+  rdfs:comment "概念从哪个文档片段提取 — 可溯源至原文"@zh .
+
+dl:asserts a owl:ObjectProperty ;
+  rdfs:domain dl:DocumentChunk ;
+  rdfs:range dl:BusinessConcept ;
+  rdfs:label "断言了"@zh , "asserts"@en ;
+  owl:inverseOf dl:groundedBy .
+
+dl:sourceChunk a owl:ObjectProperty ;
+  rdfs:range owl:Thing ;
+  rdfs:label "来源片段"@zh .
+
+prov:wasDerivedFrom a owl:ObjectProperty ;
+  rdfs:label "来源"@zh , "was derived from"@en .
+
+# --- Quarantine ---
+
+dl:originatedFrom a owl:ObjectProperty ;
+  rdfs:domain dl:QuarantinedAssertion ;
+  rdfs:range owl:Thing ;
+  rdfs:label "来源于"@zh , "originated from"@en .
+
+# ------------------------------------------------------------------
+# 4. DATATYPE PROPERTIES (literal attributes)
+# ------------------------------------------------------------------
+
+# --- BusinessConcept attributes ---
+
+dl:confidence a owl:DatatypeProperty ;
+  rdfs:range xsd:decimal ;
+  rdfs:label "置信度"@zh , "confidence"@en ;
+  rdfs:comment "LLM 提取 / 实体链接的置信度，0.0–100.0"@zh .
+
+dl:approvalStatus a owl:DatatypeProperty ;
+  rdfs:range xsd:string ;
+  rdfs:label "审批状态"@zh , "approval status"@en ;
+  rdfs:comment "approved | pending_review | draft | rejected"@zh .
+
+dl:termType a owl:DatatypeProperty ;
+  rdfs:domain dl:BusinessTerm ;
+  rdfs:range xsd:string ;
+  rdfs:label "术语类型"@zh , "term type"@en ;
+  rdfs:comment "metric | enum | time | dimension | other"@zh .
+
+# --- Metric-specific ---
+
+dl:formula a owl:DatatypeProperty ;
+  rdf:type owl:FunctionalProperty ;
+  rdfs:domain dl:Metric ;
+  rdfs:range xsd:string ;
+  rdfs:label "公式"@zh , "formula"@en .
+
+dl:caliber a owl:DatatypeProperty ;
+  rdfs:domain dl:Metric ;
+  rdfs:range xsd:string ;
+  rdfs:label "口径"@zh , "caliber"@en ;
+  rdfs:comment "指标的统计口径说明 — 分子、分母、去重逻辑、时间窗口"@zh .
+
+# --- Dimension-specific ---
+
+dl:dimensionType a owl:DatatypeProperty ;
+  rdfs:domain dl:Dimension ;
+  rdfs:range xsd:string ;
+  rdfs:label "维度类型"@zh , "dimension type"@en ;
+  rdfs:comment "time | geo | category | hierarchy"@zh .
+
+# --- DataAsset attributes ---
+
+dl:platformId a owl:DatatypeProperty ;
+  rdf:type owl:FunctionalProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range xsd:integer ;
+  rdfs:label "平台 ID"@zh , "platform ID"@en .
+
+dl:businessSummary a owl:DatatypeProperty ;
+  rdfs:domain dl:PhysicalTable ;
+  rdfs:range xsd:string ;
+  rdfs:label "业务摘要"@zh , "business summary"@en .
+
+dl:rowCount a owl:DatatypeProperty ;
+  rdfs:domain dl:PhysicalTable ;
+  rdfs:range xsd:integer ;
+  rdfs:label "行数"@zh , "row count"@en .
+
+dl:sensitivityLevel a owl:DatatypeProperty ;
+  rdfs:domain dl:DataAsset ;
+  rdfs:range xsd:string ;
+  rdfs:label "敏感等级"@zh , "sensitivity level"@en ;
+  rdfs:comment "public | internal | confidential | restricted"@zh .
+
+# --- Column attributes ---
+
+dl:semanticType a owl:DatatypeProperty ;
+  rdfs:domain dl:PhysicalColumn ;
+  rdfs:range xsd:string ;
+  rdfs:label "语义类型"@zh , "semantic type"@en .
+
+dl:semanticDescription a owl:DatatypeProperty ;
+  rdfs:domain dl:PhysicalColumn ;
+  rdfs:range xsd:string ;
+  rdfs:label "语义描述"@zh , "semantic description"@en .
+
+dl:dataType a owl:DatatypeProperty ;
+  rdfs:domain dl:PhysicalColumn ;
+  rdfs:range xsd:string ;
+  rdfs:label "数据类型"@zh , "data type"@en .
+
+dl:nullable a owl:DatatypeProperty ;
+  rdfs:domain dl:PhysicalColumn ;
+  rdfs:range xsd:boolean ;
+  rdfs:label "可为空"@zh , "nullable"@en .
+
+# --- DataSource attributes ---
+
+dl:connectionString a owl:DatatypeProperty ;
+  rdfs:domain dl:DataSource ;
+  rdfs:range xsd:string ;
+  rdfs:label "连接串"@zh .
+
+dl:sourceType a owl:DatatypeProperty ;
+  rdfs:range xsd:string ;
+  rdfs:label "来源类型"@zh , "source type"@en .
+
+dl:host a owl:DatatypeProperty ;
+  rdfs:domain dl:DataSource ;
+  rdfs:range xsd:string ;
+  rdfs:label "主机"@zh .
+
+# --- View attributes ---
+
+dl:viewDefinition a owl:DatatypeProperty ;
+  rdfs:domain dl:View ;
+  rdfs:range xsd:string ;
+  rdfs:label "视图定义"@zh , "view definition"@en .
+
+# --- Document / Chunk attributes ---
+
+dl:title a owl:DatatypeProperty ;
+  rdfs:domain dl:Document ;
+  rdfs:range xsd:string ;
+  rdfs:label "标题"@zh .
+
+dl:sourceUri a owl:DatatypeProperty ;
+  rdfs:domain dl:Document ;
+  rdfs:range xsd:anyURI ;
+  rdfs:label "来源 URI"@zh .
+
+dl:mimeType a owl:DatatypeProperty ;
+  rdfs:domain dl:Document ;
+  rdfs:range xsd:string ;
+  rdfs:label "MIME 类型"@zh .
+
+dl:chunkText a owl:DatatypeProperty ;
+  rdfs:domain dl:DocumentChunk ;
+  rdfs:range xsd:string ;
+  rdfs:label "片段文本"@zh .
+
+dl:chunkIndex a owl:DatatypeProperty ;
+  rdfs:domain dl:DocumentChunk ;
+  rdfs:range xsd:integer ;
+  rdfs:label "片段序号"@zh .
+
+dl:embeddingRef a owl:DatatypeProperty ;
+  rdfs:domain dl:DocumentChunk ;
+  rdfs:range xsd:string ;
+  rdfs:label "向量引用"@zh , "embedding reference"@en ;
+  rdfs:comment "PG 向量索引的引用 ID"@zh .
+
+# --- Lineage attributes ---
+
+dl:transformLogic a owl:DatatypeProperty ;
+  rdfs:domain dl:LineageAssertion ;
+  rdfs:range xsd:string ;
+  rdfs:label "转换逻辑"@zh , "transform logic"@en .
+
+dl:layer a owl:DatatypeProperty ;
+  rdfs:domain dl:LineageAssertion ;
+  rdfs:range xsd:string ;
+  rdfs:label "数据层级"@zh , "data layer"@en ;
+  rdfs:comment "ODS | DWD | DWS | ADS | DM"@zh .
+
+dl:sourceField a owl:DatatypeProperty ;
+  rdfs:domain dl:LineageAssertion ;
+  rdfs:range xsd:string ;
+  rdfs:label "源字段"@zh .
+
+dl:targetField a owl:DatatypeProperty ;
+  rdfs:domain dl:LineageAssertion ;
+  rdfs:range xsd:string ;
+  rdfs:label "目标字段"@zh .
+
+# --- Join attributes ---
+
+dl:joinKey a owl:DatatypeProperty ;
+  rdfs:domain dl:JoinRelation ;
+  rdfs:range xsd:string ;
+  rdfs:label "JOIN 键"@zh .
+
+dl:joinType a owl:DatatypeProperty ;
+  rdfs:domain dl:JoinRelation ;
+  rdfs:range xsd:string ;
+  rdfs:label "JOIN 类型"@zh ;
+  rdfs:comment "inner | left | right | full"@zh .
+
+# --- Link / provenance metadata ---
+
+dl:linkConfidence a owl:DatatypeProperty ;
+  rdfs:range xsd:decimal ;
+  rdfs:label "链接置信度"@zh .
+
+dl:linkMethod a owl:DatatypeProperty ;
+  rdfs:range xsd:string ;
+  rdfs:label "链接方法"@zh .
+
+dl:inferred a owl:DatatypeProperty ;
+  rdfs:range xsd:boolean ;
+  rdfs:label "推理生成"@zh , "inferred"@en ;
+  rdfs:comment "该三元组是否由 OWL 推理机生成"@zh .
+
+# --- BusinessRule attributes ---
+
+dl:ruleExpression a owl:DatatypeProperty ;
+  rdfs:domain dl:BusinessRule ;
+  rdfs:range xsd:string ;
+  rdfs:label "规则表达式"@zh .
+
+dl:ruleType a owl:DatatypeProperty ;
+  rdfs:domain dl:BusinessRule ;
+  rdfs:range xsd:string ;
+  rdfs:label "规则类型"@zh ;
+  rdfs:comment "validation | derivation | constraint"@zh .
+
+# --- Quarantine attributes ---
+
+dl:rejectReason a owl:DatatypeProperty ;
+  rdfs:domain dl:QuarantinedAssertion ;
+  rdfs:range xsd:string ;
+  rdfs:label "拒绝原因"@zh , "reject reason"@en .
+
+dl:rawTriple a owl:DatatypeProperty ;
+  rdfs:domain dl:QuarantinedAssertion ;
+  rdfs:range xsd:string ;
+  rdfs:label "原始三元组"@zh , "raw triple"@en .
+
+dl:suggestedFix a owl:DatatypeProperty ;
+  rdfs:domain dl:QuarantinedAssertion ;
+  rdfs:range xsd:string ;
+  rdfs:label "建议修复"@zh , "suggested fix"@en .
+
+# ------------------------------------------------------------------
+# 5. PROPERTY CHAIN AXIOMS
+# ------------------------------------------------------------------
+
+# A metric that is computed from a table downstream of another table
+# has an indirect lineage dependency
+[ rdf:type owl:ObjectProperty ;
+  owl:propertyChainAxiom (dl:computedFromTable dl:transformsFrom) ;
+  rdfs:label "间接计算来源"@zh ;
+  rdfs:comment "若指标从 T2 取数，且 T2 血缘来自 T1，则指标间接依赖 T1"@zh ] .

@@ -10,13 +10,12 @@ from sqlalchemy.orm import Session
 from database import get_db, SessionLocal
 from config import get_settings
 from models import (
-    BusinessTerm,
-    DataLineage,
     Document,
     KnowledgeGitSource,
-    MetricDefinition,
     PipelineRun,
 )
+# BusinessTerm, DataLineage, MetricDefinition removed in Phase 1 ontology refactoring
+# This entire router will be deleted in Phase 4
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["knowledge-semantic"])
 
@@ -234,9 +233,10 @@ def get_lineage(kb_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{kb_id}/pipeline-stats")
 def get_pipeline_stats(kb_id: int, db: Session = Depends(get_db)):
-    term_count, terms_by_status = _count_grouped(db, BusinessTerm, kb_id)
-    metric_count, metrics_by_status = _count_grouped(db, MetricDefinition, kb_id)
-    lineage_count, lineage_by_status = _count_grouped(db, DataLineage, kb_id)
+    # Removed in Phase 1 ontology refactoring — these models no longer exist
+    term_count, terms_by_status = 0, {}
+    metric_count, metrics_by_status = 0, {}
+    lineage_count, lineage_by_status = 0, {}
 
     doc_counts = dict(
         db.execute(
@@ -281,14 +281,14 @@ def get_pipeline_stats(kb_id: int, db: Session = Depends(get_db)):
             rdf_stats = None
 
     if last_run and last_run.status == "running" and last_run.started_at:
-        elapsed = datetime.now(timezone.utc) - last_run.started_at
+        elapsed = datetime.utcnow() - last_run.started_at
         if elapsed.total_seconds() > 300:
             last_run.status = "failed"
             last_run.steps = {
                 k: (v if isinstance(v, dict) else {"status": "failed", "reason": "timeout"})
                 for k, v in (last_run.steps or {}).items()
             }
-            last_run.completed_at = datetime.now(timezone.utc)
+            last_run.completed_at = datetime.utcnow()
             db.commit()
 
     return {
@@ -319,11 +319,49 @@ def get_pipeline_stats(kb_id: int, db: Session = Depends(get_db)):
             "id": last_run.id,
             "status": last_run.status,
             "steps": last_run.steps,
+            "source_id": last_run.source_id,
             "started_at": last_run.started_at.isoformat() if last_run and last_run.started_at else None,
             "completed_at": last_run.completed_at.isoformat() if last_run and last_run.completed_at else None,
         } if last_run else None,
         "rdf_stats": rdf_stats,
     }
+
+
+# ── Per-Source Cleaning Stats ────────────────────────────────────────────
+
+
+@router.get("/{kb_id}/source-cleaning-stats")
+def get_source_cleaning_stats(kb_id: int, db: Session = Depends(get_db)):
+    """Return the latest pipeline run status for each source in the KB."""
+    from sqlalchemy import func as _func
+
+    latest = (
+        select(PipelineRun.source_type, PipelineRun.source_id, _func.max(PipelineRun.id).label("max_id"))
+        .where(
+            PipelineRun.knowledge_base_id == kb_id,
+            PipelineRun.source_type.isnot(None),
+            PipelineRun.source_id.isnot(None),
+        )
+        .group_by(PipelineRun.source_type, PipelineRun.source_id)
+        .subquery()
+    )
+
+    runs = (
+        select(PipelineRun)
+        .join(latest, PipelineRun.id == latest.c.max_id)
+        .order_by(PipelineRun.id.desc())
+    )
+
+    stats: dict[str, dict] = {}
+    for run in db.execute(runs).scalars().all():
+        key = f"{run.source_type}:{run.source_id}"
+        stats[key] = {
+            "status": run.status,
+            "started_at": run.started_at.isoformat() if run.started_at else None,
+            "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+        }
+
+    return {"ok": True, "kb_id": kb_id, "stats": stats}
 
 
 # ── Trigger Pipeline ─────────────────────────────────────────────────────
@@ -357,3 +395,24 @@ def trigger_semantic_pipeline(kb_id: int, db: Session = Depends(get_db)):
 
     trigger_semantic_pipeline_background(kb_id, source_type="manual", skip_if_running=False)
     return {"status": "started", "reason": "流水线已在后台启动"}
+
+
+# ── Per-Source Clean Trigger ─────────────────────────────────────────────
+
+
+@router.post("/{kb_id}/sources/{source_id}/clean")
+def trigger_source_cleaning(kb_id: int, source_id: int, source_type: str = "git"):
+    """对单个导入源触发语义清洗（后台执行，立即返回）。"""
+    import logging as _log
+
+    from services.semantic_extraction import trigger_semantic_pipeline_background
+
+    _log.getLogger(__name__).info(
+        "Manual source cleaning triggered: kb=%d source=%d type=%s",
+        kb_id,
+        source_id,
+        source_type,
+    )
+
+    trigger_semantic_pipeline_background(kb_id, source_type=f"source:{source_type}", source_id=source_id, skip_if_running=False)
+    return {"status": "started", "source_id": source_id, "source_type": source_type}

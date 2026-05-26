@@ -257,6 +257,22 @@ async def import_entry_from_file(
     doc = create_document(db, kb_id, title, source_type="file", source_meta=meta, knowledge_entry_id=entry.id)
     db.commit()
 
+    try:
+        from services.ingestion.connectors import register_evidence_from_import
+
+        register_evidence_from_import(
+            db,
+            kb_id,
+            title=title,
+            route_key="import-file",
+            source_ref={"entry_id": entry.id, "filename": fname, "document_id": doc.id},
+            linked_entry_ids=[entry.id],
+            linked_document_id=doc.id,
+            processing_state="registered",
+        )
+    except Exception:
+        _logger.warning("Evidence package registration failed for file import kb=%s", kb_id, exc_info=True)
+
     # 在后台线程运行流水线，不阻塞响应
     doc_id = doc.id
     raw_text = plain
@@ -266,9 +282,6 @@ async def import_entry_from_file(
             bg_doc = bg_db.get(Document, doc_id)
             if bg_doc:
                 run_pipeline(bg_db, bg_doc, raw_text)
-            # 文档流水线完成后触发语义提取
-            from services.semantic_extraction import trigger_semantic_pipeline_background
-            trigger_semantic_pipeline_background(kb_id, source_type="auto")
         except Exception:
             _logger.exception("Background pipeline failed for doc=%d kb=%d", doc_id, kb_id)
             try:

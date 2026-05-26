@@ -7,7 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from config import get_settings
-from models import SemanticRelation, TableMeta
+from models import TableMeta
+# SemanticRelation removed in Phase 1 - this module will be deleted in Phase 4
 from services.routing.lineage_router import (
     _resolve_table_ref,
     apply_lineage_expansion,

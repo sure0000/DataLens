@@ -7,7 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from config import get_settings
-from models import DataLineage, KnowledgeEntry, TableMeta
+from models import KnowledgeEntry, TableMeta
+# DataLineage removed in Phase 1 - this module will be deleted in Phase 4
 
 if TYPE_CHECKING:
     from services.routing_types import RoutingSearchBundle

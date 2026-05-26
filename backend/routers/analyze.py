@@ -353,6 +353,13 @@ async def _run_analyze(table_id: int, table_name: str, conn_info: dict) -> None:
         t.status = "done"
         db.commit()
 
+        try:
+            from services.ingestion.events import emit
+
+            emit("schema.analyzed", table_id=table_id, db=db)
+        except Exception:
+            pass
+
         # 将之前暂存的代码库表引用与新分析的表匹配
         try:
             await catch_up_pending_refs(db, table_id=table_id)

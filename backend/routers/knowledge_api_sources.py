@@ -191,8 +191,6 @@ def import_from_api_source(kb_id: int, source_id: int, body: ImportRequest = Imp
                     bg_doc = bg_db.get(Document, doc.id)
                     if bg_doc:
                         run_pipeline(bg_db, bg_doc, item["text"])
-                from services.semantic_extraction import trigger_semantic_pipeline_background
-                trigger_semantic_pipeline_background(kb_id, source_type="auto")
             except Exception:
                 _logger.exception("Background API-import pipeline failed for kb=%d", kb_id)
             finally:
@@ -223,6 +221,22 @@ def import_from_api_source(kb_id: int, source_id: int, body: ImportRequest = Imp
                         entries_created += 1
                     db.commit()
                     complete_import(db, log, entries_created=entries_created)
+                    try:
+                        from services.ingestion.connectors import register_evidence_from_import
+
+                        register_evidence_from_import(
+                            db,
+                            kb_id,
+                            title=f"Notion Database · {src.name}",
+                            route_key="api-sources/import",
+                            source_kind="notion",
+                            source_ref={"source_id": src.id, "object_id": object_id},
+                            linked_entry_ids=[item["entry_id"] for item in _created],
+                            processing_state="registered",
+                        )
+                    except Exception:
+                        pass
+                    db.commit()
                     _spawn_pipelines()
                     return {"ok": True, "entries_created": entries_created, "mode": "database"}
                 raise
@@ -273,6 +287,22 @@ def import_from_api_source(kb_id: int, source_id: int, body: ImportRequest = Imp
 
         complete_import(db, log, entries_created=entries_created)
         db.commit()
+
+        try:
+            from services.ingestion.connectors import register_evidence_from_import
+
+            register_evidence_from_import(
+                db,
+                kb_id,
+                title=f"API 导入 · {src.name}",
+                route_key="api-sources/import",
+                source_kind=integration,
+                source_ref={"source_id": src.id, "object_id": object_id, "entries": entries_created},
+                linked_entry_ids=[item["entry_id"] for item in _created],
+                processing_state="registered",
+            )
+        except Exception:
+            pass
 
         # 后台触发文档处理流水线 + 语义提取
         _spawn_pipelines()

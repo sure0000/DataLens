@@ -80,9 +80,10 @@ def _ensure_safety_columns(conn) -> None:
         ("knowledge_git_sources", "category", "TEXT"),
         ("knowledge_git_sources", "tags", "JSON"),
         ("document_chunks", "semantic_meta", "JSONB"),
-        ("metric_definitions", "bound_table_refs", "JSONB"),
-        ("business_terms", "concept_id", "TEXT"),
-        ("metric_definitions", "concept_id", "TEXT"),
+        # Legacy semantic table columns (removed in Phase 1 ontology refactoring)
+        # ("metric_definitions", "bound_table_refs", "JSONB"),
+        # ("business_terms", "concept_id", "TEXT"),
+        # ("metric_definitions", "concept_id", "TEXT"),
     ]
     for table, col, col_type in _cols:
         conn.execute(
@@ -102,13 +103,14 @@ def _ensure_safety_indexes(conn) -> None:
     _indexes = [
         ("idx_document_chunks_kb", "document_chunks", "knowledge_base_id"),
         ("idx_document_chunks_doc", "document_chunks", "document_id"),
-        ("idx_business_terms_kb", "business_terms", "knowledge_base_id"),
-        ("idx_metric_definitions_kb", "metric_definitions", "knowledge_base_id"),
-        ("idx_data_lineage_kb", "data_lineage", "knowledge_base_id"),
-        ("idx_data_lineage_git", "data_lineage", "git_source_id"),
+        # Legacy semantic table indexes (removed in Phase 1 ontology refactoring)
+        # ("idx_business_terms_kb", "business_terms", "knowledge_base_id"),
+        # ("idx_metric_definitions_kb", "metric_definitions", "knowledge_base_id"),
+        # ("idx_data_lineage_kb", "data_lineage", "knowledge_base_id"),
+        # ("idx_data_lineage_git", "data_lineage", "git_source_id"),
         ("idx_pipeline_runs_kb", "pipeline_runs", "knowledge_base_id"),
-        ("idx_semantic_relations_kb", "semantic_relations", "knowledge_base_id"),
-        ("idx_semantic_relations_concept", "semantic_relations", "concept_id"),
+        # ("idx_semantic_relations_kb", "semantic_relations", "knowledge_base_id"),
+        # ("idx_semantic_relations_concept", "semantic_relations", "concept_id"),
     ]
     for idx_name, table, col in _indexes:
         conn.execute(

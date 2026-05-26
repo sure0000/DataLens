@@ -155,6 +155,12 @@ def run_pipeline(db: Session, doc: Document, raw_text: str) -> None:
         doc.stage_timings = timings
         _set_document_status(db, doc, "indexed")
         db.commit()
+        try:
+            from services.ingestion.events import emit
+
+            emit("document.indexed", kb_id=doc.knowledge_base_id, document_id=doc.id, db=db)
+        except Exception:
+            pass
         _logger.info(
             "Pipeline done: doc=%d chunks=%d structured=%s",
             doc.id,

@@ -9,6 +9,7 @@ export type KnowledgeBaseOption = {
 
 export type OntologyTerm = {
   id: number;
+  iri?: string;
   name: string;
   type: string;
   definition: string;
@@ -20,11 +21,32 @@ export type OntologyTerm = {
 
 export type OntologyMetric = {
   id: number;
+  iri?: string;
   name: string;
   formula: string;
   caliber: string | null;
   bound_table_refs: string[];
   concept_id: string | null;
+  confidence: number;
+  status: string;
+};
+
+export type OntologyDimension = {
+  id: number;
+  iri?: string;
+  name: string;
+  definition: string;
+  dim_type: string;
+  confidence: number;
+  status: string;
+};
+
+export type OntologyRule = {
+  id: number;
+  iri?: string;
+  name: string;
+  rule_expression: string;
+  rule_type: string;
   confidence: number;
   status: string;
 };
@@ -54,7 +76,13 @@ export type SyncResult = {
   };
 };
 
-export type OntologyTab = "overview" | "terms" | "metrics" | "relations" | "rdf" | "store";
+export type OntologyTab =
+  | "overview"
+  | "semantics"
+  | "assets"
+  | "graph"
+  | "governance"
+  | "expert";
 
 export type RdfEntity = {
   iri: string;
@@ -112,3 +140,18 @@ export const RELATION_TYPE_LABELS: Record<string, string> = {
 };
 
 export const ONTOLOGY_KB_STORAGE_KEY = "ontology_selected_kb_id";
+export const ONTOLOGY_ROLE_STORAGE_KEY = "ontology_viewer_role_v1";
+
+export type OntologyViewerRole = "business" | "governance" | "engineer";
+
+export const ONTOLOGY_ROLE_LABELS: Record<OntologyViewerRole, string> = {
+  business: "业务人员",
+  governance: "数据治理",
+  engineer: "本体工程师",
+};
+
+export const ONTOLOGY_ROLE_DEFAULT_TAB: Record<OntologyViewerRole, OntologyTab> = {
+  business: "semantics",
+  governance: "governance",
+  engineer: "expert",
+};

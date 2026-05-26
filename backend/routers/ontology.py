@@ -1,7 +1,9 @@
-"""Ontology API: SPARQL proxy, TTL import/export, quarantine, CRUD."""
+"""Ontology API: SPARQL proxy, TTL import/export, quarantine, RDF-native CRUD."""
+
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,15 +13,18 @@ from sqlalchemy.orm import Session
 
 from config import get_settings
 from database import get_db
-from models import BusinessTerm, DataLineage, KnowledgeBase, MetricDefinition, SemanticRelation
-from ontology import NS, kb_graph_iri, quarantine_graph_iri
+from models import KnowledgeBase
+from ontology import NS, concept_slug, kb_graph_iri, metric_iri, quarantine_graph_iri, term_iri
 from services.ontology_loader import init_ontology
-from services.ontology_population import migrate_legacy_entities_to_triples, populate_from_document
 from services.ontology_rdf_browser import fetch_kb_rdf_view
-from services.ontology_reasoning import materialize_inferred_closure
-from services.ontology_store import export_graph_ttl, graph_stats, insert_graph, sparql_query
+from services.ontology_store import delete_graph, export_graph_ttl, graph_stats, insert_graph, sparql_query
 from services.ontology_triple_cleaner import RawTriple, clean_triples, persist_clean_result
 from services.ontology_validation import validate_ttl
+from services.ontology.writer import OntologyWriter, TermInput, MetricInput
+from services.ontology.validator import validate as shacl_validate
+from services.ontology.quarantine import QuarantineManager
+
+_logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/ontology", tags=["ontology"])
 
@@ -44,6 +49,11 @@ class QuarantineResolveRequest(BaseModel):
     approve: bool = True
 
 
+class QuarantineApplyFixRequest(BaseModel):
+    template_id: str
+    params: dict[str, Any] = Field(default_factory=dict)
+
+
 class TermOntologyCreate(BaseModel):
     name: str
     definition: str = ""
@@ -59,6 +69,26 @@ class MetricOntologyCreate(BaseModel):
     bound_table_refs: list[str] = Field(default_factory=list)
     confidence: float = 80.0
     status: str = "approved"
+
+
+class AssertionPromoteRequest(BaseModel):
+    subject: str
+    target_status: str | None = None
+    target_lifecycle: str | None = None
+
+
+class ModelingRunRequest(BaseModel):
+    source_type: str = "manual"
+    source_id: int | None = None
+    skip_if_running: bool = True
+
+
+def _get_writer() -> OntologyWriter:
+    """Create an OntologyWriter wired to the current triple store."""
+    from services.triple_store import get_triple_store
+    store = get_triple_store()
+    quarantine = QuarantineManager(store)
+    return OntologyWriter(store=store, validator=shacl_validate, quarantine_manager=quarantine)
 
 
 @router.get("/health")
@@ -106,60 +136,149 @@ def import_kb_ontology(kb_id: int, body: TtlImportRequest, db: Session = Depends
 
 @router.post("/knowledge-bases/{kb_id}/sync-from-legacy")
 def sync_from_legacy(kb_id: int, db: Session = Depends(get_db)) -> dict:
-    """Migrate legacy PostgreSQL semantic tables into Fuseki RDF store."""
+    """Legacy migration endpoint — no longer needed (Phase 1 ontology refactoring)."""
     kb = db.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    from services.ontology_sync_service import sync_knowledge_base_to_rdf
-
-    out = sync_knowledge_base_to_rdf(db, kb_id)
-    return {"ok": True, **out}
+    return {"ok": True, "message": "Legacy PG semantic tables have been removed. Use RDF-native endpoints instead.", "kb_id": kb_id}
 
 
 @router.post("/knowledge-bases/{kb_id}/documents/{document_id}/assert")
 def assert_document_ontology(
     kb_id: int, document_id: int, db: Session = Depends(get_db)
 ) -> dict:
-    from services.context_builder import tables_from_business_domain
-    from models import BusinessDomainKnowledgeBase, Document
+    """Trigger ontology extraction for a document (Phase 2 will rewrite this)."""
+    from models import Document
+    from services.ontology_population import populate_from_document
 
     doc = db.get(Document, document_id)
     if not doc or doc.knowledge_base_id != kb_id:
         raise HTTPException(status_code=404, detail="文档不存在")
-    domain_id = None
-    domain_row = db.execute(
-        select(BusinessDomainKnowledgeBase.domain_id).where(
-            BusinessDomainKnowledgeBase.knowledge_base_id == kb_id
+    return populate_from_document(db, document_id, kb_id=kb_id, domain_tables=[], domain_id=None)
+
+
+def _quarantine_items_payload(kb_id: int) -> list[dict[str, Any]]:
+    from services.ontology.quarantine import QuarantineManager
+    from services.ontology.quarantine_templates import REASON_LABELS, suggest_templates
+    from services.triple_store import get_triple_store
+    import json
+    import re
+
+    mgr = QuarantineManager(get_triple_store())
+    result = mgr.list_items(kb_id)
+    items: list[dict[str, Any]] = []
+    for item in result.items:
+        raw = item.raw_triple or {}
+        m = re.search(r"/item/(\d+)$", item.subject)
+        item_idx = int(m.group(1)) if m else item.index
+        reason = item.reason or "unknown"
+        items.append(
+            {
+                "item_idx": item_idx,
+                "q": item.subject,
+                "reason": reason,
+                "reason_label": REASON_LABELS.get(reason, reason),
+                "raw": json.dumps(raw, ensure_ascii=False) if raw else item.suggested_fix,
+                "subject": raw.get("subject"),
+                "predicate": raw.get("predicate"),
+                "object": raw.get("object"),
+                "object_is_uri": raw.get("object_is_uri", False),
+                "suggested_fix": item.suggested_fix,
+                "fix_templates": suggest_templates(reason, raw),
+            }
         )
-    ).first()
-    domain_tables = []
-    if domain_row:
-        domain_id = int(domain_row[0])
-        domain_tables = tables_from_business_domain(db, domain_id)
-    return populate_from_document(db, document_id, kb_id=kb_id, domain_tables=domain_tables, domain_id=domain_id)
+    return items
 
 
 @router.get("/knowledge-bases/{kb_id}/quarantine")
-def list_quarantine(kb_id: int) -> dict:
-    graph = quarantine_graph_iri(kb_id)
-    q = f"""
-PREFIX dl: <{NS}>
-SELECT ?q ?reason ?raw WHERE {{
-  GRAPH <{graph}> {{
-    ?q a dl:QuarantinedAssertion ;
-       dl:rejectReason ?reason .
-    OPTIONAL {{ ?q dl:rawTriple ?raw }}
-  }}
-}}"""
-    try:
-        rows = sparql_query(q)
-    except Exception:
-        rows = []
-    return {"ok": True, "items": rows}
+def list_quarantine(kb_id: int, db: Session = Depends(get_db)) -> dict:
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    items = _quarantine_items_payload(kb_id)
+    return {"ok": True, "kb_id": kb_id, "items": items, "total": len(items)}
+
+
+@router.post("/knowledge-bases/{kb_id}/quarantine/{item_idx}/resolve")
+def resolve_kb_quarantine(
+    kb_id: int, item_idx: int, approve: bool = Query(True), db: Session = Depends(get_db)
+) -> dict:
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.quarantine import QuarantineManager
+    from services.triple_store import get_triple_store
+
+    mgr = QuarantineManager(get_triple_store())
+    ok = mgr.resolve(kb_id, item_idx, approved=approve)
+    if not ok:
+        raise HTTPException(status_code=400, detail="隔离项处理失败")
+    return {"ok": True, "action": "approved" if approve else "rejected", "item_idx": item_idx}
+
+
+@router.post("/knowledge-bases/{kb_id}/quarantine/{item_idx}/apply-fix")
+def apply_quarantine_fix(
+    kb_id: int, item_idx: int, body: QuarantineApplyFixRequest, db: Session = Depends(get_db)
+) -> dict:
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
+    items = _quarantine_items_payload(kb_id)
+    target = next((i for i in items if i["item_idx"] == item_idx), None)
+    if not target:
+        raise HTTPException(status_code=404, detail="隔离项不存在")
+
+    from services.ontology.quarantine import QuarantineManager
+    from services.ontology.quarantine_templates import apply_template
+    from services.ontology_triple_cleaner import RawTriple, clean_triples, persist_clean_result
+    from services.triple_store import get_triple_store
+
+    raw: dict[str, Any] = {
+        "subject": target.get("subject") or "",
+        "predicate": target.get("predicate") or "",
+        "object": target.get("object") or "",
+        "object_is_uri": bool(target.get("object_is_uri", False)),
+    }
+    if not raw["subject"] and target.get("raw"):
+        try:
+            raw = json.loads(target["raw"])
+        except json.JSONDecodeError:
+            pass
+
+    fix = apply_template(
+        kb_id,
+        reason=target["reason"],
+        raw_triple=raw,
+        template_id=body.template_id,
+        params=body.params,
+    )
+    if not fix.get("ok"):
+        raise HTTPException(status_code=400, detail=fix.get("error", "修复失败"))
+
+    mgr = QuarantineManager(get_triple_store())
+    if fix.get("action") == "drop":
+        mgr.resolve(kb_id, item_idx, approved=False)
+        return {"ok": True, "action": "dropped"}
+
+    tdata = fix["triple"]
+    triple = RawTriple(
+        tdata["subject"],
+        tdata["predicate"],
+        tdata["object"],
+        tdata.get("object_is_uri", False),
+        graph=kb_graph_iri(kb_id),
+        confidence=90.0,
+    )
+    result = clean_triples([triple], kb_id=kb_id)
+    out = persist_clean_result(result, kb_id)
+    mgr.resolve(kb_id, item_idx, approved=False)
+    return {"ok": True, "action": "applied", **out}
 
 
 @router.post("/quarantine/{item_idx}/resolve")
-def resolve_quarantine(item_idx: int, body: QuarantineResolveRequest) -> dict:
+def resolve_quarantine_legacy(item_idx: int, body: QuarantineResolveRequest) -> dict:
+    """Legacy resolve with explicit triple body."""
     if not body.approve:
         return {"ok": True, "action": "rejected"}
     triple = RawTriple(
@@ -227,41 +346,7 @@ def get_ontology_graph(kb_id: int, db: Session = Depends(get_db)) -> dict:
     except Exception:
         rdf_view = None
 
-    # PostgreSQL 语义表（编辑源；RDF 生产图为空时仍可在页面浏览）
-    terms = db.execute(select(BusinessTerm).where(BusinessTerm.knowledge_base_id == kb_id)).scalars().all()
-    for t in terms:
-        nodes.append({
-            "id": f"term:{t.id}",
-            "type": "term",
-            "label": t.name,
-            "status": t.status,
-            "source": "postgresql",
-        })
-    metrics = db.execute(select(MetricDefinition).where(MetricDefinition.knowledge_base_id == kb_id)).scalars().all()
-    for m in metrics:
-        nodes.append({
-            "id": f"metric:{m.id}",
-            "type": "metric",
-            "label": m.name,
-            "status": m.status,
-            "source": "postgresql",
-        })
-    rels = db.execute(select(SemanticRelation).where(SemanticRelation.knowledge_base_id == kb_id)).scalars().all()
-    for r in rels:
-        edges.append({
-            "id": f"rel:{r.id}",
-            "type": r.relation_type,
-            "source": r.source_ref,
-            "target": r.target_ref,
-        })
-    lineages = db.execute(select(DataLineage).where(DataLineage.knowledge_base_id == kb_id)).scalars().all()
-    for lg in lineages:
-        edges.append({
-            "id": f"lineage:{lg.id}",
-            "type": "lineage",
-            "source": lg.source_table,
-            "target": lg.target_table,
-        })
+    # Legacy PG semantic tables removed in Phase 1 — all data comes from RDF now.
 
     return {
         "ok": True,
@@ -273,114 +358,410 @@ def get_ontology_graph(kb_id: int, db: Session = Depends(get_db)) -> dict:
     }
 
 
-# Backward-compatible term/metric CRUD writing to both PG (deprecated) and ontology
-
-RDF_TYPE = "http://www.w3.org/1999/02/22-rdf-syntax-ns#type"
-SKOS_PREF = "http://www.w3.org/2004/02/skos/core#prefLabel"
-SKOS_DEF = "http://www.w3.org/2004/02/skos/core#definition"
+# ── Modeling pipeline status ───────────────────────────────────────────
 
 
-@router.get("/knowledge-bases/{kb_id}/terms")
-def list_terms(kb_id: int, db: Session = Depends(get_db)) -> dict:
-    rows = db.execute(
-        select(BusinessTerm).where(BusinessTerm.knowledge_base_id == kb_id).order_by(BusinessTerm.name)
-    ).scalars().all()
-    return {
-        "terms": [
-            {
-                "id": t.id,
-                "name": t.name,
-                "type": t.type,
-                "definition": t.definition,
-                "related_fields": t.related_fields or [],
-                "concept_id": t.concept_id,
-                "confidence": t.confidence,
-                "status": t.status,
+@router.get("/knowledge-bases/{kb_id}/modeling/status")
+def get_modeling_status(kb_id: int, db: Session = Depends(get_db)) -> dict:
+    """Aggregate extraction pipeline, document indexing, and RDF quality metrics."""
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.modeling_status import get_modeling_status as _status
+
+    return _status(db, kb_id)
+
+
+@router.get("/knowledge-bases/{kb_id}/modeling/layers/{layer_key}")
+def get_modeling_layer(
+    kb_id: int,
+    layer_key: str,
+    limit: int = Query(500, ge=1, le=2000),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return a single cleaning layer (vocabulary, rule, dimension, relation, …)."""
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.modeling_layers import get_modeling_layer as _layer
+
+    result = _layer(kb_id, layer_key, limit=limit)
+    if not result.get("ok"):
+        raise HTTPException(status_code=404, detail=result.get("error", "未知清洗层"))
+    return result
+
+
+@router.post("/knowledge-bases/{kb_id}/modeling/runs")
+def start_modeling_run(
+    kb_id: int,
+    body: ModelingRunRequest | None = None,
+    db: Session = Depends(get_db),
+) -> dict:
+    """Trigger the 8-step extraction pipeline in the background."""
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
+    req = body or ModelingRunRequest()
+    from models import PipelineRun
+
+    if req.skip_if_running:
+        running = db.execute(
+            select(PipelineRun).where(
+                PipelineRun.knowledge_base_id == kb_id,
+                PipelineRun.status == "running",
+            )
+        ).scalars().first()
+        if running:
+            return {
+                "ok": True,
+                "status": "already_running",
+                "run_id": running.id,
+                "message": "已有建模任务在运行中",
             }
-            for t in rows
-        ]
+
+    from services.extraction.orchestrator import trigger_extraction_pipeline_background
+
+    trigger_extraction_pipeline_background(kb_id, source_type=req.source_type)
+    return {
+        "ok": True,
+        "status": "started",
+        "kb_id": kb_id,
+        "source_type": req.source_type,
+        "message": "已启动 8 步抽取流水线（后台运行）",
     }
 
 
-@router.post("/knowledge-bases/{kb_id}/terms")
-def create_term(kb_id: int, body: TermOntologyCreate, db: Session = Depends(get_db)) -> dict:
-    from ontology import concept_slug, term_iri
+# ── Presentation views (read-only SPARQL) ────────────────────────────────
 
-    term = BusinessTerm(
-        knowledge_base_id=kb_id,
+
+@router.get("/knowledge-bases/{kb_id}/views/overview")
+def get_view_overview(kb_id: int, db: Session = Depends(get_db)) -> dict:
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.views import view_overview
+
+    return view_overview(db, kb_id)
+
+
+@router.get("/knowledge-bases/{kb_id}/views/terms")
+def get_view_terms(
+    kb_id: int,
+    status: str | None = Query(None),
+    limit: int = Query(200, ge=1, le=500),
+    db: Session = Depends(get_db),
+) -> dict:
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.views import view_terms
+
+    return view_terms(kb_id, status=status, limit=limit)
+
+
+@router.get("/knowledge-bases/{kb_id}/views/graph")
+def get_view_graph(
+    kb_id: int,
+    center: str | None = Query(None, description="Center node IRI for 1-hop neighborhood"),
+    db: Session = Depends(get_db),
+) -> dict:
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.views import view_graph
+
+    return view_graph(kb_id, center=center)
+
+
+@router.get("/knowledge-bases/{kb_id}/views/triples")
+def get_view_triples(
+    kb_id: int,
+    limit: int = Query(300, ge=1, le=2000),
+    db: Session = Depends(get_db),
+) -> dict:
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.views import view_triples
+
+    return view_triples(kb_id, limit=limit)
+
+
+@router.get("/knowledge-bases/{kb_id}/views/lineage")
+def get_view_lineage(
+    kb_id: int,
+    table: str | None = Query(None, description="Table IRI or platform id substring"),
+    db: Session = Depends(get_db),
+) -> dict:
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.views import view_lineage
+
+    return view_lineage(kb_id, table=table)
+
+
+@router.get("/knowledge-bases/{kb_id}/views/hierarchy")
+def get_view_hierarchy(kb_id: int, db: Session = Depends(get_db)) -> dict:
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.hierarchy_view import build_hierarchy_roots
+
+    return {"ok": True, "kb_id": kb_id, "roots": build_hierarchy_roots(kb_id)}
+
+
+@router.get("/knowledge-bases/{kb_id}/provenance")
+def get_provenance(
+    kb_id: int,
+    subject: str = Query(..., description="Entity IRI"),
+    db: Session = Depends(get_db),
+) -> dict:
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.provenance import get_provenance_chain
+
+    return get_provenance_chain(db, kb_id, subject.strip())
+
+
+@router.post("/knowledge-bases/{kb_id}/assertions/promote")
+def promote_assertion(kb_id: int, body: AssertionPromoteRequest, db: Session = Depends(get_db)) -> dict:
+    """Promote assertion lifecycle via dl:approvalStatus (draft → pending_review → approved)."""
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.assertion_lifecycle import promote_assertion as _promote
+
+    result = _promote(
+        kb_id,
+        body.subject.strip(),
+        target_status=body.target_status,
+        target_lifecycle=body.target_lifecycle,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error", "promote failed"))
+    return result
+
+
+@router.get("/knowledge-bases/{kb_id}/assertions/status")
+def get_assertion_status(kb_id: int, subject: str = Query(...), db: Session = Depends(get_db)) -> dict:
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.assertion_lifecycle import get_assertion_status as _status
+
+    return {"ok": True, "kb_id": kb_id, **_status(kb_id, subject)}
+
+
+# ── Ontology 5-Layer Cleaning Results ──────────────────────────────────
+
+
+@router.get("/knowledge-bases/{kb_id}/ontology-cleaning-results")
+def get_ontology_cleaning_results(kb_id: int, db: Session = Depends(get_db)) -> dict:
+    """Return ontology cleaning results organized by the 5-layer model."""
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.modeling_layers import get_cleaning_results
+
+    return get_cleaning_results(db, kb_id)
+
+
+# ── RDF-native term/metric CRUD (Phase 1: writes go through OntologyWriter) ──
+
+
+@router.get("/knowledge-bases/{kb_id}/terms")
+def list_terms(kb_id: int) -> dict:
+    """List terms from the RDF production graph."""
+    graph = kb_graph_iri(kb_id)
+    query = f"""
+    PREFIX dl: <{NS}>
+    PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+    SELECT ?s ?label ?definition ?status ?confidence WHERE {{
+      GRAPH <{graph}> {{
+        ?s a dl:BusinessTerm ;
+           skos:prefLabel ?label .
+        OPTIONAL {{ ?s skos:definition ?definition . }}
+        OPTIONAL {{ ?s dl:approvalStatus ?status . }}
+        OPTIONAL {{ ?s dl:confidence ?confidence . }}
+      }}
+    }}
+    ORDER BY ?label
+    """
+    try:
+        rows = sparql_query(query)
+    except Exception as exc:
+        _logger.warning("SPARQL term list failed: %s", exc)
+        rows = []
+    terms = []
+    for i, r in enumerate(rows):
+        terms.append(
+            {
+                "id": i + 1,
+                "iri": r.get("s", ""),
+                "name": r.get("label", ""),
+                "type": "other",
+                "definition": r.get("definition", ""),
+                "related_fields": [],
+                "concept_id": None,
+                "confidence": float(r.get("confidence") or 0),
+                "status": r.get("status") or "draft",
+            }
+        )
+    return {"terms": terms}
+
+
+@router.post("/knowledge-bases/{kb_id}/terms")
+def create_term(kb_id: int, body: TermOntologyCreate) -> dict:
+    """Create a term via OntologyWriter (RDF-native, with SHACL validation)."""
+    writer = _get_writer()
+    term_input = TermInput(
+        domain_id=kb_id,
         name=body.name,
-        type="other",
         definition=body.definition,
         related_fields=body.related_fields,
         confidence=body.confidence,
         status=body.status,
-        concept_id=concept_slug(body.name, "term"),
     )
-    db.add(term)
-    db.commit()
-    db.refresh(term)
-
-    slug = concept_slug(body.name, "term").replace("term.", "")
-    subj = term_iri(kb_id, slug)
-    ttl = f"""
-<{subj}> <{RDF_TYPE}> <{NS}BusinessTerm> .
-<{subj}> <{SKOS_PREF}> "{body.name.replace(chr(34), chr(92)+chr(34))}"@zh .
-<{subj}> <{SKOS_DEF}> "{body.definition.replace(chr(34), chr(92)+chr(34))}"@zh .
-<{subj}> <{NS}approvalStatus> "{body.status}" .
-"""
-    insert_graph(kb_graph_iri(kb_id), ttl)
-    return {"ok": True, "term_id": term.id, "iri": subj}
+    result = writer.write_term(kb_id, term_input)
+    return {"ok": True, "kb_id": kb_id, **result}
 
 
 @router.get("/knowledge-bases/{kb_id}/metrics")
-def list_metrics(kb_id: int, db: Session = Depends(get_db)) -> dict:
-    rows = db.execute(
-        select(MetricDefinition).where(MetricDefinition.knowledge_base_id == kb_id).order_by(MetricDefinition.name)
-    ).scalars().all()
-    return {
-        "metrics": [
+def list_metrics(kb_id: int) -> dict:
+    """List metrics from the RDF production graph."""
+    graph = kb_graph_iri(kb_id)
+    query = f"""
+    PREFIX dl: <{NS}>
+    PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+    SELECT ?s ?label ?formula ?caliber ?status ?confidence WHERE {{
+      GRAPH <{graph}> {{
+        ?s a dl:Metric ;
+           skos:prefLabel ?label .
+        OPTIONAL {{ ?s dl:formula ?formula . }}
+        OPTIONAL {{ ?s dl:caliber ?caliber . }}
+        OPTIONAL {{ ?s dl:approvalStatus ?status . }}
+        OPTIONAL {{ ?s dl:confidence ?confidence . }}
+      }}
+    }}
+    ORDER BY ?label
+    """
+    try:
+        rows = sparql_query(query)
+    except Exception as exc:
+        _logger.warning("SPARQL metric list failed: %s", exc)
+        rows = []
+    metrics = []
+    for i, r in enumerate(rows):
+        metrics.append(
             {
-                "id": m.id,
-                "name": m.name,
-                "formula": m.formula,
-                "caliber": m.caliber,
-                "bound_table_refs": m.bound_table_refs or [],
-                "concept_id": m.concept_id,
-                "confidence": m.confidence,
-                "status": m.status,
+                "id": i + 1,
+                "iri": r.get("s", ""),
+                "name": r.get("label", ""),
+                "formula": r.get("formula", ""),
+                "caliber": r.get("caliber"),
+                "bound_table_refs": [],
+                "concept_id": None,
+                "confidence": float(r.get("confidence") or 0),
+                "status": r.get("status") or "draft",
             }
-            for m in rows
-        ]
-    }
+        )
+    return {"metrics": metrics}
+
+
+@router.get("/knowledge-bases/{kb_id}/dimensions")
+def list_dimensions(kb_id: int) -> dict:
+    """List dl:Dimension instances from the RDF production graph."""
+    graph = kb_graph_iri(kb_id)
+    query = f"""
+    PREFIX dl: <{NS}>
+    PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+    SELECT ?s ?label ?definition ?dimType ?status ?confidence WHERE {{
+      GRAPH <{graph}> {{
+        ?s a dl:Dimension ;
+           skos:prefLabel ?label .
+        OPTIONAL {{ ?s skos:definition ?definition . }}
+        OPTIONAL {{ ?s dl:dimensionType ?dimType . }}
+        OPTIONAL {{ ?s dl:approvalStatus ?status . }}
+        OPTIONAL {{ ?s dl:confidence ?confidence . }}
+      }}
+    }}
+    ORDER BY ?label
+    """
+    try:
+        rows = sparql_query(query)
+    except Exception as exc:
+        _logger.warning("SPARQL dimension list failed: %s", exc)
+        rows = []
+    dimensions = []
+    for i, r in enumerate(rows):
+        dimensions.append(
+            {
+                "id": i + 1,
+                "iri": r.get("s", ""),
+                "name": r.get("label", ""),
+                "definition": r.get("definition", ""),
+                "dim_type": r.get("dimType", ""),
+                "confidence": float(r.get("confidence") or 0),
+                "status": r.get("status") or "draft",
+            }
+        )
+    return {"dimensions": dimensions}
+
+
+@router.get("/knowledge-bases/{kb_id}/rules")
+def list_rules(kb_id: int) -> dict:
+    """List dl:BusinessRule instances from the RDF production graph."""
+    graph = kb_graph_iri(kb_id)
+    query = f"""
+    PREFIX dl: <{NS}>
+    PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
+    SELECT ?s ?label ?ruleExpression ?ruleType ?status ?confidence WHERE {{
+      GRAPH <{graph}> {{
+        ?s a dl:BusinessRule ;
+           skos:prefLabel ?label .
+        OPTIONAL {{ ?s dl:ruleExpression ?ruleExpression . }}
+        OPTIONAL {{ ?s dl:ruleType ?ruleType . }}
+        OPTIONAL {{ ?s dl:approvalStatus ?status . }}
+        OPTIONAL {{ ?s dl:confidence ?confidence . }}
+      }}
+    }}
+    ORDER BY ?label
+    """
+    try:
+        rows = sparql_query(query)
+    except Exception as exc:
+        _logger.warning("SPARQL rule list failed: %s", exc)
+        rows = []
+    rules = []
+    for i, r in enumerate(rows):
+        rules.append(
+            {
+                "id": i + 1,
+                "iri": r.get("s", ""),
+                "name": r.get("label", ""),
+                "rule_expression": r.get("ruleExpression", ""),
+                "rule_type": r.get("ruleType", ""),
+                "confidence": float(r.get("confidence") or 0),
+                "status": r.get("status") or "draft",
+            }
+        )
+    return {"rules": rules}
 
 
 @router.post("/knowledge-bases/{kb_id}/metrics")
-def create_metric(kb_id: int, body: MetricOntologyCreate, db: Session = Depends(get_db)) -> dict:
-    from ontology import concept_slug, metric_iri
-
-    metric = MetricDefinition(
-        knowledge_base_id=kb_id,
+def create_metric(kb_id: int, body: MetricOntologyCreate) -> dict:
+    """Create a metric via OntologyWriter (RDF-native, with SHACL validation)."""
+    writer = _get_writer()
+    metric_input = MetricInput(
+        domain_id=kb_id,
         name=body.name,
         formula=body.formula,
-        caliber=body.caliber,
-        bound_table_refs=body.bound_table_refs,
+        caliber=body.caliber or "",
         confidence=body.confidence,
         status=body.status,
-        concept_id=concept_slug(body.name, "metric"),
     )
-    db.add(metric)
-    db.commit()
-    db.refresh(metric)
-
-    slug = concept_slug(body.name, "metric").replace("metric.", "")
-    subj = metric_iri(kb_id, slug)
-    esc_name = body.name.replace('"', '\\"')
-    esc_formula = body.formula.replace('"', '\\"')
-    ttl = f"""
-<{subj}> <{RDF_TYPE}> <{NS}Metric> .
-<{subj}> <{SKOS_PREF}> "{esc_name}"@zh .
-<{subj}> <{NS}formula> "{esc_formula}"@zh .
-<{subj}> <{NS}approvalStatus> "{body.status}" .
-"""
-    insert_graph(kb_graph_iri(kb_id), ttl)
-    return {"ok": True, "metric_id": metric.id, "iri": subj}
+    result = writer.write_metric(kb_id, metric_input)
+    return {"ok": True, "kb_id": kb_id, **result}

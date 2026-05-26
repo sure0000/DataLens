@@ -83,15 +83,13 @@ def test_local_store_persist(tmp_path, monkeypatch):
 
     from services import ontology_store as osmod
 
-    osmod._local_dataset = None
-    osmod._tbox_loaded = False
-    osmod._fuseki_live = None
+    osmod.reset_triple_store()
 
     osmod.insert_graph(kb_graph_iri(1), f"<{table_iri(9)}> <{NS}platformId> \"9\" .")
     assert store_file.is_file()
     assert store_file.stat().st_size > 0
 
-    osmod._local_dataset = None
+    osmod.reset_triple_store()
     ds = osmod._get_local_dataset()
     assert len(ds) >= 1
     get_settings.cache_clear()
@@ -104,9 +102,7 @@ def test_insert_and_query_local_sparql(monkeypatch):
 
     from services import ontology_store as osmod
 
-    osmod._local_dataset = None
-    osmod._tbox_loaded = False
-    osmod._fuseki_live = None
+    osmod.reset_triple_store()
 
     graph = kb_graph_iri(99)
     insert_graph(
@@ -116,3 +112,44 @@ def test_insert_and_query_local_sparql(monkeypatch):
     rows = sparql_query(f"SELECT ?p ?o WHERE {{ <{table_iri(5)}> ?p ?o }}")
     assert isinstance(rows, list)
     get_settings.cache_clear()
+
+
+def test_assertion_lifecycle_mapping():
+    from services.ontology.assertion_lifecycle import lifecycle_phase, LIFECYCLE_TO_STATUS
+
+    assert lifecycle_phase("draft") == "draft"
+    assert lifecycle_phase("approved") == "production"
+    assert LIFECYCLE_TO_STATUS["production"] == "approved"
+
+
+def test_quarantine_templates_unresolved():
+    from services.ontology.quarantine_templates import apply_template, suggest_templates
+
+    templates = suggest_templates("unresolved_table_ref", {"subject": "s", "predicate": "p", "object": "orders"})
+    assert any(t["id"] == "map_table_by_platform_id" for t in templates)
+    fix = apply_template(
+        1,
+        reason="unresolved_table_ref",
+        raw_triple={"subject": "s", "predicate": "p", "object": "orders", "object_is_uri": False},
+        template_id="map_table_by_platform_id",
+        params={"platform_id": 42},
+    )
+    assert fix["ok"] and fix["action"] == "write"
+    assert "table/42" in fix["triple"]["object"]
+
+
+def test_modeling_layer_key_normalization():
+    from services.ontology.modeling_layers import normalize_layer_key
+
+    assert normalize_layer_key("vocabulary") == "vocabulary"
+    assert normalize_layer_key("entity_concept") == "entity-concept"
+    assert normalize_layer_key("unknown") is None
+
+
+def test_connector_registry_resolve():
+    from services.ingestion.connectors import resolve_asset_connector
+
+    ak, conn = resolve_asset_connector(route_key="import-file")
+    assert ak == "semantic_doc" and conn == "file"
+    ak2, conn2 = resolve_asset_connector(source_kind="notion")
+    assert ak2 == "semantic_doc" and conn2 == "api"

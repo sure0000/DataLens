@@ -1,32 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 import PageHeader from "../../../components/PageHeader";
 import Toast from "../../../components/Toast";
 import { api, ApiError, formatApiError } from "../../../lib/api";
-import { tabActive, tabInactive } from "../../../lib/themeClasses";
 
 import type {
   ApiSource,
+  DatabaseImport,
   DocRow,
   Entry,
   GitSource,
   KB,
+  OntologyCleaningResults,
+  OntologyCounts,
+  SourceCleaningStat,
 } from "../../../components/knowledge-bases/types";
 
 import EditKbModal from "../../../components/knowledge-bases/EditKbModal";
-import CleanPipeline from "../../../components/knowledge-bases/CleanPipeline";
-import { computePipelineSteps } from "../../../components/knowledge-bases/utils";
-import type { PipelineStats } from "../../../components/knowledge-bases/types";
-import OntologyWorkspace from "../../../components/ontology/OntologyWorkspace";
 import GitSourceForm, {
   defaultGitFormData,
   type GitSourceFormData,
 } from "../../../components/knowledge-bases/GitSourceForm";
 import ImportPickerModal from "../../../components/knowledge-bases/ImportPickerModal";
+import EvidencePackageList from "../../../components/knowledge-bases/EvidencePackageList";
+import OntologyCleanResultCards from "../../../components/knowledge-bases/OntologyCleanResultCards";
 import type { SourceItem } from "../../../components/knowledge-bases/SourceCard";
 import SourceCardGrid from "../../../components/knowledge-bases/SourceCardGrid";
 
@@ -46,7 +47,6 @@ type GitHubDiagResponse = {
 
 export default function KnowledgeBaseDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const kbId = Number(params.id);
 
   // ── Core data ──
@@ -109,11 +109,19 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   // ── Tag loading ──
   const [tagLoading, setTagLoading] = useState(false);
 
-  // ── 视图 Tab：来源 | 本体建模 ──
-  type KbViewTab = "sources" | "ontology";
-  const [activeView, setActiveView] = useState<KbViewTab>("sources");
-  const [pipelineStats, setPipelineStats] = useState<PipelineStats | null>(null);
-  const [pipelineRunning, setPipelineRunning] = useState(false);
+  // ── Database imports ──
+  const [databaseImports, setDatabaseImports] = useState<DatabaseImport[]>([]);
+
+  // ── Semantic cleaning ──
+  const [cleaningSourceId, setCleaningSourceId] = useState<number | null>(null);
+  const cleaningPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // ── Ontology cleaning results ──
+  const [cleaningResults, setCleaningResults] = useState<OntologyCleaningResults | null>(null);
+  const [cleaningResultsLoading, setCleaningResultsLoading] = useState(false);
+
+  // ── Per-source cleaning stats ──
+  const [cleaningStats, setCleaningStats] = useState<Record<string, SourceCleaningStat> | null>(null);
 
   // ═══════════════════════════════════════════════════
   // Data fetching
@@ -125,35 +133,6 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       const res = await api<{ documents: DocRow[] }>(`/api/knowledge-bases/${kbId}/documents`);
       setDocuments(res.documents ?? []);
     } catch { setDocuments([]); } finally { setDocsLoading(false); }
-  }
-
-  async function loadPipelineStats() {
-    try {
-      const stats = await api<PipelineStats>(`/api/knowledge-bases/${kbId}/pipeline-stats`);
-      setPipelineStats(stats);
-    } catch {
-      setPipelineStats(null);
-    }
-  }
-
-  async function runSemanticPipeline() {
-    setPipelineRunning(true);
-    try {
-      const res = await api<{ status: string; run_id?: number }>(
-        `/api/knowledge-bases/${kbId}/semantic-pipeline/run`,
-        { method: "POST" },
-      );
-      if (res.status === "running") {
-        notifyUser("语义提取已在运行中，请稍后刷新查看结果", "info");
-      } else {
-        notifyUser("语义提取完成，正在刷新数据…", "success");
-      }
-      await loadPipelineStats();
-    } catch (e: unknown) {
-      notifyUser(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "启动失败", "error");
-    } finally {
-      setPipelineRunning(false);
-    }
   }
 
   async function loadAll() {
@@ -169,8 +148,12 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       setEntries(res.entries);
       setGitSources(gitRes.git_sources ?? []);
       setApiSources(apiRes.api_sources ?? []);
+      const dbRes = await api<{ imports: DatabaseImport[] }>(`/api/knowledge-bases/${kbId}/database-imports`).catch(() => ({ imports: [] }));
+      setDatabaseImports(dbRes.imports ?? []);
       loadDocuments();
-      loadPipelineStats();
+      loadCleaningResults();
+      loadSourceCleaningStats();
+      checkRunningPipeline();
     } catch {
       setKb(null); setEntries([]); setGitSources([]); setApiSources([]);
     } finally {
@@ -178,12 +161,53 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     }
   }
 
+  function checkRunningPipeline() {
+    if (cleaningPollRef.current) return;
+
+    api<{ last_pipeline_run: { id: number; status: string; source_id: number | null } | null }>(
+      `/api/knowledge-bases/${kbId}/pipeline-stats`
+    ).then(stats => {
+      const run = stats.last_pipeline_run;
+      if (run && run.status === "running") {
+        // Restore cleaning source ID from the pipeline record (persisted in DB)
+        if (run.source_id != null) setCleaningSourceId(run.source_id);
+        startCleaningPoll(run.id);
+      }
+    }).catch(() => { /* ignore */ });
+  }
+
+  async function loadCleaningResults() {
+    setCleaningResultsLoading(true);
+    try {
+      const res = await api<OntologyCleaningResults>(`/api/ontology/knowledge-bases/${kbId}/ontology-cleaning-results`);
+      setCleaningResults(res);
+    } catch {
+      setCleaningResults(null);
+    } finally {
+      setCleaningResultsLoading(false);
+    }
+    loadSourceCleaningStats();
+  }
+
+  async function loadSourceCleaningStats() {
+    try {
+      const res = await api<{ ok: boolean; kb_id: number; stats: Record<string, SourceCleaningStat> }>(
+        `/api/knowledge-bases/${kbId}/source-cleaning-stats`
+      );
+      setCleaningStats(res.stats ?? null);
+    } catch {
+      setCleaningStats(null);
+    }
+  }
+
   useEffect(() => { loadAll(); }, [kbId]);
 
+  // Cleanup polling interval on unmount
   useEffect(() => {
-    const tab = searchParams.get("tab");
-    if (tab === "ontology") setActiveView("ontology");
-  }, [searchParams]);
+    return () => {
+      if (cleaningPollRef.current) clearInterval(cleaningPollRef.current);
+    };
+  }, [kbId]);
 
   // Close settings menu on outside click
   useEffect(() => {
@@ -206,6 +230,99 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       loadDocuments();
     } catch (e: unknown) {
       notifyUser(e instanceof Error ? e.message : "重试失败", "error");
+    }
+  }
+
+  // ── Semantic clean ──
+
+  function clearCleaningState() {
+    if (cleaningPollRef.current) clearInterval(cleaningPollRef.current);
+    cleaningPollRef.current = null;
+    setCleaningSourceId(null);
+  }
+
+  function startCleaningPoll(previousRunId: number | null) {
+    if (cleaningPollRef.current) clearInterval(cleaningPollRef.current);
+
+    const pollStart = Date.now();
+    const MAX_POLL_MS = 10 * 60 * 1000;
+    let seenRunning = false;
+
+    cleaningPollRef.current = setInterval(async () => {
+      try {
+        const stats = await api<{ last_pipeline_run: { id: number; status: string } | null }>(
+          `/api/knowledge-bases/${kbId}/pipeline-stats`
+        );
+        const run = stats.last_pipeline_run;
+
+        // Track this run if: it's a new run, it's currently running, or we already confirmed it
+        const isOurRun = run && (
+          run.id !== previousRunId || run.status === "running" || seenRunning
+        );
+
+        if (!run || !isOurRun) {
+          if (Date.now() - pollStart > 30000) {
+            clearCleaningState();
+            notifyUser("语义清洗可能未能启动，请重试", "error");
+          }
+          return;
+        }
+
+        if (run.status === "running") {
+          seenRunning = true;
+          return;
+        }
+
+        if (seenRunning || Date.now() - pollStart > 6000) {
+          clearCleaningState();
+          loadCleaningResults();
+          if (run.status === "failed") {
+            notifyUser("语义清洗失败，请重试", "error");
+          } else {
+            notifyUser("语义清洗已完成", "success");
+          }
+          return;
+        }
+      } catch {
+        // Keep polling on transient errors
+      }
+
+      if (Date.now() - pollStart > MAX_POLL_MS) {
+        clearCleaningState();
+        loadCleaningResults();
+        notifyUser("语义清洗超时，请手动刷新查看结果", "error");
+      }
+    }, 3000);
+  }
+
+  async function handleSemanticClean(source: SourceItem) {
+    let sourceId: number;
+    let sourceType: string;
+    if (source.kind === "git") { sourceId = source.data.id; sourceType = "git"; }
+    else if (source.kind === "database") { sourceId = source.data.id; sourceType = "database"; }
+    else if (source.kind === "api") { sourceId = source.data.id; sourceType = "api"; }
+    else { sourceId = source.entry.id; sourceType = source.kind === "api_entry" ? "api" : "file"; }
+
+    setCleaningSourceId(sourceId);
+    notifyUser("正在触发语义清洗…", "info");
+    try {
+      let previousRunId: number | null = null;
+      try {
+        const stats = await api<{ last_pipeline_run: { id: number } | null }>(
+          `/api/knowledge-bases/${kbId}/pipeline-stats`
+        );
+        previousRunId = stats.last_pipeline_run?.id ?? null;
+      } catch { /* proceed without snapshot */ }
+
+      await api(`/api/knowledge-bases/${kbId}/sources/${sourceId}/clean?source_type=${sourceType}`, { method: "POST" });
+      notifyUser("语义清洗已触发，正在后台运行…", "success");
+      startCleaningPoll(previousRunId);
+    } catch (e: unknown) {
+      notifyUser(
+        e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "清洗启动失败",
+        "error"
+      );
+      setCleaningSourceId(null);
     }
   }
 
@@ -349,6 +466,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   function getSourceTags(source: SourceItem): string[] {
     if (source.kind === "git") return source.data.tags ?? [];
     if (source.kind === "api") return source.data.tags ?? [];
+    if (source.kind === "database") return [];
     return source.entry.tags ?? [];
   }
 
@@ -365,6 +483,9 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
           method: "PUT",
           body: JSON.stringify({ tags }),
         });
+      } else if (source.kind === "database") {
+        // Database imports don't support tags yet
+        return;
       } else {
         await api(`/api/knowledge-bases/${kbId}/entries/${source.entry.id}`, {
           method: "PUT",
@@ -398,10 +519,6 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   // Render
   // ═══════════════════════════════════════════════════
 
-  const hasGitSource = gitSources.length > 0;
-  const pipelineSteps = computePipelineSteps(pipelineStats, hasGitSource);
-  const hasIndexedDocs = documents.some((d) => d.status === "indexed");
-
   return (
     <main className="app-page">
       <PageHeader
@@ -410,19 +527,15 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
           { label: kb?.name || "…" },
         ]}
         title={kb?.name || "语义知识库"}
-        subtitle={kb?.description || "文档导入后自动清洗、分块、向量化；语义流水线提取术语与指标，并同步到 Fuseki RDF 本体层。"}
+        subtitle={kb?.description || "数据接入层：登记证据包并完成分块索引；在源卡片触发「语义清洗」进入本体建模流水线。"}
         actions={
           <div className="app-toolbar flex-wrap">
-            {activeView === "ontology" && hasIndexedDocs && (
-              <button
-                type="button"
-                className={`app-button app-toolbar-action ${pipelineRunning ? "is-loading" : ""}`}
-                disabled={pipelineRunning}
-                onClick={() => void runSemanticPipeline()}
-              >
-                {pipelineRunning ? "运行中…" : "运行语义流水线"}
-              </button>
-            )}
+            <Link
+              href={`/knowledge-bases/${kbId}/ontology`}
+              className="app-button-secondary app-toolbar-action no-underline"
+            >
+              本体浏览
+            </Link>
             <div className="relative" ref={settingsMenuRef}>
               <button
                 className="app-button-secondary app-toolbar-action"
@@ -451,7 +564,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
               )}
             </div>
             <button className="app-button app-toolbar-action" type="button" onClick={() => setImportPickerOpen(true)}>
-              导入
+              数据接入
             </button>
           </div>
         }
@@ -463,59 +576,55 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
 
       {!loading && kb && (
         <>
-          <div className="mt-4 flex items-center gap-1 border-b border-app-border">
-            <button
-              type="button"
-              className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeView === "sources" ? tabActive : tabInactive
-              }`}
-              onClick={() => setActiveView("sources")}
-            >
-              来源
-            </button>
-            <button
-              type="button"
-              className={`px-3 py-2 text-sm font-medium border-b-2 transition-colors ${
-                activeView === "ontology" ? tabActive : tabInactive
-              }`}
-              onClick={() => setActiveView("ontology")}
-            >
-              本体建模
-            </button>
-          </div>
+          {/* Derive ontology counts from cleaning results layers */}
+          {(() => {
+            const layers = cleaningResults?.layers;
+            const ontologyCounts: OntologyCounts | undefined = layers ? {
+              entity: (layers.vocabulary?.total ?? 0) + (layers["entity-concept"]?.total ?? 0),
+              relation: layers.relation?.total ?? 0,
+            } : undefined;
 
-          {activeView === "sources" ? (
-          <>
-          <div className="mt-6">
-            <CleanPipeline steps={pipelineSteps} />
-          </div>
+            return (
+              <div className="mt-6">
+                <SourceCardGrid
+                  gitSources={gitSources}
+                  entries={entries}
+                  documents={documents}
+                  databaseImports={databaseImports}
+                  kbId={kbId}
+                  gitSyncingId={gitSyncingId}
+                  onSyncGit={syncGitSourceNow}
+                  onRetryDoc={retryDocument}
+                  onRefresh={loadAll}
+                  onAddTag={handleAddTag}
+                  onRemoveTag={handleRemoveTag}
+                  tagLoading={tagLoading}
+                  onSemanticClean={handleSemanticClean}
+                  cleaningSourceId={cleaningSourceId}
+                  cleaningStats={cleaningStats}
+                  ontologyCounts={ontologyCounts}
+                />
+              </div>
+            );
+          })()}
 
-          <div className="mt-6">
-            <SourceCardGrid
-              gitSources={gitSources}
-              entries={entries}
-              documents={documents}
+          <section className="mt-8 space-y-3">
+            <h2 className="app-section-title">证据包登记</h2>
+            <p className="text-xs text-app-muted">
+              导入层统一视图：按语义资产类型与连接器登记的证据（写入 RDF 前仅作溯源与流水线输入）。
+            </p>
+            <EvidencePackageList kbId={kbId} />
+          </section>
+
+          <div className="mt-8">
+            <OntologyCleanResultCards
+              results={cleaningResults}
               kbId={kbId}
-              gitSyncingId={gitSyncingId}
-              onSyncGit={syncGitSourceNow}
-              onRetryDoc={retryDocument}
-              onRefresh={loadAll}
-              onAddTag={handleAddTag}
-              onRemoveTag={handleRemoveTag}
-              tagLoading={tagLoading}
+              loading={cleaningResultsLoading}
             />
           </div>
 
           {docsLoading && <p className="text-sm text-app-muted mt-3">加载文档状态…</p>}
-          </>
-          ) : (
-          <div className="mt-4 flex min-h-[480px] flex-col">
-            <CleanPipeline steps={pipelineSteps} />
-            <div className="mt-4 min-h-0 flex-1">
-              <OntologyWorkspace fixedKbId={kbId} embedded />
-            </div>
-          </div>
-          )}
 
           {/* ── Modals ── */}
           <ImportPickerModal

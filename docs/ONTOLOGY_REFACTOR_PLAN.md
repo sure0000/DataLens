@@ -1,0 +1,481 @@
+# DataLens 本体驱动重构方案
+
+> **产品/UI 演进（导入层、展示层、EvidencePackage）：** 见 [本体三层架构与 UI 优化方案](./ONTOLOGY_LAYER_UI_OPTIMIZATION.md)。
+
+## 核心设计原则
+
+1. **本体即中枢** — RDF 知识图谱是语义数据的唯一真相源（Single Source of Truth），PostgreSQL 退化为性能缓存
+2. **TBox / ABox 严格分离** — 模式层与实例层独立管理，支持推理和验证
+3. **SHACL 守门** — 所有写操作经 SHACL 校验，通过→生产图，失败→隔离区
+4. **OWL 2 RL 推理原生嵌入** — 查询管线内置 subclass、property path、transitive 推理
+5. **多层本体架构** — 企业层 → 领域层 → 应用层（知识库），逐层细化
+6. **事件驱动** — 文档导入 → LLM 提取 → 直接写 RDF → SHACL → 推理 → PG 缓存刷新
+
+---
+
+## 一、本体模型（TBox）完整设计
+
+### 四层本体架构
+
+```
+Layer 0: Enterprise Ontology (企业本体)
+  Named Graph: graph/enterprise
+  跨所有业务域共享的顶层概念、属性、公理
+
+Layer 1: Domain Ontology (领域本体)
+  Named Graph: graph/domain/{id}
+  每个业务域的 TBox 扩展 — 领域特定概念、SHACL 形状
+
+Layer 2: Application Ontology (知识库本体)
+  Named Graph: graph/kb/{id}        ← ABox (实例)
+  Named Graph: graph/quarantine/{id} ← 隔离区
+  知识库级别的实例数据 — 术语、指标、血缘、物理表映射
+
+Layer 3: Inference Graph (推理闭包)
+  Named Graph: graph/inferred/{domain_or_kb}
+  OWL 2 RL 推理机生成的推导三元组，每次写入后自动刷新
+```
+
+### 本体清洗五层模型
+
+所有写入知识图谱的 ABox 数据经过清洗管线（`clean_triples`）时，按以下五个语义层进行分类和校验：
+
+```
+Layer 1: 词汇层 (Vocabulary / Terminology)
+  对应: dl:BusinessTerm（业务术语）
+  提取器: term_extractor.py
+  关键属性: skos:prefLabel, skos:definition, dl:belongsToDomain, dl:mapsToColumn
+  SHACL:  term.shacl.ttl — prefLabel≥1, definition≥1, belongsToDomain≥1
+  说明: 定义业务中"叫什么、是什么意思"，是语义理解的字典基础
+
+Layer 2: 规则层 (Rule / Assertion)
+  对应: dl:Metric（指标）、dl:BusinessRule（业务规则）
+  提取器: metric_extractor.py, rule_extractor.py
+  关键属性: dl:formula, dl:caliber, dl:computedFromTable, dl:ruleExpression, dl:ruleType
+  SHACL:  metric.shacl.ttl — formula≥1, computedFromTable≥1
+  说明: 定义"如何计算、如何判断"的逻辑规则，指标本质上是带口径的量化规则
+
+Layer 3: 实体概念层 (Entity / Concept)
+  对应: dl:BusinessConcept 及其子类（Metric, Dimension, BusinessTerm 的实例身份）
+  提取器: hierarchy_builder.py（层级归属）、dimension_extractor.py（维度定义）
+  关键属性: rdf:type, skos:inScheme, skos:broader/narrower
+  SHACL:  hierarchy.shacl.ttl — 无自环, 层级深度≤6
+  说明: 定义"是什么类型的业务对象"，建立概念的身份和层级归属
+
+Layer 4: 关系层 (Relation)
+  对应: 概念之间的语义边（dependsOn, derivedFrom, skos:related, joinableWith, transformsFrom）
+  提取器: relation_extractor.py, lineage_extractor.py, join_extractor.py
+  关键属性: dl:dependsOn, dl:derivedFrom, skos:related, dl:joinableWith, dl:transformsFrom
+  SHACL:  lineage.shacl.ttl, join.shacl.ttl
+  说明: 定义"概念之间如何关联"，连接词汇层和规则层中的实体形成知识图谱
+
+Layer 5: 属性层 (Attribute / Data Property)
+  对应: 所有概念的 OWL DatatypeProperty 值（文本、数值、日期等字面量）
+  提取器: 所有提取器共同产出（每个 RawTriple 的 object_is_uri=False 分支）
+  关键属性: skos:prefLabel, skos:definition, dl:formula, dl:caliber, dl:platformId 等
+  SHACL:  各 Shape 中的 property 约束（minCount, maxCount, datatype）
+  说明: 定义"概念有什么特征值"，是填充概念实例的具体数据
+```
+
+**清洗管线映射：** 五层数据统一经过 `clean_triples()` 的 9 阶段管道（语法规范化 → 实体链接 → TBox 谓词白名单 → 去重 → 状态门控 → SHACL 校验），按层分类写入对应命名图。
+
+**术语/指标定位：**
+- **术语 (BusinessTerm)** 属于 **词汇层** — 定义业务语言的含义和指称
+- **指标 (Metric)** 属于 **规则层** — 定义可量化的计算口径和判定逻辑
+
+### 完整的 TBox 类层级
+
+```
+owl:Thing
+├── dl:ConceptScheme            (SKOS 概念体系 — 领域级术语组织)
+│
+├── dl:BusinessConcept          (业务概念 — 所有业务语义的基类)
+│   ├── rdfs:subClassOf  skos:Concept
+│   ├── skos:inScheme  → dl:ConceptScheme
+│   │
+│   ├── dl:BusinessTerm         (业务术语)
+│   │   ├── dl:mapsToColumn  → dl:PhysicalColumn
+│   │   ├── dl:dependsOn     → dl:BusinessTerm
+│   │   ├── dl:definedIn     → dl:KnowledgeBase
+│   │   └── dl:groundedBy    → dl:DocumentChunk    (溯源)
+│   │
+│   ├── dl:Metric               (指标)
+│   │   ├── dl:formula           xsd:string
+│   │   ├── dl:caliber           xsd:string
+│   │   ├── dl:computedFromTable → dl:PhysicalTable
+│   │   ├── dl:derivedFrom       → dl:Metric          (指标派生链)
+│   │   ├── dl:aggregatesOver    → dl:Dimension       (聚合维度)
+│   │   └── dl:groundedBy        → dl:DocumentChunk
+│   │
+│   ├── dl:Dimension            (维度)
+│   │   ├── dl:dimensionType     xsd:string  {time|geo|category|hierarchy}
+│   │   └── dl:mapsToColumn      → dl:PhysicalColumn
+│   │
+│   └── dl:BusinessRule         (业务规则)
+│       ├── dl:ruleExpression    xsd:string
+│       └── dl:ruleType          xsd:string  {validation|derivation|constraint}
+│
+├── dl:DataAsset                (数据资产)
+│   ├── dl:PhysicalTable        (物理表)
+│   │   ├── dl:platformId        xsd:integer
+│   │   ├── dl:businessSummary   xsd:string
+│   │   ├── dl:rowCount          xsd:integer
+│   │   ├── dl:sensitivityLevel  xsd:string  {public|internal|confidential|restricted}
+│   │   ├── schema:isPartOf      → dl:DataSource
+│   │   ├── dl:hasMeasure        → dl:Metric
+│   │   ├── dl:hasDimension      → dl:Dimension
+│   │   ├── dl:joinableWith      → dl:PhysicalTable   (owl:SymmetricProperty)
+│   │   └── dl:transformsFrom    → dl:PhysicalTable   (owl:TransitiveProperty)
+│   │
+│   ├── dl:PhysicalColumn       (物理列)
+│   │   ├── schema:isPartOf      → dl:PhysicalTable
+│   │   ├── dl:semanticType      xsd:string
+│   │   ├── dl:semanticDescription xsd:string
+│   │   ├── dl:dataType          xsd:string
+│   │   └── dl:nullable          xsd:boolean
+│   │
+│   └── dl:View                 (视图/逻辑表)
+│       ├── dl:viewDefinition    xsd:string
+│       └── dl:materializedFrom  → dl:PhysicalTable
+│
+├── dl:DataSource               (数据源)
+│   ├── dl:connectionString      xsd:string
+│   ├── dl:sourceType            xsd:string
+│   └── dl:host                  xsd:string
+│
+├── dl:KnowledgeBase            (知识库)
+│   ├── skos:prefLabel           xsd:string
+│   ├── dcterms:description      xsd:string
+│   ├── dl:hasSource             → dl:DataSource
+│   ├── dl:producesConcept       → dl:BusinessConcept
+│   └── dl:documentedBy          → dl:Document
+│
+├── dl:Document                 (文档)
+│   ├── dl:title                 xsd:string
+│   ├── dl:sourceUri             xsd:anyURI
+│   ├── dl:mimeType              xsd:string
+│   └── dl:hasChunk              → dl:DocumentChunk
+│
+├── dl:DocumentChunk            (文档片段)
+│   ├── dl:chunkText             xsd:string
+│   ├── dl:chunkIndex            xsd:integer
+│   ├── dl:embeddingRef          xsd:string         (PG 向量引用)
+│   ├── dl:partOf                → dl:Document
+│   └── dl:asserts               → dl:BusinessConcept (溯源)
+│
+├── dl:LineageAssertion         (血缘断言)
+│   ├── dl:transformLogic        xsd:string
+│   ├── dl:layer                 xsd:string  {ODS|DWD|DWS|ADS|DM}
+│   ├── dl:sourceField           xsd:string
+│   └── dl:targetField           xsd:string
+│
+├── dl:JoinRelation             (JOIN 关系)
+│   ├── dl:leftTable             → dl:PhysicalTable
+│   ├── dl:rightTable            → dl:PhysicalTable
+│   ├── dl:joinKey               xsd:string
+│   └── dl:joinType              xsd:string  {inner|left|right|full}
+│
+└── dl:QuarantinedAssertion     (隔离区断言)
+    ├── dl:rejectReason          xsd:string
+    ├── dl:rawTriple             xsd:string
+    ├── dl:suggestedFix          xsd:string
+    └── dl:originatedFrom        → owl:Thing
+```
+
+### SKOS 层级关系（术语/指标间）
+
+```
+dl:BusinessConcept
+├── skos:broader       → dl:BusinessConcept    (上位概念)
+├── skos:narrower      → dl:BusinessConcept    (下位概念)
+├── skos:related       → dl:BusinessConcept    (相关概念)
+├── skos:exactMatch    → dl:BusinessConcept    (跨域等价)
+├── skos:closeMatch    → dl:BusinessConcept    (近似匹配)
+└── skos:altLabel       xsd:string             (同义词)
+```
+
+### 公理与约束
+
+```turtle
+dl:joinableWith    rdf:type owl:SymmetricProperty .
+dl:transformsFrom  rdf:type owl:TransitiveProperty .
+dl:derivedFrom     rdf:type owl:TransitiveProperty .
+dl:formula         rdf:type owl:FunctionalProperty .
+dl:platformId      rdf:type owl:FunctionalProperty .
+
+dl:BusinessTerm    owl:disjointWith  dl:Metric .
+dl:Dimension       owl:disjointWith  dl:Metric .
+dl:PhysicalTable   owl:disjointWith  dl:BusinessConcept .
+```
+
+### SHACL 形状体系
+
+| 形状 | 目标类 | 约束 |
+|------|--------|------|
+| TermShape | dl:BusinessTerm | prefLabel min=1, definition min=1, belongsToDomain min=1 |
+| MetricShape | dl:Metric | prefLabel min=1, formula min=1, computedFromTable min=1 |
+| HierarchyShape | dl:BusinessConcept | broader 无自环, 层级深度≤6 |
+| LineageShape | dl:LineageAssertion | sourceField 或 targetField ≥1 |
+| PhysicalTableShape | dl:PhysicalTable | platformId min=1, belongsToDataSource min=1 |
+
+---
+
+## 二、后端架构
+
+### 目录结构
+
+```
+backend/
+├── main.py                          # FastAPI 入口
+├── config.py                        # 配置
+├── database.py                      # PG 引擎 + pgvector（纯缓存/索引）
+│
+├── ontology/                        # 本体定义
+│   ├── tbox/
+│   │   ├── enterprise.ttl           # 企业本体
+│   │   ├── core.ttl                 # 核心业务概念
+│   │   ├── governance.ttl           # 数据治理扩展
+│   │   └── provenance.ttl           # PROV-O 扩展
+│   ├── shacl/
+│   │   ├── term.shacl.ttl
+│   │   ├── metric.shacl.ttl
+│   │   ├── hierarchy.shacl.ttl
+│   │   ├── lineage.shacl.ttl
+│   │   └── table.shacl.ttl
+│   └── rules/
+│       └── inference.rules
+│
+├── services/
+│   ├── triple_store/                # 三元组存储层
+│   │   ├── store.py                 # Fuseki SPARQL 客户端
+│   │   ├── cache.py                 # SPARQL 结果缓存
+│   │   └── migrations.py            # 本体版本迁移
+│   │
+│   ├── ontology/                    # 本体操作层
+│   │   ├── writer.py                # 写入（经 SHACL → 生产图）
+│   │   ├── reader.py                # 读取（含推理图查询）
+│   │   ├── reasoner.py              # OWL 2 RL 推理引擎
+│   │   ├── validator.py             # SHACL 校验
+│   │   └── quarantine.py            # 隔离区管理
+│   │
+│   ├── extraction/                  # LLM 知识提取层
+│   │   ├── orchestrator.py          # 提取流水线编排
+│   │   ├── term_extractor.py        # 术语 + 层级提取
+│   │   ├── metric_extractor.py      # 指标 + 派生链提取
+│   │   ├── relation_extractor.py    # 关系提取
+│   │   ├── lineage_extractor.py     # 数据血缘提取
+│   │   └── hierarchy_builder.py     # 术语层级自动构建
+│   │
+│   ├── copilot/                     # Copilot 查询引擎
+│   │   ├── pipeline.py              # 查询流水线编排
+│   │   ├── intent.py                # 意图分类
+│   │   ├── router.py                # 本体路由
+│   │   ├── context.py               # 上下文组装
+│   │   ├── sql_gen.py               # SQL 生成
+│   │   ├── sql_review.py            # SQL 审查
+│   │   └── executor.py              # 执行 + 自动修复
+│   │
+│   ├── retrieval/                   # 检索层
+│   │   ├── hybrid_search.py         # BM25 + 向量混合检索
+│   │   ├── embedding.py             # 向量嵌入服务
+│   │   └── ranking.py               # RRF 融合排序
+│   │
+│   └── ingestion/                   # 数据摄入层
+│       ├── evidence.py              # ✅ 合成视图
+│       ├── registry.py              # ✅ EvidencePackage 持久化 + list_all
+│       ├── events.py                # ✅ document.indexed / evidence.*
+│       ├── document.py              # 🔲 规划收敛
+│       ├── schema.py                # 🔲
+│       └── git.py                   # 🔲
+│
+├── routers/                         # API 路由层
+│   ├── copilot.py
+│   ├── ontology.py
+│   ├── knowledge.py
+│   ├── datasources.py
+│   └── governance.py
+│
+├── models.py                        # PG ORM（仅缓存表）
+└── prompts/                         # LLM Prompt 模板
+```
+
+---
+
+## 三、前端架构
+
+### 页面路由
+
+```
+/                              → 重定向到 /copilot
+/copilot                       → Copilot 对话（主界面）
+/copilot?domain=X&session=Y
+/ontology                      → 本体浏览（统一 OntologyWorkspace）✅
+/knowledge-bases/[id]/ontology → 知识库内本体浏览 ✅
+/knowledge-bases               → 知识库列表（数据接入层）✅
+/knowledge-bases/[id]          → 知识库详情 + 证据包列表
+/datasources                   → 数据源管理
+/datasources/[id]              → 数据源详情
+/datasources/[id]/tables/[tid] → 表详情
+/governance                    → 治理面板
+/settings                      → 设置
+```
+
+### 关键组件
+
+```
+components/
+├── ontology/
+│   ├── ConceptHierarchyTree.tsx    # SKOS 层级树
+│   ├── ConceptDetailPanel.tsx      # 概念详情侧栏
+│   ├── RelationGraph.tsx           # 交互式关系图谱
+│   ├── MetricDerivationChain.tsx   # 指标派生链
+│   ├── TableLineageGraph.tsx       # 表血缘 DAG
+│   ├── TripleViewer.tsx            # 三元组表格浏览
+│   ├── ShaclViolationList.tsx      # SHACL 违规列表
+│   ├── OntologyStatsCards.tsx      # 本体统计卡片
+│   └── IriBreadcrumb.tsx           # IRI 面包屑
+│
+├── copilot/
+│   ├── ChatView.tsx
+│   ├── MessageBubble.tsx
+│   ├── TraceTimeline.tsx           # 查询推理追踪
+│   ├── ContextInspector.tsx        # 上下文检查器
+│   ├── SqlPreview.tsx
+│   └── DomainSelector.tsx
+│
+├── knowledge/
+│   ├── SourceCardGrid.tsx
+│   ├── SourcePipeline.tsx
+│   ├── OutputTabs.tsx
+│   └── DocumentTable.tsx
+│
+├── datasource/
+│   ├── TableCardGrid.tsx
+│   ├── TableSemanticPanel.tsx
+│   ├── ColumnList.tsx
+│   └── LineageDagView.tsx
+│
+├── governance/
+│   ├── QuarantineList.tsx
+│   ├── ShaclDashboard.tsx
+│   ├── ConfidenceDistribution.tsx
+│   └── ApproveRejectPanel.tsx
+│
+└── shared/
+    ├── EntityBadge.tsx
+    ├── IriLink.tsx
+    ├── ConfidenceBar.tsx
+    ├── StatusChip.tsx
+    └── StatCard.tsx
+```
+
+---
+
+## 四、数据流
+
+```
+数据源 → schema 采集 → dl:PhysicalTable/dl:PhysicalColumn (RDF)
+
+文档/Git/API → 文本提取 → 清洗 → 分块
+                             ├→ 向量嵌入 (PG pgvector)
+                             └→ LLM 语义提取
+                                  ├→ 术语 + 层级 (broader/narrower)
+                                  ├→ 指标 + 派生链 (derivedFrom/aggregatesOver)
+                                  ├→ 关系 (dependsOn/related)
+                                  └→ 血缘 (transformsFrom)
+                                       │
+                                  SHACL 校验
+                                  ├→ 通过 → 生产图 (ABox)
+                                  └→ 失败 → 隔离区
+                                       │
+                                  OWL 2 RL 推理 → 推理图
+                                       │
+                                  PG 缓存刷新 (全文索引/向量)
+
+
+Copilot 查询:
+  用户问题 → 意图分类 → SPARQL 概念检索(推理图)
+    → 图扩展(property path) → 候选表排序
+    → 上下文组装 → SQL 生成 → 执行
+```
+
+---
+
+## 五、实现阶段
+
+| Phase | 内容 | 工期 | 状态 |
+|-------|------|------|------|
+| Phase 1 | TBox 重建 + 写入路径 | 2 周 | 🔜 待开始 |
+| Phase 2 | LLM 提取流水线重写 | 2 周 | ⬜ |
+| Phase 3 | 推理引擎重写 | 1 周 | ⬜ |
+| Phase 4 | Copilot 路由本体化 | 2 周 | ⬜ |
+| Phase 5 | 前端重建 | 2 周 | ⬜ |
+
+### Phase 1 详细任务
+
+- [ ] 重写 `ontology/tbox/core.ttl` — 完整的类层级、属性定义、公理
+- [ ] 新建 `ontology/tbox/enterprise.ttl` — 企业层概念体系
+- [ ] 新建 `ontology/tbox/governance.ttl` — 治理元数据
+- [ ] 扩展 `ontology/shacl/` — 5 个 SHACL shape 文件
+- [ ] 新建 `services/ontology/writer.py` — OntologyWriter 类
+- [ ] 重写 `services/ontology/validator.py` — pyshacl 完整校验
+- [ ] 新建 `services/ontology/quarantine.py` — 隔离区管理
+- [ ] 重构 `services/triple_store/store.py` — 去掉全局单例
+- [ ] 精简 `models.py` — 删除 4 张语义表
+
+### Phase 2 详细任务
+
+- [ ] 新建 `services/extraction/orchestrator.py`
+- [ ] 重写 `services/extraction/term_extractor.py`
+- [ ] 重写 `services/extraction/metric_extractor.py`
+- [ ] 新建 `services/extraction/relation_extractor.py`
+- [ ] 新建 `services/extraction/hierarchy_builder.py`
+- [ ] 保留重构 `services/extraction/lineage_extractor.py`
+- [ ] 重写/新建 LLM prompt 文件
+
+### Phase 3 详细任务
+
+- [ ] 重写 `services/ontology/reasoner.py` — OWL 2 RL 完整推理
+- [ ] 新建 `services/ontology/reader.py` — 支持推理图的 SPARQL 查询
+- [ ] 新建 `ontology/rules/inference.rules`
+
+### Phase 4 详细任务
+
+- [ ] 新建 `services/copilot/pipeline.py`
+- [ ] 重写 `services/copilot/router.py` — 合并 5 个 router
+- [ ] 重构 `services/copilot/context.py`
+- [ ] 删除 `services/routing_bundle.py`
+- [ ] 删除 `services/routing/*` — 5 个文件
+- [ ] 删除 `services/context_builder.py`
+
+### Phase 5 详细任务
+
+- [ ] 新建本体浏览组件（ConceptHierarchyTree, ConceptDetailPanel, RelationGraph, MetricDerivationChain）
+- [ ] 重建 Copilot 组件（TraceTimeline, ContextInspector）
+- [ ] 新建治理组件（QuarantineList, ShaclDashboard）
+- [ ] 新建 `/app/ontology/` 页面
+- [ ] 拆分 `copilot/page.tsx` 为多个组件
+
+---
+
+## 六、删除清单
+
+```
+移除的文件：
+  backend/services/routing_bundle.py
+  backend/services/context_builder.py
+  backend/services/routing/domain_router.py
+  backend/services/routing/metric_router.py
+  backend/services/routing/lineage_router.py
+  backend/services/routing/graph_router.py
+  backend/services/routing/ontology_router.py
+  backend/services/ontology_sync_service.py
+  backend/services/semantic_relation_sync.py
+  backend/routers/knowledge_semantic.py
+
+移除的数据库表：
+  business_terms
+  metric_definitions
+  data_lineage
+  semantic_relations
+```

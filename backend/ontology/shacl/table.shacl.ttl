@@ -1,0 +1,25 @@
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix dl:   <https://datalens.local/ontology/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+dl:PhysicalTableShape a sh:NodeShape ;
+  sh:targetClass dl:PhysicalTable ;
+  sh:severity sh:Violation ;
+  sh:property [
+    sh:path dl:platformId ;
+    sh:name "平台 ID"@zh ;
+    sh:description "每张物理表必须有一个平台 ID"@zh ;
+    sh:minCount 1 ;
+    sh:datatype xsd:integer ;
+  ] ;
+  sh:property [
+    sh:path dl:belongsToDataSource ;
+    sh:name "归属数据源"@zh ;
+    sh:minCount 1 ;
+  ] ;
+  sh:property [
+    sh:path dl:sensitivityLevel ;
+    sh:name "敏感等级"@zh ;
+    sh:in ("public" "internal" "confidential" "restricted") ;
+    sh:datatype xsd:string ;
+  ] .

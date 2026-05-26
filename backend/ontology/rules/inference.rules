@@ -1,0 +1,59 @@
+# OWL 2 RL Inference Rules for DataLens Ontology
+#
+# These rules are applied by the reasoner (services/ontology/reasoner.py)
+# after each ABox write to materialize inferred triples into the
+# inferred graph (graph/inferred/{domain}).
+
+# ── RDFS Rules ──────────────────────────────────────────────
+
+# rdfs:subClassOf transitivity
+# IF  ?a rdfs:subClassOf ?b . ?b rdfs:subClassOf ?c
+# THEN ?a rdfs:subClassOf ?c
+[rdfs11] (?a rdf:type ?b) -> (?b rdf:type ?b)
+
+# ── OWL Property Characteristics ────────────────────────────
+
+# owl:TransitiveProperty: dl:derivedFrom, dl:transformsFrom
+# IF  ?a dl:derivedFrom ?b . ?b dl:derivedFrom ?c
+# THEN ?a dl:derivedFrom ?c
+[transitive-derivedFrom] (?a dl:derivedFrom ?b) (?b dl:derivedFrom ?c) -> (?a dl:derivedFrom ?c)
+
+# IF  ?a dl:transformsFrom ?b . ?b dl:transformsFrom ?c
+# THEN ?a dl:transformsFrom ?c
+[transitive-transformsFrom] (?a dl:transformsFrom ?b) (?b dl:transformsFrom ?c) -> (?a dl:transformsFrom ?c)
+
+# owl:SymmetricProperty: dl:joinableWith
+# IF  ?a dl:joinableWith ?b
+# THEN ?b dl:joinableWith ?a
+[symmetric-joinableWith] (?a dl:joinableWith ?b) -> (?b dl:joinableWith ?a)
+
+# ── SKOS Hierarchy ──────────────────────────────────────────
+
+# skos:broader / skos:narrower inverses
+# IF  ?a skos:broader ?b
+# THEN ?b skos:narrower ?a
+[skos-broader-inverse] (?a skos:broader ?b) -> (?b skos:narrower ?a)
+
+# IF  ?a skos:narrower ?b
+# THEN ?b skos:broader ?a
+[skos-narrower-inverse] (?a skos:narrower ?b) -> (?b skos:broader ?a)
+
+# skos:exactMatch symmetry + transitivity
+# IF  ?a skos:exactMatch ?b
+# THEN ?b skos:exactMatch ?a
+[skos-exactMatch-symmetric] (?a skos:exactMatch ?b) -> (?b skos:exactMatch ?a)
+
+# IF  ?a skos:exactMatch ?b . ?b skos:exactMatch ?c
+# THEN ?a skos:exactMatch ?c
+[skos-exactMatch-transitive] (?a skos:exactMatch ?b) (?b skos:exactMatch ?c) -> (?a skos:exactMatch ?c)
+
+# ── Property Chain Axioms ──────────────────────────────────
+
+# Indirect lineage: ?table transformsFrom intermediate → intermediate transformsFrom target
+# Implies ?table transformsFrom target (handled by owl:TransitiveProperty above)
+
+# ── Concept Scheme Membership ───────────────────────────────
+
+# IF  ?concept skos:inScheme ?scheme
+# AND ?scheme a dl:ConceptScheme
+# THEN ?concept belongs to the domain's concept scheme

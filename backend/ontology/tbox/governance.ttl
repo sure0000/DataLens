@@ -1,0 +1,95 @@
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix dqv:     <http://www.w3.org/ns/dqv#> .
+@prefix dl:      <https://datalens.local/ontology/> .
+
+# ═══════════════════════════════════════════════════════════════
+# DataLens Governance Ontology — TBox Extension
+#
+# Provides:
+#   - Data quality concepts (aligned with W3C DQV)
+#   - Sensitivity / classification
+#   - Certification and lifecycle
+#   - Audit trail
+# ═══════════════════════════════════════════════════════════════
+
+# ─────────────────────────────────────────────────────────────
+# 1. QUALITY CLASSES
+# ─────────────────────────────────────────────────────────────
+
+dl:QualityMetric a owl:Class ;
+  rdfs:subClassOf dqv:QualityMeasurement ;
+  rdfs:label "质量指标"@zh , "Quality Metric"@en .
+
+dl:QualityReport a owl:Class ;
+  rdfs:label "质量报告"@zh , "Quality Report"@en ;
+  rdfs:comment "对某实体（术语/指标/表）的质量评估汇总"@zh .
+
+# ─────────────────────────────────────────────────────────────
+# 2. QUALITY OBJECT PROPERTIES
+# ─────────────────────────────────────────────────────────────
+
+dl:hasQualityMetric a owl:ObjectProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range dl:QualityMetric ;
+  rdfs:label "质量指标"@zh .
+
+dl:hasQualityReport a owl:ObjectProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range dl:QualityReport ;
+  rdfs:label "质量报告"@zh .
+
+# ─────────────────────────────────────────────────────────────
+# 3. QUALITY DATATYPE PROPERTIES
+# ─────────────────────────────────────────────────────────────
+
+dl:completenessScore a owl:DatatypeProperty ;
+  rdfs:range xsd:decimal ;
+  rdfs:label "完整度"@zh , "completeness score"@en .
+
+dl:accuracyScore a owl:DatatypeProperty ;
+  rdfs:range xsd:decimal ;
+  rdfs:label "准确度"@zh , "accuracy score"@en .
+
+dl:timelinessScore a owl:DatatypeProperty ;
+  rdfs:range xsd:decimal ;
+  rdfs:label "时效性"@zh , "timeliness score"@en .
+
+dl:consistencyScore a owl:DatatypeProperty ;
+  rdfs:range xsd:decimal ;
+  rdfs:label "一致性"@zh , "consistency score"@en .
+
+dl:uniquenessScore a owl:DatatypeProperty ;
+  rdfs:range xsd:decimal ;
+  rdfs:label "唯一性"@zh , "uniqueness score"@en .
+
+dl:overallQualityScore a owl:DatatypeProperty ;
+  rdfs:range xsd:decimal ;
+  rdfs:label "综合质量分"@zh , "overall quality score"@en .
+
+# ─────────────────────────────────────────────────────────────
+# 4. CLASSIFICATION PROPERTIES
+# ─────────────────────────────────────────────────────────────
+
+dl:certificationStatus a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range xsd:string ;
+  rdfs:label "认证状态"@zh , "certification status"@en ;
+  rdfs:comment "certified | deprecated | experimental | unverified"@zh .
+
+dl:lastReviewedAt a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range xsd:dateTime ;
+  rdfs:label "最后审核时间"@zh , "last reviewed at"@en .
+
+dl:reviewCycleDays a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range xsd:integer ;
+  rdfs:label "审核周期（天）"@zh , "review cycle (days)"@en .
+
+dl:tags a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range xsd:string ;
+  rdfs:label "标签"@zh , "tags"@en ;
+  rdfs:comment "逗号分隔的自由标签"@zh .

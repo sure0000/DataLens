@@ -1,11 +1,4 @@
-@prefix owl:    <http://www.w3.org/2002/07/owl#> .
-@prefix rdfs:   <http://www.w3.org/2000/01/rdf-schema#> .
-@prefix schema: <https://schema.org/> .
-@prefix dl:     <https://datalens.local/ontology/> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
 
-dl:PhysicalTable rdfs:subClassOf schema:Table .
-dl:PhysicalColumn rdfs:subClassOf schema:PropertyValue .
-
-schema:isPartOf a owl:ObjectProperty ;
-  rdfs:domain dl:PhysicalColumn ;
-  rdfs:range dl:PhysicalTable .
+# Thin wrapper — the physical table/column schema mapping is now in tbox/core.ttl.
+owl:imports <tbox/core.ttl> .
