@@ -9,8 +9,10 @@ FUSEKI_DATA_DIR="$RUNTIME_DIR/fuseki-data"
 
 FUSEKI_PORT_DEFAULT=3030
 FUSEKI_DATASET_DEFAULT=datalens
+FUSEKI_IMAGE_DEFAULT=stain/jena-fuseki:4.10.0
 FUSEKI_PORT="${FUSEKI_PORT:-$FUSEKI_PORT_DEFAULT}"
 FUSEKI_DATASET="${FUSEKI_DATASET:-$FUSEKI_DATASET_DEFAULT}"
+FUSEKI_IMAGE="${FUSEKI_IMAGE:-$FUSEKI_IMAGE_DEFAULT}"
 FUSEKI_URL="${FUSEKI_URL:-http://localhost:${FUSEKI_PORT}}"
 
 if [[ -f "$ROOT_DIR/.env" ]]; then
@@ -18,6 +20,7 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   source "$ROOT_DIR/.env"
   FUSEKI_PORT="${FUSEKI_PORT:-$FUSEKI_PORT_DEFAULT}"
   FUSEKI_DATASET="${FUSEKI_DATASET:-$FUSEKI_DATASET_DEFAULT}"
+  FUSEKI_IMAGE="${FUSEKI_IMAGE:-$FUSEKI_IMAGE_DEFAULT}"
   FUSEKI_URL="${FUSEKI_URL:-http://localhost:${FUSEKI_PORT}}"
 fi
 
@@ -81,9 +84,23 @@ start_fuseki() {
   fi
 
   mkdir -p "$FUSEKI_DATA_DIR"
-  log "启动 Fuseki 容器 (port=${FUSEKI_PORT}, dataset=${FUSEKI_DATASET})..."
+  log "启动 Fuseki 容器 (port=${FUSEKI_PORT}, dataset=${FUSEKI_DATASET}, image=${FUSEKI_IMAGE})..."
+  local try max_try
+  max_try=3
+  for try in 1 2 3; do
+    if docker pull "$FUSEKI_IMAGE" >/dev/null 2>&1; then
+      break
+    fi
+    if (( try == max_try )); then
+      log "拉取 Fuseki 镜像失败: ${FUSEKI_IMAGE}"
+      log "建议: 1) 执行 docker login 2) 配置 Docker 镜像加速器 3) 在 .env 中设置 FUSEKI_IMAGE 为可用镜像地址"
+      return 1
+    fi
+    log "拉取镜像失败，${try}/${max_try}，2 秒后重试..."
+    sleep 2
+  done
   FUSEKI_PORT="$FUSEKI_PORT" FUSEKI_DATASET="$FUSEKI_DATASET" \
-    compose up -d fuseki
+  FUSEKI_IMAGE="$FUSEKI_IMAGE" compose up -d fuseki
   wait_fuseki 90
 }
 
@@ -132,6 +149,7 @@ usage() {
 环境变量（.env）:
   FUSEKI_URL=http://localhost:3030
   FUSEKI_DATASET=datalens
+  FUSEKI_IMAGE=stain/jena-fuseki:4.10.0
   FUSEKI_AUTO_START=true
   FUSEKI_FALLBACK_MEMORY=false
 EOF

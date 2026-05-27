@@ -12,6 +12,7 @@ import ListPagination from "../../../components/ListPagination";
 import LoadingSkeletonList from "../../../components/LoadingSkeletonList";
 import PageHeader from "../../../components/PageHeader";
 import Toast from "../../../components/Toast";
+import KnowledgeBasePicker from "../../../components/knowledge-bases/KnowledgeBasePicker";
 
 type OptionTable = { name: string; comment?: string };
 type OptionDatabase = { name: string; tables: OptionTable[] };
@@ -68,7 +69,7 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
   const [selectedKbIds, setSelectedKbIds] = useState<number[]>([]);
   const [savingKb, setSavingKb] = useState(false);
   const [kbModalOpen, setKbModalOpen] = useState(false);
-  const [kbPickerPick, setKbPickerPick] = useState<Record<number, boolean>>({});
+  const [kbPickerSelectedIds, setKbPickerSelectedIds] = useState<number[]>([]);
 
   async function loadDetail() {
     setLoading(true);
@@ -351,17 +352,12 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
   }
 
   function openKbPickerModal() {
-    const next: Record<number, boolean> = {};
-    allKnowledgeBases.forEach((kb) => {
-      next[kb.id] = selectedKbIds.includes(kb.id);
-    });
-    setKbPickerPick(next);
+    setKbPickerSelectedIds(selectedKbIds);
     setKbModalOpen(true);
   }
 
   function confirmKbPicker() {
-    const picked = allKnowledgeBases.filter((kb) => kbPickerPick[kb.id]).map((kb) => kb.id);
-    setSelectedKbIds(picked);
+    setSelectedKbIds(kbPickerSelectedIds);
     setKbModalOpen(false);
   }
 
@@ -519,21 +515,13 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
             {!allKnowledgeBases.length ? (
               <p className="text-sm text-app-muted">暂无知识库，请先在「知识库」中创建。</p>
             ) : (
-              <ul className="max-h-[56vh] space-y-2 overflow-y-auto">
-                {allKnowledgeBases.map((kb) => (
-                  <li key={kb.id}>
-                    <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-app-border px-3 py-2 text-sm hover:bg-app-hover">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5"
-                        checked={!!kbPickerPick[kb.id]}
-                        onChange={() => setKbPickerPick((p) => ({ ...p, [kb.id]: !p[kb.id] }))}
-                      />
-                      <span>{kb.name}</span>
-                    </label>
-                  </li>
-                ))}
-              </ul>
+              <KnowledgeBasePicker
+                mode="multiple"
+                options={allKnowledgeBases}
+                selectedIds={kbPickerSelectedIds}
+                onChange={setKbPickerSelectedIds}
+                searchPlaceholder="搜索并选择知识库"
+              />
             )}
             <div className="mt-4 flex gap-2">
               <button type="button" className="app-button flex-1" onClick={confirmKbPicker}>

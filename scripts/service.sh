@@ -7,6 +7,7 @@ BACKEND_DIR="$ROOT_DIR/backend"
 FRONTEND_DIR="$ROOT_DIR/frontend"
 RUNTIME_DIR="$ROOT_DIR/.run"
 LOG_DIR="$RUNTIME_DIR/logs"
+DOCKER_COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
 
 BACKEND_PID_FILE="$RUNTIME_DIR/backend.pid"
 FRONTEND_PID_FILE="$RUNTIME_DIR/frontend.pid"
@@ -17,16 +18,12 @@ BACKEND_PORT_DEFAULT=8000
 FRONTEND_PORT_DEFAULT=3000
 BACKEND_PORT="$BACKEND_PORT_DEFAULT"
 FRONTEND_PORT="$FRONTEND_PORT_DEFAULT"
-FUSEKI_AUTO_START="${FUSEKI_AUTO_START:-false}"
-FUSEKI_URL="${FUSEKI_URL:-}"
 
 if [[ -f "$ROOT_DIR/.env" ]]; then
   # shellcheck disable=SC1090
   source "$ROOT_DIR/.env"
   BACKEND_PORT="${BACKEND_PORT:-$BACKEND_PORT_DEFAULT}"
   FRONTEND_PORT="${FRONTEND_PORT:-$FRONTEND_PORT_DEFAULT}"
-  FUSEKI_AUTO_START="${FUSEKI_AUTO_START:-false}"
-  FUSEKI_URL="${FUSEKI_URL:-}"
 fi
 
 mkdir -p "$LOG_DIR"
@@ -35,18 +32,41 @@ log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
 }
 
-# 优先使用项目虚拟环境里的 Python（与 README / 日常开发一致）
-PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
-if [[ ! -x "$PYTHON_BIN" ]]; then
-  PYTHON_BIN="$(command -v python3 || true)"
-fi
-if [[ -z "$PYTHON_BIN" ]]; then
-  log "错误: 未找到可执行的 Python（请先: python3 -m venv .venv && .venv/bin/pip install -r backend/requirements.txt）"
-  exit 1
-fi
-if [[ "$PYTHON_BIN" != "$ROOT_DIR/.venv/bin/python" ]]; then
-  log "警告: 未使用 .venv，当前 Python 为: ${PYTHON_BIN} (若缺依赖请先创建虚拟环境并 pip install -r backend/requirements.txt)"
-fi
+ensure_docker_ready() {
+  if ! command -v docker >/dev/null 2>&1; then
+    log "错误: 未安装 docker，请先安装 Docker Desktop 或使用 local 模式"
+    exit 1
+  fi
+  if ! docker compose version >/dev/null 2>&1; then
+    log "错误: 当前 docker 不支持 compose 子命令，请升级 Docker 或使用 local 模式"
+    exit 1
+  fi
+  if [[ ! -f "$DOCKER_COMPOSE_FILE" ]]; then
+    log "错误: 未找到 docker compose 文件: $DOCKER_COMPOSE_FILE"
+    exit 1
+  fi
+}
+
+PYTHON_BIN=""
+
+ensure_python_ready() {
+  # 优先使用项目虚拟环境里的 Python（与 README / 日常开发一致）
+  if [[ -n "$PYTHON_BIN" ]]; then
+    return 0
+  fi
+
+  PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+  if [[ ! -x "$PYTHON_BIN" ]]; then
+    PYTHON_BIN="$(command -v python3 || true)"
+  fi
+  if [[ -z "$PYTHON_BIN" ]]; then
+    log "错误: 未找到可执行的 Python（请先: python3 -m venv .venv && .venv/bin/pip install -r backend/requirements.txt）"
+    exit 1
+  fi
+  if [[ "$PYTHON_BIN" != "$ROOT_DIR/.venv/bin/python" ]]; then
+    log "警告: 未使用 .venv，当前 Python 为: ${PYTHON_BIN} (若缺依赖请先创建虚拟环境并 pip install -r backend/requirements.txt)"
+  fi
+}
 
 is_pid_running() {
   local pid="$1"
@@ -94,32 +114,8 @@ stop_pid() {
   fi
 }
 
-start_fuseki_if_needed() {
-  # 默认启动 Fuseki（Docker）；本地 Java Fuseki 可手动监听同一端口
-  if [[ "${FUSEKI_AUTO_START:-true}" != "true" ]]; then
-    return 0
-  fi
-  if [[ -z "${FUSEKI_URL:-}" ]]; then
-    log "未配置 FUSEKI_URL，请设置 FUSEKI_URL=http://localhost:3030"
-    return 0
-  fi
-  if [[ -x "$ROOT_DIR/scripts/fuseki.sh" ]]; then
-    log "启动 Fuseki RDF 存储..."
-    "$ROOT_DIR/scripts/fuseki.sh" start || log "Fuseki 未就绪 — 请检查 Docker 或本地 Fuseki 是否在 ${FUSEKI_URL} 运行"
-  fi
-}
-
-stop_fuseki_if_managed() {
-  if [[ "${FUSEKI_AUTO_START:-false}" != "true" ]] || [[ -z "${FUSEKI_URL:-}" ]]; then
-    return 0
-  fi
-  if [[ -x "$ROOT_DIR/scripts/fuseki.sh" ]]; then
-    "$ROOT_DIR/scripts/fuseki.sh" stop || true
-  fi
-}
-
 start_backend() {
-  start_fuseki_if_needed
+  ensure_python_ready
   remove_pid_file_if_stale "$BACKEND_PID_FILE"
   local pid
   pid="$(read_pid_file "$BACKEND_PID_FILE" || true)"
@@ -140,6 +136,7 @@ start_backend() {
   log "启动后端服务: http://localhost:${BACKEND_PORT} (Python: ${PYTHON_BIN})"
   (
     cd "$BACKEND_DIR"
+    export PYTHONPATH="$BACKEND_DIR${PYTHONPATH:+:$PYTHONPATH}"
     nohup "$PYTHON_BIN" -m uvicorn main:app --reload --host 0.0.0.0 --port "$BACKEND_PORT" >>"$BACKEND_LOG_FILE" 2>&1 &
     echo $! >"$BACKEND_PID_FILE"
   )
@@ -263,42 +260,88 @@ status() {
 
 usage() {
   cat <<EOF
-用法: ./scripts/service.sh <start|stop|restart|status>
+用法: ./scripts/service.sh <start|stop|restart|status> [local|docker]
 
 命令:
-  start    启动 Fuseki（若 FUSEKI_AUTO_START=true）+ 前后端服务
-  stop     停止前后端服务 + Fuseki 容器
-  restart  重启全部服务
-  status   查看 Fuseki / 前后端状态
+  start    启动服务（local: 本地前后端；docker: compose 全栈）
+  stop     停止服务（local: 本地前后端；docker: compose 全栈）
+  restart  重启服务（local 或 docker）
+  status   查看服务状态（local 或 docker）
+
+模式:
+  local    默认模式；仅启动本地后端 + 本地前端（不自动启动/停止 Docker Fuseki）
+  docker   使用 docker compose 启动/停止 frontend + backend + postgres + fuseki
 
 Fuseki 单独控制: ./scripts/fuseki.sh start|stop|status|logs
 EOF
 }
 
+docker_start() {
+  ensure_docker_ready
+  log "Docker 模式启动: frontend + backend + postgres + fuseki"
+  docker compose -f "$DOCKER_COMPOSE_FILE" up -d --build
+}
+
+docker_stop() {
+  ensure_docker_ready
+  log "Docker 模式停止并清理容器网络"
+  docker compose -f "$DOCKER_COMPOSE_FILE" down
+}
+
+docker_status() {
+  ensure_docker_ready
+  log "Docker 模式服务状态"
+  docker compose -f "$DOCKER_COMPOSE_FILE" ps
+}
+
 main() {
   local cmd="${1:-}"
+  local mode="${2:-local}"
+  if [[ "$mode" != "local" && "$mode" != "docker" ]]; then
+    usage
+    exit 1
+  fi
+
   case "$cmd" in
     start)
-      start_backend
-      start_frontend
-      status
+      if [[ "$mode" == "docker" ]]; then
+        docker_start
+        docker_status
+      else
+        start_backend
+        start_frontend
+        status
+      fi
       ;;
     stop)
-      stop_frontend
-      stop_backend
-      stop_fuseki_if_managed
-      status
+      if [[ "$mode" == "docker" ]]; then
+        docker_stop
+        docker_status
+      else
+        stop_frontend
+        stop_backend
+        status
+      fi
       ;;
     restart)
-      stop_frontend
-      stop_backend
-      stop_fuseki_if_managed
-      start_backend
-      start_frontend
-      status
+      if [[ "$mode" == "docker" ]]; then
+        docker_stop
+        docker_start
+        docker_status
+      else
+        stop_frontend
+        stop_backend
+        start_backend
+        start_frontend
+        status
+      fi
       ;;
     status)
-      status
+      if [[ "$mode" == "docker" ]]; then
+        docker_status
+      else
+        status
+      fi
       ;;
     *)
       usage

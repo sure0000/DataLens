@@ -14,6 +14,35 @@ export type DomainSuggestion = {
   auto_applicable?: boolean;
 };
 
+export type OntologyMappingItem = {
+  kind?: string;
+  label?: string;
+  definition?: string;
+  maps_to?: string;
+  iri?: string;
+  type?: string;
+};
+
+export type OntologyMappingLink = {
+  question_phrase?: string;
+  target_kind?: string;
+  target_label?: string;
+  target_definition?: string;
+  physical_tables?: string;
+  /** 完整映射句：问题如何对应到本体资产 */
+  description?: string;
+};
+
+export type OntologyMapping = {
+  matched?: boolean;
+  summary?: string;
+  question?: string;
+  mappings?: OntologyMappingLink[];
+  items?: OntologyMappingItem[];
+  skipped?: boolean;
+  skip_reason?: string | null;
+};
+
 export type RoutingTrace = {
   routing_mode?: string;
   candidate_table_count?: number;
@@ -109,6 +138,22 @@ export function filterCopilotTraceSteps(steps: PipelineTraceStep[]): PipelineTra
   });
 }
 
+/** 对话页默认只展示对用户有意义的步骤，避免冗长推理检查点 */
+const SIMPLE_TRACE_STEP_IDS = new Set([
+  "reasoning_1",
+  "ontology_match",
+  "sql_decision",
+  "reasoning_gq",
+  "reasoning_4",
+  "reasoning_7",
+  "routing_review",
+  "routing_meta",
+]);
+
+export function compactCopilotTraceSteps(steps: PipelineTraceStep[]): PipelineTraceStep[] {
+  return filterCopilotTraceSteps(steps).filter((s) => SIMPLE_TRACE_STEP_IDS.has(s.id));
+}
+
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant";
@@ -121,6 +166,7 @@ export type ChatMessage = {
   pipeline_trace?: PipelineTraceStep[];
   routing_trace?: RoutingTrace;
   sql_review?: SqlReview;
+  ontology_mapping?: OntologyMapping;
   /** 域推荐确认后用于「切换域并重试」的原问题 */
   retry_question?: string;
   created_at: string;
@@ -215,6 +261,7 @@ function normalizeMessage(raw: Partial<ChatMessage>): ChatMessage {
     pipeline_trace: normalizePipelineTrace(raw.pipeline_trace),
     routing_trace: raw.routing_trace,
     sql_review: raw.sql_review,
+    ontology_mapping: raw.ontology_mapping,
     retry_question: raw.retry_question,
     created_at: raw.created_at || nowIso()
   };

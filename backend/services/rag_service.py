@@ -51,6 +51,19 @@ from services.sql_ast_guard import (
     validate_readonly_sql_ast,
 )
 from services.trace_helpers import insert_reasoning_4_after_reasoning_3
+from services.copilot.ontology_match import OntologyMatchResult, run_ontology_match
+
+
+def _ontology_mapping_payload(onto: OntologyMatchResult) -> dict[str, Any]:
+    return {
+        "matched": onto.matched,
+        "summary": onto.summary,
+        "question": onto.question,
+        "mappings": onto.mappings,
+        "items": onto.items,
+        "skipped": onto.skipped,
+        "skip_reason": onto.skip_reason or None,
+    }
 
 
 async def answer(
@@ -127,7 +140,38 @@ async def answer(
     if auto_domain_applied and domain_suggestion:
         dom_block = build_domain_context_block(db, active_domain_id) or dom_block
 
-    # -------- 阶段 2：按意图分支组装上下文 --------
+    await trace_row(
+        "reasoning_1",
+        "1. 意图识别",
+        "\n".join(
+            [
+                f"用户问题摘要：{q_preview or '（空）'}",
+                f"判定意图：{'SQL 数据分析' if intent == 'sql_query' else '通用问答'}",
+                f"说明：{reason_txt or '（无）'}",
+            ]
+        ),
+    )
+
+    # -------- 阶段 2：本体知识匹配 --------
+    onto = run_ontology_match(db, question, active_domain_id)
+    routing_trace.ontology_trace = onto.ontology_trace
+    await trace_row(
+        "ontology_match",
+        "2. 问题 → 本体知识映射",
+        "\n".join([onto.detail, "", onto.summary]).strip(),
+    )
+
+    sql_needed = intent == "sql_query"
+    sql_decision_lines = [
+        f"意图分类结果：{'需要生成并执行 SQL' if sql_needed else '无需执行 SQL，以自然语言回答'}。",
+    ]
+    if onto.matched:
+        sql_decision_lines.append("本体层已命中相关术语/指标/表，上下文将注入映射结果。")
+    elif not onto.skipped:
+        sql_decision_lines.append("本体层未命中相关知识；若问题依赖已建模指标，建议先补充语义资产。")
+    await trace_row("sql_decision", "3. 是否需要执行 SQL", "\n".join(sql_decision_lines))
+
+    # -------- 阶段 4：按意图分支组装上下文 --------
     routing_bundle = build_routing_search_bundle(
         db, question, active_domain_id, table_id, load_metric_terms=(intent == "sql_query")
     )
@@ -166,11 +210,19 @@ async def answer(
                 "explanation": early_guardrail["reason"],
                 "query_result": {"ok": False, "columns": [], "rows": [], "error": "该问题无需SQL执行"},
                 "pipeline_trace": pipeline_traces,
+                "routing_trace": routing_trace.to_dict(),
+                "ontology_mapping": _ontology_mapping_payload(onto),
             }
+        if onto.ontology_context_text:
+            knowledge_text = (
+                (onto.ontology_context_text + "\n\n" + knowledge_text).strip()
+                if knowledge_text.strip()
+                else onto.ontology_context_text
+            )
+        await trace_row("reasoning_2", "4. 确认拿到的上下文信息", reasoning_2_detail, links=reasoning_2_links)
         return await _handle_general_qa(
-            db, question, q_preview, reason_txt, knowledge_text, priority_context,
-            reasoning_2_detail, reasoning_2_links, pipeline_traces,
-            emit, trace_row, chat_model, routing_trace=routing_trace,
+            db, question, knowledge_text, pipeline_traces,
+            emit, trace_row, chat_model, routing_trace=routing_trace, onto=onto,
         )
 
     allowed_few_shot_table_ids: set[int] | None = None
@@ -211,12 +263,19 @@ async def answer(
             "explanation": early_guardrail["reason"],
             "query_result": {"ok": False, "columns": [], "rows": [], "error": "该问题无需SQL执行"},
             "pipeline_trace": pipeline_traces,
+            "routing_trace": routing_trace.to_dict(),
+            "ontology_mapping": _ontology_mapping_payload(onto),
         }
 
+    if onto.ontology_context_text:
+        knowledge_text = (
+            (onto.ontology_context_text + "\n\n" + knowledge_text).strip()
+            if knowledge_text.strip()
+            else onto.ontology_context_text
+        )
+
     # -------- SQL 查询分支 --------
-    await trace_row("reasoning_1", "1. 明确用户输入，给出理解",
-        "\n".join([f"用户问题摘要：{q_preview or '（空）'}", "判定为「SQL 数据分析」。", f"意图说明：{reason_txt or '（无）'}"]))
-    await trace_row("reasoning_2", "2. 确认拿到的上下文信息", reasoning_2_detail, links=reasoning_2_links)
+    await trace_row("reasoning_2", "4. 确认拿到的上下文信息", reasoning_2_detail, links=reasoning_2_links)
 
     await emit("answer_generating")
 
@@ -263,7 +322,7 @@ async def answer(
     result["sql_review"] = sql_review
     await trace_row(
         "routing_review",
-        "SQL 执行校验",
+        "5. SQL 执行校验",
         "\n".join(
             [
                 f"trust_level={sql_review.get('trust_level')}",
@@ -296,12 +355,12 @@ async def answer(
         }
         await trace_row(
             "reasoning_5",
-            "5. 执行环境与 AST 校验",
+            "7. 执行环境与 AST 校验",
             "检测到 review 条件，已跳过自动执行；请在前端确认 SQL 与表范围。",
         )
         await trace_row(
             "reasoning_7",
-            "7. 执行结果",
+            "8. 执行结果",
             "执行状态：未执行（等待 review 确认）。",
         )
     else:
@@ -324,13 +383,15 @@ async def answer(
 
     result["query_result"] = execution
     result["intent"] = "sql_query"
-    result["answer"] = (
+    sql_body = (
         "已生成 SQL；请先确认表范围与口径后再执行。"
         if sql_review.get("review_required")
         else "已根据你的问题生成并执行 SQL，结果如下。"
     )
+    result["answer"] = sql_body
     result["pipeline_trace"] = pipeline_traces
     result["routing_trace"] = routing_trace.to_dict()
+    result["ontology_mapping"] = _ontology_mapping_payload(onto)
     return result
 
 
@@ -405,17 +466,22 @@ def _build_reasoning_2(
 
 
 async def _handle_general_qa(
-    db: Session, question: str, q_preview: str, reason_txt: str,
-    knowledge_text: str, priority_context: str,
-    reasoning_2_detail: str, reasoning_2_links: list[dict[str, Any]],
+    db: Session,
+    question: str,
+    knowledge_text: str,
+    priority_context: str,
     pipeline_traces: list[dict[str, Any]],
-    emit, trace_row, chat_model: str | None,
+    emit,
+    trace_row,
+    chat_model: str | None,
     routing_trace: CopilotRoutingTrace | None = None,
+    onto: OntologyMatchResult | None = None,
 ) -> dict[str, Any]:
-    await trace_row("reasoning_1", "1. 明确用户输入，给出理解",
-        "\n".join([f"用户问题摘要：{q_preview or '（空）'}", "判定为「通用问答」。", f"意图说明：{reason_txt or '（无）'}"]))
-    await trace_row("reasoning_2", "2. 确认拿到的上下文信息", reasoning_2_detail, links=reasoning_2_links)
-    await trace_row("reasoning_gq", "3. 执行方式", "不进行单表 SQL 查询。\n结合上述上下文由模型生成自然语言回答。")
+    await trace_row(
+        "reasoning_gq",
+        "5. 回答方式",
+        "不进行 SQL 查询与执行。\n结合业务域、知识库与本体映射上下文，由模型生成自然语言回答。",
+    )
 
     guardrail = guardrail_for_question(question)
     await emit("answer_generating")
@@ -430,11 +496,15 @@ async def _handle_general_qa(
         explanation = "该问题更适合自然语言回答，无需执行 SQL"
 
     await embed_and_store_async(db, "query", 0, f"{question} -> {natural_answer}")
+    onto_res = onto or OntologyMatchResult()
     out: dict[str, Any] = {
-        "intent": "general_qa", "answer": natural_answer, "sql": "",
+        "intent": "general_qa",
+        "answer": natural_answer,
+        "sql": "",
         "explanation": explanation,
         "query_result": {"ok": False, "columns": [], "rows": [], "error": "该问题无需SQL执行"},
         "pipeline_trace": pipeline_traces,
+        "ontology_mapping": _ontology_mapping_payload(onto_res),
     }
     if routing_trace is not None:
         out["routing_trace"] = routing_trace.to_dict()
@@ -588,7 +658,7 @@ async def _build_reasoning_3(
     elif preferred_table_id:
         _add_table_link(db.get(TableMeta, preferred_table_id))
 
-    await trace_row("reasoning_3", "3. 推断将使用的表", "\n".join(scope_lines),
+    await trace_row("reasoning_3", "6. 推断将使用的表", "\n".join(scope_lines),
                     links=list(r3_links_map.values()))
     return list(r3_links_map.values())
 
@@ -603,11 +673,11 @@ async def _execute_with_repair(
     execution: dict[str, Any] = {"ok": False, "columns": [], "rows": [], "error": "未生成 SQL"}
     if not sql_text or not ds_anchor:
         if not sql_text:
-            await trace_row("reasoning_5", "5. 执行环境与 AST 校验", "无有效 SQL 文本，跳过数据源与方言绑定。")
-            await trace_row("reasoning_7", "7. 执行结果", "执行状态：未执行（无 SQL 文本）。")
+            await trace_row("reasoning_5", "7. 执行环境与 AST 校验", "无有效 SQL 文本，跳过数据源与方言绑定。")
+            await trace_row("reasoning_7", "8. 执行结果", "执行状态：未执行（无 SQL 文本）。")
         else:
-            await trace_row("reasoning_5", "5. 执行环境与 AST 校验", "未找到可用数据源，无法绑定执行环境与方言。")
-            await trace_row("reasoning_7", "7. 执行结果", "执行状态：未执行（未配置可用数据源）。")
+            await trace_row("reasoning_5", "7. 执行环境与 AST 校验", "未找到可用数据源，无法绑定执行环境与方言。")
+            await trace_row("reasoning_7", "8. 执行结果", "执行状态：未执行（未配置可用数据源）。")
         return execution
 
     await emit("sql_executing")
@@ -677,7 +747,7 @@ async def _execute_with_repair(
         if len(emsg) > 900:
             emsg = emsg[:900] + "…"
         ast_tail = f"方言 {dialect_label}：AST 校验通过后，执行阶段失败 — {emsg}"
-    await trace_row("reasoning_5", "5. 执行环境与 AST 校验", f"{r5_detail}\n\n{ast_tail}", links=link_r5)
+    await trace_row("reasoning_5", "7. 执行环境与 AST 校验", f"{r5_detail}\n\n{ast_tail}", links=link_r5)
 
     if execution.get("ok"):
         rows_n = len(execution.get("rows") or [])
@@ -688,7 +758,7 @@ async def _execute_with_repair(
         if len(err) > 1000:
             err = err[:1000] + "…"
         r7_detail = f"执行状态：失败。\n原因摘要：{err}\n完整报错见对话中的「执行结果」区域。"
-    await trace_row("reasoning_7", "7. 执行结果", r7_detail)
+    await trace_row("reasoning_7", "8. 执行结果", r7_detail)
 
     return execution
 

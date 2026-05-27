@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Icon, type NavIcon } from "../AppIcons";
 import SparqlConsole from "./SparqlConsole";
@@ -9,6 +9,7 @@ import RelationGraph from "./RelationGraph";
 import TripleViewer, { type RawTriple } from "./TripleViewer";
 import Toast from "../Toast";
 import LineageGraph from "../knowledge-bases/LineageGraph";
+import KnowledgeBasePicker from "../knowledge-bases/KnowledgeBasePicker";
 import type { LineageData } from "../knowledge-bases/types";
 import type { PipelineStats } from "../knowledge-bases/types";
 import { useToast } from "../../hooks/useToast";
@@ -48,6 +49,53 @@ const TABS: { id: OntologyTab; label: string; icon: NavIcon }[] = [
   { id: "expert", label: "专家", icon: "code" },
 ];
 
+type RdfLineageResponse = {
+  edges: { source: string; target: string; transform_logic?: string }[];
+  total?: number;
+};
+
+function inferWarehouseLayer(value: string): string {
+  const upper = value.toUpperCase();
+  if (upper.includes("ODS")) return "ODS";
+  if (upper.includes("DWD")) return "DWD";
+  if (upper.includes("DWS")) return "DWS";
+  if (upper.includes("ADS")) return "ADS";
+  return "RDF";
+}
+
+function mapRdfLineage(data: RdfLineageResponse | null): LineageData | null {
+  if (!data?.edges?.length) return null;
+  const layerNodeMap = new Map<string, Map<string, { id: string; name: string; layer: string; status: string }>>();
+  const edges = data.edges.map((edge, idx) => {
+    const source = edge.source;
+    const target = edge.target;
+    const sourceLayer = inferWarehouseLayer(source);
+    const targetLayer = inferWarehouseLayer(target);
+    if (!layerNodeMap.has(sourceLayer)) layerNodeMap.set(sourceLayer, new Map());
+    if (!layerNodeMap.has(targetLayer)) layerNodeMap.set(targetLayer, new Map());
+    layerNodeMap.get(sourceLayer)!.set(source, { id: source, name: source.split("/").pop() || source, layer: sourceLayer, status: "done" });
+    layerNodeMap.get(targetLayer)!.set(target, { id: target, name: target.split("/").pop() || target, layer: targetLayer, status: "done" });
+    return {
+      id: idx + 1,
+      source,
+      target,
+      source_table: source,
+      target_table: target,
+      layer: `${sourceLayer}->${targetLayer}`,
+      transform_logic: edge.transform_logic ?? null,
+      status: "done" as const,
+    };
+  });
+
+  const layers = Array.from(layerNodeMap.entries()).map(([name, nodes]) => ({ name, nodes: Array.from(nodes.values()) }));
+  return {
+    source: "rdf",
+    layers,
+    edges,
+    stats: { done: edges.length, processing: 0, pending: 0 },
+  };
+}
+
 function confidenceClass(v: number): string {
   if (v >= 80) return "app-text-success";
   if (v >= 50) return "text-amber-600";
@@ -79,6 +127,8 @@ export default function OntologyWorkspace() {
   const [globalStore, setGlobalStore] = useState<OntologyStoreInfo>({});
   const [rdfView, setRdfView] = useState<KbRdfView | null>(null);
   const [semanticsSubTab, setSemanticsSubTab] = useState<"terms" | "metrics" | "dimensions" | "rules">("terms");
+  const invalidKbToastRef = useRef<string | null>(null);
+  const workspaceAbortRef = useRef<AbortController | null>(null);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -148,6 +198,11 @@ export default function OntologyWorkspace() {
         const savedId = saved ? Number(saved) : NaN;
         const validUrl = Number.isFinite(kbFromUrl) && list.some((k) => k.id === kbFromUrl);
         const validSaved = list.some((k) => k.id === savedId);
+        if (kbParam && !validUrl && invalidKbToastRef.current !== kbParam) {
+          const fallbackName = (validSaved ? list.find((k) => k.id === savedId) : list[0])?.name ?? "默认知识库";
+          notify(`URL 指定的知识库（kb=${kbParam}）不存在，已切换到「${fallbackName}」。`, "info");
+          invalidKbToastRef.current = kbParam;
+        }
         setSelectedKbId(validUrl ? kbFromUrl : validSaved ? savedId : list[0].id);
       }
     } catch (e: unknown) {
@@ -159,6 +214,19 @@ export default function OntologyWorkspace() {
 
   const loadWorkspace = useCallback(async () => {
     if (!selectedKbId) return;
+    workspaceAbortRef.current?.abort();
+    const controller = new AbortController();
+    workspaceAbortRef.current = controller;
+    const withFallback = async <T,>(promise: Promise<T>, fallback: T): Promise<T> => {
+      try {
+        return await promise;
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") {
+          throw error;
+        }
+        return fallback;
+      }
+    };
     setLoading(true);
     setSelectedTerm(null);
     setSelectedMetric(null);
@@ -170,30 +238,43 @@ export default function OntologyWorkspace() {
         rulesRes,
         graphRes,
         statsRes,
-        lineageRes,
+        rdfLineageRes,
+        pgLineageRes,
         healthRes,
         rdfRes,
       ] = await Promise.all([
-        api<{ terms: OntologyTerm[] }>(`/api/ontology/knowledge-bases/${selectedKbId}/terms`),
-        api<{ metrics: OntologyMetric[] }>(`/api/ontology/knowledge-bases/${selectedKbId}/metrics`),
-        api<{ dimensions: OntologyDimension[] }>(
+        api<{ terms: OntologyTerm[] }>(`/api/ontology/knowledge-bases/${selectedKbId}/terms`, { signal: controller.signal }),
+        api<{ metrics: OntologyMetric[] }>(`/api/ontology/knowledge-bases/${selectedKbId}/metrics`, { signal: controller.signal }),
+        withFallback(api<{ dimensions: OntologyDimension[] }>(
           `/api/ontology/knowledge-bases/${selectedKbId}/dimensions`,
-        ).catch(() => ({ dimensions: [] })),
-        api<{ rules: OntologyRule[] }>(`/api/ontology/knowledge-bases/${selectedKbId}/rules`).catch(
-          () => ({ rules: [] }),
-        ),
-        api<{ nodes: GraphNode[]; edges: GraphEdge[]; store?: OntologyStoreInfo }>(
-          `/api/ontology/knowledge-bases/${selectedKbId}/views/graph`,
-        ).catch(() =>
-          api<{ nodes: GraphNode[]; edges: GraphEdge[]; store: OntologyStoreInfo }>(
-            `/api/ontology/knowledge-bases/${selectedKbId}/graph`,
-          ),
-        ),
-        api<PipelineStats>(`/api/knowledge-bases/${selectedKbId}/pipeline-stats`),
-        api<LineageData>(`/api/knowledge-bases/${selectedKbId}/lineage`).catch(() => null),
-        api<{ ok: boolean } & OntologyStoreInfo>("/api/ontology/health"),
-        api<{ ok: boolean } & KbRdfView>(`/api/ontology/knowledge-bases/${selectedKbId}/rdf-view`),
+          { signal: controller.signal },
+        ), { dimensions: [] }),
+        withFallback(api<{ rules: OntologyRule[] }>(`/api/ontology/knowledge-bases/${selectedKbId}/rules`, { signal: controller.signal }),
+          { rules: [] }),
+        (async () => {
+          try {
+            return await api<{ nodes: GraphNode[]; edges: GraphEdge[]; store?: OntologyStoreInfo }>(
+              `/api/ontology/knowledge-bases/${selectedKbId}/views/graph`,
+              { signal: controller.signal },
+            );
+          } catch (error) {
+            if (error instanceof DOMException && error.name === "AbortError") {
+              throw error;
+            }
+            return api<{ nodes: GraphNode[]; edges: GraphEdge[]; store: OntologyStoreInfo }>(
+              `/api/ontology/knowledge-bases/${selectedKbId}/graph`,
+              { signal: controller.signal },
+            );
+          }
+        })(),
+        api<PipelineStats>(`/api/knowledge-bases/${selectedKbId}/pipeline-stats`, { signal: controller.signal }),
+        withFallback(api<RdfLineageResponse>(`/api/ontology/knowledge-bases/${selectedKbId}/views/lineage`, { signal: controller.signal }), null),
+        withFallback(api<LineageData>(`/api/knowledge-bases/${selectedKbId}/lineage`, { signal: controller.signal }), null),
+        api<{ ok: boolean } & OntologyStoreInfo>("/api/ontology/health", { signal: controller.signal }),
+        api<{ ok: boolean } & KbRdfView>(`/api/ontology/knowledge-bases/${selectedKbId}/rdf-view`, { signal: controller.signal }),
       ]);
+      const rdfLineage = mapRdfLineage(rdfLineageRes);
+      const preferredLineage = rdfLineage ?? (pgLineageRes ? { ...pgLineageRes, source: "postgres" as const } : null);
       setTerms(termsRes.terms || []);
       setMetrics(metricsRes.metrics || []);
       setDimensions(dimensionsRes.dimensions || []);
@@ -202,14 +283,17 @@ export default function OntologyWorkspace() {
       setGraphEdges(graphRes.edges || []);
       setStore(graphRes.store || healthRes);
       setPipelineStats(statsRes);
-      setLineage(lineageRes);
+      setLineage(preferredLineage);
       setGlobalStore(healthRes);
       setRdfView(rdfRes);
       localStorage.setItem(ONTOLOGY_KB_STORAGE_KEY, String(selectedKbId));
     } catch (e: unknown) {
+      if (e instanceof DOMException && e.name === "AbortError") return;
       notify(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "加载本体数据失败", "error");
     } finally {
-      setLoading(false);
+      if (!controller.signal.aborted) {
+        setLoading(false);
+      }
     }
   }, [selectedKbId, notify]);
 
@@ -224,6 +308,21 @@ export default function OntologyWorkspace() {
   useEffect(() => {
     if (selectedKbId) loadWorkspace();
   }, [selectedKbId, loadWorkspace]);
+
+  useEffect(() => {
+    if (lockedKbId || !selectedKbId) return;
+    const kbParam = searchParams.get("kb");
+    const urlKbId = kbParam ? Number(kbParam) : NaN;
+    if (!Number.isFinite(urlKbId) || urlKbId !== selectedKbId) {
+      replaceOntologyUrl({ kbId: selectedKbId, tab });
+    }
+  }, [lockedKbId, replaceOntologyUrl, searchParams, selectedKbId, tab]);
+
+  useEffect(() => {
+    return () => {
+      workspaceAbortRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     if (selectedKbId && typeof window !== "undefined") {
@@ -380,30 +479,17 @@ export default function OntologyWorkspace() {
                 </Link>
               </p>
             ) : (
-              <ul className="mt-2 max-h-[min(420px,50vh)] space-y-1 overflow-y-auto">
-                {kbs.map((kb) => {
-                  const active = kb.id === selectedKbId;
-                  return (
-                    <li key={kb.id}>
-                      <button
-                        type="button"
-                        onClick={() => handleSelectKb(kb.id)}
-                        className={`w-full rounded-lg border px-3 py-2.5 text-left transition-colors ${
-                          active
-                            ? "border-app-activeBorder bg-app-activeBg"
-                            : "border-transparent hover:border-app-border hover:bg-app-hover"
-                        }`}
-                      >
-                        <p className="text-sm font-medium text-app-primary line-clamp-2">{kb.name}</p>
-                        {kb.description ? (
-                          <p className="mt-0.5 text-[11px] text-app-muted line-clamp-2">{kb.description}</p>
-                        ) : null}
-                        <p className="mt-1 text-[10px] text-app-muted">ID {kb.id}</p>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
+              <KnowledgeBasePicker
+                mode="single"
+                options={kbs}
+                selectedIds={selectedKbId ? [selectedKbId] : []}
+                onChange={(ids) => {
+                  const next = ids[0];
+                  if (next) handleSelectKb(next);
+                }}
+                className="mt-2"
+                searchPlaceholder="搜索知识库名称/ID"
+              />
             )}
           </div>
         </aside>
@@ -419,9 +505,14 @@ export default function OntologyWorkspace() {
                 {kbListLoading || loading
                   ? "正在加载本体数据…"
                   : hideKbSidebar
-                    ? "无法加载该知识库的本体数据。"
+                    ? "无法加载该知识库的本体数据，可切换其他知识库后重试。"
                     : "请从左侧选择一个知识库，开始浏览本体数据。"}
               </p>
+              {hideKbSidebar ? (
+                <Link href="/ontology" className="app-button-secondary mt-3 text-sm no-underline">
+                  选择其他知识库
+                </Link>
+              ) : null}
             </div>
           ) : (
             <>
@@ -441,7 +532,7 @@ export default function OntologyWorkspace() {
                 <StatCard
                   label="语义关系"
                   value={graphEdges.length}
-                  sub={`血缘 ${lineage?.stats?.done ?? 0} 条`}
+                  sub={`血缘(${lineage?.source === "rdf" ? "RDF" : "PG"}) ${lineage?.stats?.done ?? 0} 条`}
                 />
                 <StatCard
                   label="RDF 生产图"
@@ -449,6 +540,9 @@ export default function OntologyWorkspace() {
                   sub={`术语 ${rdfView?.production.term_count ?? 0} · 指标 ${rdfView?.production.metric_count ?? 0} · 表 ${rdfView?.production.physical_table_count ?? 0}`}
                 />
               </div>
+              <p className="mt-2 text-[11px] text-app-muted">
+                数据来源：业务术语/指标/维度/规则与关系图谱来自 RDF 生产图；文档与流水线统计来自 PostgreSQL；血缘优先使用 RDF，缺失时回退 PostgreSQL。
+              </p>
 
               <div className="mt-4 flex flex-wrap items-center gap-2 border-b border-app-border pb-2">
                 {TABS.map(({ id, label, icon }) => (

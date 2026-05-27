@@ -7,6 +7,7 @@ import { api } from "../../../lib/api";
 import { badgeExclusive } from "../../../lib/themeClasses";
 import PageHeader from "../../../components/PageHeader";
 import CopilotValidatePanel from "../../../components/ontology/CopilotValidatePanel";
+import KnowledgeBasePicker from "../../../components/knowledge-bases/KnowledgeBasePicker";
 
 type Detail = {
   table: {
@@ -45,7 +46,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
   const [savingLinks, setSavingLinks] = useState(false);
   const [linkModalOpen, setLinkModalOpen] = useState(false);
   const [linkModalTab, setLinkModalTab] = useState<"kb" | "entry">("kb");
-  const [modalKbPick, setModalKbPick] = useState<Record<number, boolean>>({});
+  const [modalKbIds, setModalKbIds] = useState<number[]>([]);
   const [modalEntryKbId, setModalEntryKbId] = useState("");
   const [modalEntryRows, setModalEntryRows] = useState<{ id: number; title: string }[]>([]);
   const [modalEntryPick, setModalEntryPick] = useState<Record<number, boolean>>({});
@@ -80,11 +81,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
 
   function openLinkModal() {
     if (!detail) return;
-    const kbPick: Record<number, boolean> = {};
-    allKbs.forEach((kb) => {
-      kbPick[kb.id] = !!(detail.knowledge_bases || []).some((k) => k.id === kb.id);
-    });
-    setModalKbPick(kbPick);
+    setModalKbIds((detail.knowledge_bases || []).map((kb) => kb.id));
     modalEntryDraftRef.current = new Set((detail.knowledge_entries || []).map((e) => e.id));
     setModalEntryKbId(allKbs[0] ? String(allKbs[0].id) : "");
     setModalEntryRows([]);
@@ -115,7 +112,7 @@ export default function TableDetail({ params }: { params: { id: string } }) {
   }
 
   async function saveLinkModal() {
-    const kbIds = allKbs.filter((kb) => modalKbPick[kb.id]).map((kb) => kb.id);
+    const kbIds = modalKbIds;
     const entryIds = Array.from(modalEntryDraftRef.current);
     await persistKnowledgeLinks(kbIds, entryIds);
     setLinkModalOpen(false);
@@ -342,21 +339,13 @@ export default function TableDetail({ params }: { params: { id: string } }) {
               !allKbs.length ? (
                 <p className="text-sm text-app-muted">暂无知识库，请先在「知识库」中创建。</p>
               ) : (
-                <ul className="max-h-[50vh] space-y-2 overflow-y-auto">
-                  {allKbs.map((kb) => (
-                    <li key={kb.id}>
-                      <label className="flex cursor-pointer items-start gap-2 rounded-lg border border-app-border px-3 py-2.5 text-sm hover:bg-app-hover">
-                        <input
-                          type="checkbox"
-                          className="mt-0.5"
-                          checked={!!modalKbPick[kb.id]}
-                          onChange={() => setModalKbPick((p) => ({ ...p, [kb.id]: !p[kb.id] }))}
-                        />
-                        <span>{kb.name}</span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
+                <KnowledgeBasePicker
+                  mode="multiple"
+                  options={allKbs}
+                  selectedIds={modalKbIds}
+                  onChange={setModalKbIds}
+                  searchPlaceholder="搜索并选择关联知识库"
+                />
               )
             ) : (
               <>

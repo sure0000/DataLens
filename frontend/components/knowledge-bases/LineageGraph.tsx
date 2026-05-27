@@ -17,13 +17,14 @@ const LAYER_COLORS: Record<string, { bg: string; border: string; text: string }>
 const FALLBACK_COLOR = { bg: "#f3f4f6", border: "#d1d5db", text: "#6b7280" };
 
 export default function LineageGraph({ data }: LineageGraphProps) {
-  if (!data || data.layers.length === 0) {
+  const sourceLabel = data?.source === "rdf" ? "RDF 关系图" : "代码库";
+  if (!data || (data.layers.length === 0 && data.edges.length === 0)) {
     return (
       <section className="mt-4 app-card p-4">
         <div className="flex items-center gap-2 mb-3">
           <span className="text-lg">🔗</span>
           <h2 className="app-section-title">数据血缘</h2>
-          <span className="text-xs text-app-muted">— 仅代码库</span>
+          <span className="text-xs text-app-muted">— {sourceLabel}</span>
         </div>
         <p className="text-sm text-app-muted">
           暂未解析到数据血缘关系。添加 Git 代码源并同步后，系统将自动分析表间依赖。
@@ -39,10 +40,25 @@ export default function LineageGraph({ data }: LineageGraphProps) {
       <div className="flex items-center gap-2">
         <span className="text-lg">🔗</span>
         <h2 className="app-section-title">数据血缘</h2>
-        <span className="text-xs text-app-muted">— 来自代码库</span>
+        <span className="text-xs text-app-muted">— 来自 {sourceLabel}</span>
       </div>
 
       <div className="app-card p-4 overflow-x-auto">
+        {data.layers.length === 0 && data.edges.length > 0 ? (
+          <div className="space-y-2">
+            {data.edges.slice(0, 40).map((edge, idx) => (
+              <div key={`${edge.source ?? edge.source_table}-${edge.target ?? edge.target_table}-${idx}`} className="rounded-lg border border-app-border px-3 py-2 text-xs text-app-secondary">
+                <span className="font-mono break-all">{edge.source ?? edge.source_table}</span>
+                <span className="mx-2 text-app-muted">→</span>
+                <span className="font-mono break-all">{edge.target ?? edge.target_table}</span>
+              </div>
+            ))}
+            {data.edges.length > 40 ? (
+              <p className="text-[11px] text-app-muted">仅展示前 40 条，更多请使用专家视图 SPARQL。</p>
+            ) : null}
+          </div>
+        ) : (
+          <>
         {/* 分层节点 */}
         <div className="flex items-start gap-4 min-w-max">
           {data.layers.map((layer, li) => (
@@ -84,6 +100,8 @@ export default function LineageGraph({ data }: LineageGraphProps) {
             </div>
           ))}
         </div>
+          </>
+        )}
 
         {/* 统计 */}
         <div className="flex items-center gap-4 mt-4 pt-3 border-t border-app-border">

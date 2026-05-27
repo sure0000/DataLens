@@ -9,6 +9,10 @@ from sqlalchemy.orm import Session
 
 from models import PipelineRun
 from ontology import NS, kb_graph_iri
+from services.ontology.relation_predicates import (
+    relation_predicate_in_clause,
+    relation_predicate_local_names,
+)
 from services.ontology_store import sparql_query
 
 LAYER_KEYS = frozenset(
@@ -43,8 +47,8 @@ _LAYER_META: dict[str, dict[str, str]] = {
     },
     "entity-concept": {
         "label": "实体概念层",
-        "description": "概念层级归属",
-        "ontology_class": "dl:BusinessConcept",
+        "description": "存在层级关系的语义实体（术语/指标/维度/概念）",
+        "ontology_class": "dl:BusinessTerm, dl:Metric, dl:Dimension, dl:BusinessConcept",
     },
     "dimension": {
         "label": "维度层",
@@ -61,6 +65,18 @@ _LAYER_META: dict[str, dict[str, str]] = {
         "description": "数据属性值",
         "ontology_class": "DatatypeProperty values",
     },
+}
+
+_LAYER_CRITERIA: dict[str, dict[str, Any]] = {
+    "entity-concept": {
+        "entity_types": ["BusinessTerm", "Metric", "Dimension", "BusinessConcept"],
+        "hierarchy_predicates": ["broader", "narrower"],
+        "includes_incoming_hierarchy_edges": True,
+    },
+    "relation": {
+        "object_filter": "isIRI",
+        "predicates": relation_predicate_local_names(),
+    }
 }
 
 
@@ -107,15 +123,13 @@ def _graph_context(kb_id: int) -> tuple[str, str, str, str, str]:
 
 def _count_queries(kb_id: int) -> dict[str, int]:
     graph, ns, skos, rdf_ns, rdf_type = _graph_context(kb_id)
-    relation_predicates = " ".join(
+    relation_predicates = relation_predicate_in_clause()
+    entity_types = " ".join(
         [
-            f"<{ns}dependsOn>",
-            f"<{ns}derivedFrom>",
-            f"<{ns}joinableWith>",
-            f"<{ns}transformsFrom>",
-            f"<{skos}related>",
-            f"<{skos}broader>",
-            f"<{skos}narrower>",
+            f"<{ns}BusinessTerm>",
+            f"<{ns}Metric>",
+            f"<{ns}Dimension>",
+            f"<{ns}BusinessConcept>",
         ]
     )
     attr_exclude = " ".join([f"<{rdf_type}>", f"<{ns}approvalStatus>"])
@@ -142,10 +156,19 @@ def _count_queries(kb_id: int) -> dict[str, int]:
         """),
         "entity-concept": _sparql_count(f"""
             PREFIX dl: <{ns}>
+            PREFIX skos: <{skos}>
             PREFIX rdf: <{rdf_ns}>
             SELECT (COUNT(DISTINCT ?s) AS ?c) WHERE {{
                 GRAPH <{graph}> {{
-                    ?s rdf:type dl:BusinessConcept .
+                    ?s rdf:type ?entityType .
+                    FILTER(?entityType IN ({entity_types}))
+                    {{
+                        ?s skos:broader|skos:narrower ?n .
+                    }}
+                    UNION
+                    {{
+                        ?n skos:broader|skos:narrower ?s .
+                    }}
                 }}
             }}
         """),
@@ -231,17 +254,38 @@ def _fetch_layer_items(kb_id: int, layer_key: str) -> list[dict[str, str]]:
         """)
 
     if layer_key == "entity-concept":
+        entity_types = " ".join(
+            [
+                f"<{ns}BusinessTerm>",
+                f"<{ns}Metric>",
+                f"<{ns}Dimension>",
+                f"<{ns}BusinessConcept>",
+            ]
+        )
         return _sparql_rows(f"""
             PREFIX dl: <{ns}>
             PREFIX skos: <{skos}>
             PREFIX rdf: <{rdf_ns}>
-            SELECT ?s ?label ?broader WHERE {{
+            SELECT
+                ?s
+                (SAMPLE(?label0) AS ?label)
+                (SAMPLE(?entityType0) AS ?entityType)
+                (GROUP_CONCAT(DISTINCT STR(?neighbor); separator=" | ") AS ?neighbors)
+            WHERE {{
                 GRAPH <{graph}> {{
-                    ?s rdf:type dl:BusinessConcept .
-                    OPTIONAL {{ ?s skos:prefLabel ?label }}
-                    OPTIONAL {{ ?s skos:broader ?broader }}
+                    ?s rdf:type ?entityType0 .
+                    FILTER(?entityType0 IN ({entity_types}))
+                    OPTIONAL {{ ?s skos:prefLabel ?label0 }}
+                    {{
+                        ?s skos:broader|skos:narrower ?neighbor .
+                    }}
+                    UNION
+                    {{
+                        ?neighbor skos:broader|skos:narrower ?s .
+                    }}
                 }}
             }}
+            GROUP BY ?s
         """)
 
     if layer_key == "dimension":
@@ -261,17 +305,7 @@ def _fetch_layer_items(kb_id: int, layer_key: str) -> list[dict[str, str]]:
         """)
 
     if layer_key == "relation":
-        relation_predicates = " ".join(
-            [
-                f"<{ns}dependsOn>",
-                f"<{ns}derivedFrom>",
-                f"<{ns}joinableWith>",
-                f"<{ns}transformsFrom>",
-                f"<{skos}related>",
-                f"<{skos}broader>",
-                f"<{skos}narrower>",
-            ]
-        )
+        relation_predicates = relation_predicate_in_clause()
         return _sparql_rows(f"""
             PREFIX dl: <{ns}>
             PREFIX skos: <{skos}>
@@ -312,6 +346,9 @@ def _build_summary_layers(counts: dict[str, int]) -> dict[str, dict[str, Any]]:
             "ontology_class": meta["ontology_class"],
             "total": counts.get(key, 0),
         }
+        criteria = _LAYER_CRITERIA.get(key)
+        if criteria:
+            layers[key]["criteria"] = criteria
     return layers
 
 
@@ -376,6 +413,7 @@ def get_modeling_layer(
         "label": meta["label"],
         "description": meta["description"],
         "ontology_class": meta["ontology_class"],
+        "criteria": _LAYER_CRITERIA.get(normalized),
         "total": total,
         "offset": safe_offset,
         "limit": safe_limit,

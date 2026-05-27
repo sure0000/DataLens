@@ -10,6 +10,34 @@ export type AskPayload = {
   chat_model?: string | null;
 };
 
+export type OntologyMappingItem = {
+  kind?: string;
+  label?: string;
+  definition?: string;
+  maps_to?: string;
+  iri?: string;
+  type?: string;
+};
+
+export type OntologyMappingLink = {
+  question_phrase?: string;
+  target_kind?: string;
+  target_label?: string;
+  target_definition?: string;
+  physical_tables?: string;
+  description?: string;
+};
+
+export type OntologyMapping = {
+  matched?: boolean;
+  summary?: string;
+  question?: string;
+  mappings?: OntologyMappingLink[];
+  items?: OntologyMappingItem[];
+  skipped?: boolean;
+  skip_reason?: string | null;
+};
+
 export type AskResponse = {
   intent?: "sql_query" | "general_qa";
   answer?: string;
@@ -25,6 +53,7 @@ export type AskResponse = {
   pipeline_trace?: PipelineTraceStep[];
   routing_trace?: RoutingTrace;
   sql_review?: SqlReview;
+  ontology_mapping?: OntologyMapping;
 };
 
 /**

@@ -17,6 +17,8 @@ from rdflib.namespace import XSD
 
 from config import Settings, get_settings
 from ontology import NS
+from services.httpx_env import async_client as httpx_async_client
+from services.httpx_env import sync_client as httpx_sync_client
 
 _logger = logging.getLogger(__name__)
 
@@ -67,12 +69,12 @@ class TripleStore:
 
     def _get_http_client(self) -> httpx.Client:
         if self._http_client is None:
-            self._http_client = httpx.Client(timeout=60.0)
+            self._http_client = httpx_sync_client(timeout=60.0, for_local=True)
         return self._http_client
 
     def _get_async_http_client(self) -> httpx.AsyncClient:
         if self._async_http_client is None:
-            self._async_http_client = httpx.AsyncClient(timeout=60.0)
+            self._async_http_client = httpx_async_client(timeout=60.0, for_local=True)
         return self._async_http_client
 
     def close(self) -> None:
@@ -156,7 +158,7 @@ class TripleStore:
             self._fuseki_live = False
             return False
         try:
-            with httpx.Client(timeout=timeout) as client:
+            with httpx_sync_client(timeout=timeout, for_local=True) as client:
                 resp = client.get(f"{base}/$/ping")
                 if resp.status_code != 200:
                     raise RuntimeError(f"ping status {resp.status_code}")
@@ -193,7 +195,7 @@ class TripleStore:
             self._fuseki_live = False
             return False
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
+            async with httpx_async_client(timeout=timeout, for_local=True) as client:
                 resp = await client.get(f"{base}/$/ping")
                 if resp.status_code != 200:
                     raise RuntimeError(f"ping status {resp.status_code}")
@@ -239,7 +241,7 @@ class TripleStore:
         base = (settings.fuseki_url or "").rstrip("/")
         dataset = settings.fuseki_dataset.strip("/")
         update_url = f"{base}/{dataset}/update"
-        with httpx.Client(timeout=60.0) as client:
+        with httpx_sync_client(timeout=60.0, for_local=True) as client:
             resp = client.post(
                 update_url,
                 content=query,
@@ -252,7 +254,7 @@ class TripleStore:
         base = (settings.fuseki_url or "").rstrip("/")
         dataset = settings.fuseki_dataset.strip("/")
         update_url = f"{base}/{dataset}/update"
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx_async_client(timeout=60.0, for_local=True) as client:
             resp = await client.post(
                 update_url,
                 content=query,
@@ -266,7 +268,7 @@ class TripleStore:
             base = (settings.fuseki_url or "").rstrip("/")
             dataset = settings.fuseki_dataset.strip("/")
             query_url = f"{base}/{dataset}/query"
-            with httpx.Client(timeout=60.0) as client:
+            with httpx_sync_client(timeout=60.0, for_local=True) as client:
                 resp = client.post(
                     query_url,
                     data=urlencode({"query": query}),
@@ -299,7 +301,7 @@ class TripleStore:
             base = (settings.fuseki_url or "").rstrip("/")
             dataset = settings.fuseki_dataset.strip("/")
             query_url = f"{base}/{dataset}/query"
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx_async_client(timeout=60.0, for_local=True) as client:
                 resp = await client.post(
                     query_url,
                     data=urlencode({"query": query}),

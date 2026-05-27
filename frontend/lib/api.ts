@@ -1,4 +1,34 @@
-export const API = process.env.NEXT_PUBLIC_API_URL ?? "http://127.0.0.1:8000";
+const RAW_API = (process.env.NEXT_PUBLIC_API_URL || "").trim();
+const DEFAULT_API = "http://127.0.0.1:8000";
+
+function isLoopbackHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function stripTrailingSlash(url: string): string {
+  return url.replace(/\/+$/, "");
+}
+
+function resolveApiBase(): string {
+  const configured = RAW_API || DEFAULT_API;
+  if (typeof window === "undefined") return stripTrailingSlash(configured);
+  try {
+    const currentUrl = new URL(window.location.href);
+    const targetUrl = new URL(configured);
+    const currentIsLoopback = isLoopbackHost(currentUrl.hostname);
+    const targetIsLoopback = isLoopbackHost(targetUrl.hostname);
+
+    // 局域网访问前端时，若 API 仍配置为 localhost/127.0.0.1，自动替换为当前访问主机，避免“假断连”。
+    if (!currentIsLoopback && targetIsLoopback) {
+      targetUrl.hostname = currentUrl.hostname;
+    }
+    return stripTrailingSlash(targetUrl.toString());
+  } catch {
+    return stripTrailingSlash(configured);
+  }
+}
+
+export const API = resolveApiBase();
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {

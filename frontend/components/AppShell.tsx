@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Icon, type NavIcon } from "./AppIcons";
 import ConfirmDialog from "./ConfirmDialog";
 import { useEscapeKey } from "../hooks/useEscapeKey";
+import { ontologyUrl } from "../lib/ontologyRoutes";
 import {
   createProject,
   createSession,
@@ -59,6 +60,23 @@ export default function AppShell({ children }: { children: ReactNode }) {
   /** true = 显示该分组下全部会话；false/undefined = 仅最近 5 条 */
   const [sidebarGroupSessionsFull, setSidebarGroupSessionsFull] = useState<Record<string, boolean>>({});
   const isCopilot = pathname.startsWith("/copilot");
+  const kbFromPath = useMemo(() => {
+    const match = pathname.match(/^\/knowledge-bases\/(\d+)/);
+    if (!match) return null;
+    const parsed = Number(match[1]);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [pathname]);
+  const kbFromOntologyQuery = useMemo(() => {
+    const raw = searchParams.get("kb");
+    if (!raw) return null;
+    const parsed = Number(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  }, [searchParams]);
+  const ontologyNavHref = kbFromPath
+    ? ontologyUrl({ kbId: kbFromPath })
+    : kbFromOntologyQuery
+      ? ontologyUrl({ kbId: kbFromOntologyQuery })
+      : "/ontology";
   const { updateEvent } = getSessionStorageKeys();
 
   function loadCopilotSessions() {
@@ -452,7 +470,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <Icon name="book" />
             </Link>
             <Link
-              href="/ontology"
+              href={ontologyNavHref}
               className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isOntologyBrowseNav ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
               title="本体浏览：总览与业务语义等 Tab"
               aria-label="本体浏览"
@@ -515,7 +533,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <span>数据接入</span>
             </Link>
             <Link
-              href="/ontology"
+              href={ontologyNavHref}
               className={`app-nav-item rounded-lg ${isOntologyBrowseNav ? "is-active" : ""}`}
             >
               <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">

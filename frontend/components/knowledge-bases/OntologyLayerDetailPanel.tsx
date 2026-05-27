@@ -31,7 +31,8 @@ const LAYER_COLUMNS: Record<string, ColumnDef[]> = {
   ],
   "entity-concept": [
     { key: "label", label: "名称" },
-    { key: "broader", label: "上位概念", render: (r) => shortenIri(r.broader ?? "") },
+    { key: "entityType", label: "实体类型", render: (r) => shortenIri(r.entityType ?? "") },
+    { key: "neighbors", label: "层级邻居", wrap: true, render: (r) => r.neighbors || "—" },
     { key: "s", label: "IRI", render: (r) => shortenIri(r.s ?? "") },
   ],
   dimension: [

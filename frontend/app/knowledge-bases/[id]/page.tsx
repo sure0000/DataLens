@@ -27,7 +27,7 @@ import GitSourceForm, {
 } from "../../../components/knowledge-bases/GitSourceForm";
 import ImportPickerModal from "../../../components/knowledge-bases/ImportPickerModal";
 import EvidencePackageList from "../../../components/knowledge-bases/EvidencePackageList";
-import { kbModelingSectionUrl } from "../../../lib/ontologyRoutes";
+import { kbModelingSectionUrl, ontologyUrl } from "../../../lib/ontologyRoutes";
 import type { SourceItem } from "../../../components/knowledge-bases/SourceCard";
 import SourceCardGrid from "../../../components/knowledge-bases/SourceCardGrid";
 import {
@@ -669,6 +669,12 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
               className="app-button-secondary app-toolbar-action no-underline"
             >
               建模与质量
+            </Link>
+            <Link
+              href={ontologyUrl({ kbId })}
+              className="app-button-secondary app-toolbar-action no-underline"
+            >
+              本体浏览
             </Link>
             <div className="relative" ref={settingsMenuRef}>
               <button

@@ -9,6 +9,10 @@ from sqlalchemy.orm import Session
 from ontology import NS, kb_graph_iri
 from services.ingestion.evidence import list_evidence_packages
 from services.ontology.modeling_status import get_modeling_status
+from services.ontology.relation_predicates import (
+    relation_predicate_in_clause,
+    relation_predicate_local_names,
+)
 from services.ontology.reader import OntologyReader
 from services.ontology_rdf_browser import fetch_kb_rdf_view
 from services.ontology_store import sparql_query
@@ -95,17 +99,8 @@ def view_graph(kb_id: int, *, center: str | None = None) -> dict[str, Any]:
         pass
 
     ns = str(NS)
-    skos = "http://www.w3.org/2004/02/skos/core#"
-    rel_filter = " ".join(
-        [
-            f"<{ns}dependsOn>",
-            f"<{ns}derivedFrom>",
-            f"<{ns}joinableWith>",
-            f"<{ns}transformsFrom>",
-            f"<{ns}computedFromTable>",
-            f"<{skos}related>",
-        ]
-    )
+    rel_filter = relation_predicate_in_clause()
+    relation_limit = 500
     try:
         rows = sparql_query(
             f"""
@@ -117,7 +112,7 @@ def view_graph(kb_id: int, *, center: str | None = None) -> dict[str, Any]:
                 FILTER(?p IN ({rel_filter}))
               }}
             }}
-            LIMIT 500
+            LIMIT {relation_limit}
             """
         )
         for i, row in enumerate(rows):
@@ -148,6 +143,12 @@ def view_graph(kb_id: int, *, center: str | None = None) -> dict[str, Any]:
         "graph_iri": graph_iri,
         "nodes": nodes,
         "edges": edges,
+        "edge_filter": {
+            "source": "rdf_production_graph",
+            "object_filter": "isIRI",
+            "predicates": relation_predicate_local_names(),
+            "limit": relation_limit,
+        },
         "center": center,
         "neighborhood": neighborhood,
     }

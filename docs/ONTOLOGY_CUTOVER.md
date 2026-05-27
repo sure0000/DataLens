@@ -5,13 +5,13 @@
 **默认无需 Docker。** 本体三元组写入项目内 Trig 文件（`.run/ontology-store/datalens.trig`），由 rdflib 提供 SPARQL，后端启动即可用。
 
 ```bash
-./scripts/service.sh start   # 不依赖 Docker
+./scripts/service.sh start local   # 不依赖 Docker
 ```
 
 可选：若需要独立 Fuseki 服务（Docker）：
 
 ```bash
-# .env 中设置 FUSEKI_URL=http://localhost:3030 且 FUSEKI_AUTO_START=true
+# .env 中设置 FUSEKI_URL=http://localhost:3030（local 模式不会自动拉起 Docker）
 ./scripts/fuseki.sh start
 docker compose up -d fuseki
 ```
@@ -21,7 +21,7 @@ docker compose up -d fuseki
 ```env
 ONTOLOGY_LOCAL_STORE_PATH=.run/ontology-store/datalens.trig
 # FUSEKI_URL=              留空 = 本地文件（推荐无 Docker）
-# FUSEKI_AUTO_START=false
+# FUSEKI_AUTO_START=false   # 仅用于后端配置；service.sh local 不读取该开关
 ONTOLOGY_ENABLED=true
 ```
 

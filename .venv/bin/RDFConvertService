@@ -1,4 +1,4 @@
-#!/Users/me/Documents/DataLens/.venv/bin/python3
+#!/Users/xuyc/Documents/code/DataLens/.venv/bin/python3.13
 # -*- coding: utf-8 -*-
 """
 Possible CGI entry point for the owl package.

@@ -10,6 +10,7 @@ import httpx
 from openai import AsyncOpenAI
 from sqlalchemy.orm import Session
 
+from services.httpx_env import async_client as httpx_async_client
 from services.llm_connections import get_connection, is_connection_ref, parse_connection_id
 from services.llm_models import has_any_llm_key, parse_model_ref, resolve_effective_model
 from services.runtime_llm_config import (
@@ -61,6 +62,10 @@ _async_clients: dict[str, AsyncOpenAI] = {}
 _async_conn_clients: dict[str, AsyncOpenAI] = {}
 
 
+def _llm_http_client() -> httpx.AsyncClient:
+    return httpx_async_client(timeout=120.0)
+
+
 def _has_llm_key(db: Session) -> bool:
     return has_any_llm_key(db)
 
@@ -88,7 +93,7 @@ def _async_client_for(provider: str, db: Session) -> AsyncOpenAI:
     if cache_key not in _async_clients:
         kwargs: dict[str, Any] = {
             "api_key": api_key,
-            "timeout": httpx.Timeout(120.0, connect=25.0),
+            "http_client": _llm_http_client(),
         }
         if base_url:
             kwargs["base_url"] = base_url
@@ -113,7 +118,7 @@ def _async_client_for_connection_id(db: Session, conn_id: str) -> tuple[AsyncOpe
         _async_conn_clients[cache_key] = AsyncOpenAI(
             api_key=api_key,
             base_url=base,
-            timeout=httpx.Timeout(120.0, connect=25.0),
+            http_client=_llm_http_client(),
         )
     return _async_conn_clients[cache_key], model_name
 

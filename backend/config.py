@@ -22,6 +22,10 @@ class Settings(BaseSettings):
         default="http://localhost:3000,http://127.0.0.1:3000",
         alias="CORS_ORIGINS",
     )
+    cors_origin_regex: str | None = Field(
+        default=r"^https?://(localhost|127\.0\.0\.1|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[0-1])\.\d+\.\d+)(:\d+)?$",
+        alias="CORS_ORIGIN_REGEX",
+    )
     db_pool_size: int = Field(default=20, ge=1, le=50, alias="DB_POOL_SIZE")
     db_max_overflow: int = Field(default=30, ge=0, le=100, alias="DB_MAX_OVERFLOW")
     db_pool_recycle: int = Field(default=600, ge=60, alias="DB_POOL_RECYCLE")

@@ -151,18 +151,20 @@ export type MetricDef = {
 
 /** 血缘边 */
 export type LineageEdge = {
-  id: number;
-  knowledge_base_id: number;
-  git_source_id: number | null;
-  source_table: string;
-  target_table: string;
-  source_field: string | null;
-  target_field: string | null;
-  layer: string;
-  transform_logic: string | null;
-  status: "done" | "processing" | "pending";
-  created_at: string | null;
-  updated_at: string | null;
+  id?: number;
+  knowledge_base_id?: number;
+  git_source_id?: number | null;
+  source_table?: string;
+  target_table?: string;
+  source_field?: string | null;
+  target_field?: string | null;
+  layer?: string;
+  transform_logic?: string | null;
+  status?: "done" | "processing" | "pending";
+  created_at?: string | null;
+  updated_at?: string | null;
+  source?: string;
+  target?: string;
 };
 
 /** 血缘图层 */
@@ -173,6 +175,7 @@ export type LineageLayer = {
 
 /** 血缘图数据 */
 export type LineageData = {
+  source?: "rdf" | "postgres";
   layers: LineageLayer[];
   edges: LineageEdge[];
   stats: { done: number; processing: number; pending: number };
@@ -269,6 +272,7 @@ export type OntologyCleaningLayer = {
   description: string;
   total: number;
   ontology_class: string;
+  criteria?: Record<string, string | number | boolean | string[]>;
   items?: Record<string, string>[];
 };
 
@@ -288,6 +292,7 @@ export type OntologyLayerDetail = {
   label: string;
   description: string;
   ontology_class: string;
+  criteria?: Record<string, string | number | boolean | string[]>;
   total: number;
   offset: number;
   limit: number;

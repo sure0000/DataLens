@@ -41,12 +41,13 @@ cp .env.example .env
 - `BACKEND_PORT`：后端端口，默认 `8000`
 - `FRONTEND_PORT`：前端端口，默认 `3000`
 - `NEXT_PUBLIC_API_URL`：前端调用后端地址（本地建议 `http://localhost:8000`）
+- `FUSEKI_IMAGE`：Fuseki Docker 镜像地址（默认 `stain/jena-fuseki:4.10.0`，网络受限时可替换为镜像代理地址）
 - `COPILOT_MAX_TABLES_WITHOUT_DOMAIN`：未选业务域时语义 top_k 表上限（默认 `20`）
 - `SEMANTIC_AUTO_APPROVE_CONFIDENCE`：术语/指标提取置信度 ≥ 此值自动 `approved`（默认 `80`）
 - `SEMANTIC_CHUNK_STRUCTURE_MAX`：单文档语义结构化最多处理的 chunk 数（默认 `40`）
 - **本体层 / 存储**（Formal OWL，见 [`docs/ONTOLOGY_CUTOVER.md`](docs/ONTOLOGY_CUTOVER.md)）：
   - **默认**：Fuseki（`FUSEKI_URL=http://localhost:3030`），可用 Docker 或本地 Java Fuseki
-  - `./scripts/fuseki.sh start` / `FUSEKI_AUTO_START=true`：随 `./scripts/service.sh start` 启动 Docker Fuseki
+  - `./scripts/fuseki.sh start`：单独启动 Docker Fuseki（`./scripts/service.sh start local` 不会自动拉起 Docker）
   - 调试回退：显式设置 `ONTOLOGY_LOCAL_STORE_ENABLED=true` 才写入本地 Trig 文件
 
 更多 Copilot 路由相关变量见 [`docs/COPILOT_ROUTING_OPTIMIZATION.md`](docs/COPILOT_ROUTING_OPTIMIZATION.md) §5。
@@ -98,7 +99,13 @@ npm run dev
 如果本机已安装 Docker，可在项目根目录执行：
 
 ```bash
-docker compose up --build
+./scripts/service.sh start docker
+```
+
+停止容器：
+
+```bash
+./scripts/service.sh stop docker
 ```
 
 默认端口：

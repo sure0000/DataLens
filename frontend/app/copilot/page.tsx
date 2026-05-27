@@ -1,12 +1,9 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { createPortal } from "react-dom";
-import { api } from "../../lib/api";
-import { useEscapeKey } from "../../hooks/useEscapeKey";
+import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { api, ApiError, formatApiError } from "../../lib/api";
 import { readUserPreferences, writeUserPreferences } from "../../lib/userPreferences";
-import Breadcrumbs from "../../components/Breadcrumbs";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import CopilotMessageThread from "../../components/copilot/CopilotMessageThread";
 import SessionList from "../../components/copilot/SessionList";
@@ -104,14 +101,6 @@ function CopilotPageContent() {
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLElement | null>(null);
   const questionInputRef = useRef<HTMLTextAreaElement | null>(null);
-  const chatModelDropdownRef = useRef<HTMLDivElement | null>(null);
-  const chatModelMenuPortalRef = useRef<HTMLUListElement | null>(null);
-  const [chatModelMenuOpen, setChatModelMenuOpen] = useState(false);
-  const [chatModelMenuFixedStyle, setChatModelMenuFixedStyle] = useState<CSSProperties | null>(null);
-  const bizDomainDropdownRef = useRef<HTMLDivElement | null>(null);
-  const bizDomainMenuPortalRef = useRef<HTMLUListElement | null>(null);
-  const [bizDomainMenuOpen, setBizDomainMenuOpen] = useState(false);
-  const [bizDomainMenuFixedStyle, setBizDomainMenuFixedStyle] = useState<CSSProperties | null>(null);
 
   function loadSessionsFromStorage() {
     const state = readSessionState();
@@ -192,20 +181,6 @@ function CopilotPageContent() {
     return new Set([llmCatalog.auto_id, ...preferenceChatModels.map((m) => m.id)]);
   }, [llmCatalog, preferenceChatModels]);
 
-  const chatModelDisplayFull = useMemo(() => {
-    if (!llmCatalog?.has_llm) return "未配置 LLM";
-    if (chatModelSelect === llmCatalog.auto_id) return "自动";
-    const m = preferenceChatModels.find((x) => x.id === chatModelSelect);
-    return m ? formatPreferenceModelDisplay(m) : "自动";
-  }, [llmCatalog, chatModelSelect, preferenceChatModels]);
-
-  const chatModelButtonTitle = useMemo(() => {
-    if (!llmCatalog?.has_llm) return undefined;
-    if (chatModelSelect === llmCatalog.auto_id) return undefined;
-    const m = preferenceChatModels.find((x) => x.id === chatModelSelect);
-    return m ? formatPreferenceModelDisplay(m) : undefined;
-  }, [llmCatalog, chatModelSelect, preferenceChatModels]);
-
   useEffect(() => {
     api<LlmCatalog>("/api/llm/catalog")
       .then((c) => {
@@ -232,84 +207,7 @@ function CopilotPageContent() {
     return () => window.removeEventListener("datalens-user-prefs-updated", onPrefs);
   }, [llmCatalog, chatModelChoiceIds]);
 
-  useEscapeKey(() => { setChatModelMenuOpen(false); setBizDomainMenuOpen(false); }, chatModelMenuOpen || bizDomainMenuOpen);
-
-  useEffect(() => {
-    if (!chatModelMenuOpen && !bizDomainMenuOpen) return;
-    const onDoc = (e: MouseEvent) => {
-      const t = e.target as Node;
-      if (chatModelMenuOpen) {
-        if (!chatModelDropdownRef.current?.contains(t) && !chatModelMenuPortalRef.current?.contains(t)) {
-          setChatModelMenuOpen(false);
-        }
-      }
-      if (bizDomainMenuOpen) {
-        if (!bizDomainDropdownRef.current?.contains(t) && !bizDomainMenuPortalRef.current?.contains(t)) {
-          setBizDomainMenuOpen(false);
-        }
-      }
-    };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [chatModelMenuOpen, bizDomainMenuOpen]);
-
-  useLayoutEffect(() => {
-    if (!chatModelMenuOpen || !llmCatalog?.has_llm) {
-      setChatModelMenuFixedStyle(null);
-      return;
-    }
-    function updatePosition() {
-      const el = chatModelDropdownRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const margin = 8;
-      const maxHCap = Math.min(window.innerHeight * 0.5, 256);
-      const spaceAbove = rect.top - margin;
-      const spaceBelow = window.innerHeight - rect.bottom - margin;
-      const preferAbove = spaceAbove >= 64 && spaceAbove >= spaceBelow - 40;
-      const minW = rect.width;
-      const left = Math.max(margin, Math.min(rect.left, window.innerWidth - minW - margin));
-      if (preferAbove) {
-        const maxH = Math.min(maxHCap, Math.max(64, spaceAbove - 4));
-        setChatModelMenuFixedStyle({
-          position: "fixed",
-          left,
-          top: rect.top - 4,
-          minWidth: minW,
-          maxHeight: maxH,
-          transform: "translateY(-100%)",
-          zIndex: 200
-        });
-      } else {
-        const maxH = Math.min(maxHCap, Math.max(64, spaceBelow - 4));
-        setChatModelMenuFixedStyle({
-          position: "fixed",
-          left,
-          top: rect.bottom + 4,
-          minWidth: minW,
-          maxHeight: maxH,
-          transform: "none",
-          zIndex: 200
-        });
-      }
-    }
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [chatModelMenuOpen, llmCatalog?.has_llm]);
-
   activeAskRef.current = activeAsk;
-
-  useEffect(() => {
-    if (activeAsk) {
-      setChatModelMenuOpen(false);
-      setBizDomainMenuOpen(false);
-    }
-  }, [activeAsk]);
 
   useEffect(() => {
     if (!sessionIdFromUrl) return;
@@ -349,6 +247,7 @@ function CopilotPageContent() {
       pipeline_trace: mergedPipeline?.length ? mergedPipeline : undefined,
       routing_trace: res.routing_trace,
       sql_review: res.sql_review,
+      ontology_mapping: res.ontology_mapping,
       retry_question: needsDomainConfirm && retryQuestion ? retryQuestion : undefined,
       created_at: new Date().toISOString()
     };
@@ -370,11 +269,17 @@ function CopilotPageContent() {
         body: JSON.stringify(ask.payload)
       });
       handleSettled(res, []);
-    } catch {
+    } catch (e: unknown) {
+      const detail =
+        e instanceof ApiError
+          ? formatApiError(e)
+          : e instanceof Error
+            ? e.message
+            : "请求失败，请检查后端服务或稍后重试。";
       const errorMessage: ChatMessage = {
         id: `msg-assistant-error-${Date.now()}`,
         role: "assistant",
-        answer: "请求失败，请检查后端服务或稍后重试。",
+        answer: detail,
         sql: "",
         explanation: "",
         query_result: { ok: false, columns: [], rows: [], error: "请求失败" },
@@ -428,95 +333,6 @@ function CopilotPageContent() {
   }
 
   const activeSession = useMemo(() => sessions.find((s) => s.id === activeSessionId) || null, [sessions, activeSessionId]);
-  const selectedBusinessDomainTitle = useMemo(() => {
-    if (!activeSession?.business_domain_id) {
-      return "选择业务域后：将该域挂载的全部数据表元数据纳入问数上下文，并启用域内知识库语义检索。";
-    }
-    const d = businessDomains.find((x) => x.id === activeSession.business_domain_id);
-    return (d?.name || "").trim() || "选择业务域后：将该域挂载的全部数据表元数据纳入问数上下文，并启用域内知识库语义检索。";
-  }, [activeSession, businessDomains]);
-
-  const businessDomainDisplayFull = useMemo(() => {
-    if (!activeSession) return "不关联";
-    const id = activeSession.business_domain_id;
-    if (id == null || id === undefined) return "不关联";
-    const d = businessDomains.find((x) => x.id === id);
-    return (d?.name || "").trim() || "不关联";
-  }, [activeSession, businessDomains]);
-
-  useLayoutEffect(() => {
-    if (!bizDomainMenuOpen) {
-      setBizDomainMenuFixedStyle(null);
-      return;
-    }
-    function updatePosition() {
-      const el = bizDomainDropdownRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const margin = 8;
-      const maxHCap = Math.min(window.innerHeight * 0.5, 256);
-      const spaceAbove = rect.top - margin;
-      const spaceBelow = window.innerHeight - rect.bottom - margin;
-      const preferAbove = spaceAbove >= 64 && spaceAbove >= spaceBelow - 40;
-      const minW = rect.width;
-      const left = Math.max(margin, Math.min(rect.left, window.innerWidth - minW - margin));
-      if (preferAbove) {
-        const maxH = Math.min(maxHCap, Math.max(64, spaceAbove - 4));
-        setBizDomainMenuFixedStyle({
-          position: "fixed",
-          left,
-          top: rect.top - 4,
-          minWidth: minW,
-          maxHeight: maxH,
-          transform: "translateY(-100%)",
-          zIndex: 200
-        });
-      } else {
-        const maxH = Math.min(maxHCap, Math.max(64, spaceBelow - 4));
-        setBizDomainMenuFixedStyle({
-          position: "fixed",
-          left,
-          top: rect.bottom + 4,
-          minWidth: minW,
-          maxHeight: maxH,
-          transform: "none",
-          zIndex: 200
-        });
-      }
-    }
-    updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
-    return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
-    };
-  }, [bizDomainMenuOpen]);
-
-  const chatBreadcrumbItems = useMemo(() => {
-    const title = activeSession?.title || "新对话";
-    const pid = (activeSession?.project_id || "").trim();
-    if (!pid) {
-      return [
-        { label: "首页", href: "/" },
-        { label: "未归类", href: "/copilot?project=__unassigned__" },
-        { label: title }
-      ];
-    }
-    const p = projects.find((x) => x.id === pid);
-    if (p) {
-      return [
-        { label: "首页", href: "/" },
-        { label: p.name, href: `/copilot?project=${encodeURIComponent(pid)}` },
-        { label: title }
-      ];
-    }
-    return [
-      { label: "首页", href: "/" },
-      { label: "未知项目", href: "/copilot" },
-      { label: title }
-    ];
-  }, [activeSession, projects]);
   const displayMessages = useMemo(() => activeSession?.messages || [], [activeSession]);
   const projectLandingMode = !!projectIdFromUrl && !sessionIdFromUrl;
   const projectSessions = useMemo(() => {
@@ -609,21 +425,6 @@ function CopilotPageContent() {
     submit(userMsg.question, { fromMessageId: userMsg.id });
   }
 
-  function continueFollowUp(messageId: string) {
-    if (!activeSession) return;
-    const idx = activeSession.messages.findIndex((m) => m.id === messageId);
-    if (idx <= 0) return;
-    const userMsg = [...activeSession.messages.slice(0, idx)].reverse().find((m) => m.role === "user");
-    setQuestion(userMsg?.question ? `继续基于这个问题深入：${userMsg.question}` : "继续追问上一个回答的细节：");
-    questionInputRef.current?.focus();
-  }
-
-  function beginEditUserMessage(m: ChatMessage) {
-    if (!m.question) return;
-    setEditingMessageId(m.id);
-    setEditingText(m.question);
-  }
-
   function saveEditAndResubmit() {
     if (!editingText.trim()) return;
     setConfirmState({
@@ -699,16 +500,16 @@ function CopilotPageContent() {
           </>
         ) : (
           <CopilotGenerationProvider activeAsk={activeAsk} onSettled={handleSettled} onStreamError={handleStreamFail}>
-            <div className="border-b border-app-subtle px-4 py-3 sm:px-6">
-              <div className="mx-auto flex w-full max-w-3xl flex-wrap items-center justify-between gap-2">
-                <Breadcrumbs items={chatBreadcrumbItems} />
+            <div className="border-b border-app-subtle px-4 py-2 sm:px-6">
+              <div className="mx-auto flex w-full max-w-3xl items-center justify-between gap-2">
+                <h1 className="truncate text-sm font-medium text-app-primary">{activeSession?.title || "新对话"}</h1>
                 {activeSession ? (
                   <button
                     type="button"
-                    className="shrink-0 text-sm text-[var(--app-danger)] hover:underline"
+                    className="shrink-0 text-xs text-app-muted hover:text-[var(--app-danger)]"
                     onClick={() => setPendingDeleteSessionId(activeSession.id)}
                   >
-                    删除对话
+                    删除
                   </button>
                 ) : null}
               </div>
@@ -726,24 +527,23 @@ function CopilotPageContent() {
               editingText={editingText}
               setEditingText={setEditingText}
               setEditingMessageId={setEditingMessageId}
-              beginEditUserMessage={beginEditUserMessage}
               saveEditAndResubmit={saveEditAndResubmit}
               copyMessage={copyMessage}
               retryFromAssistant={retryFromAssistant}
-              continueFollowUp={continueFollowUp}
               onApplySuggestedDomain={applySuggestedDomain}
             />
             <CopilotStreamBubble />
 
             {!displayMessages.length && !activeAsk && (
-              <div className="mx-auto mt-16 max-w-xl text-center">
-                <p className="text-[1.75rem] font-semibold text-app-primary">今天想分析什么数据？</p>
-                <p className="mt-2 text-sm text-app-secondary">输入业务问题即可，我会生成 SQL、执行并解释关键结论。</p>
-                <div className="mt-4 flex flex-wrap justify-center gap-2">
-                  {QUICK_QUESTIONS.map((item) => (
+              <div className="mx-auto mt-20 max-w-md text-center">
+                <p className="text-lg font-medium text-app-primary">输入问题开始分析</p>
+                <p className="mt-1 text-sm text-app-muted">支持自然语言问答与 SQL 查数</p>
+                <div className="mt-4 flex flex-col gap-2">
+                  {QUICK_QUESTIONS.slice(0, 2).map((item) => (
                     <button
                       key={item}
-                      className="inline-flex min-h-[2rem] items-center justify-center rounded-full border border-app-border bg-[var(--app-card-bg)] px-3 text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
+                      type="button"
+                      className="rounded-lg border border-app-border px-3 py-2 text-left text-xs text-app-secondary transition hover:bg-app-hover hover:text-app-primary"
                       onClick={() => {
                         setQuestion(item);
                         questionInputRef.current?.focus();
@@ -759,16 +559,15 @@ function CopilotPageContent() {
           </div>
             </section>
 
-            <section className="pointer-events-none absolute inset-x-0 bottom-0 z-10 max-w-full bg-gradient-to-t from-app-main from-35% via-app-main/98 to-transparent px-4 pb-4 pt-10 sm:px-6 sm:pb-5">
-              <div className="mx-auto flex min-w-0 max-w-3xl flex-col gap-2">
+            <section className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-app-main via-app-main/95 to-transparent px-4 pb-4 pt-6 sm:px-6">
+              <div className="pointer-events-auto mx-auto max-w-3xl space-y-1">
                 <CopilotGenerationDockStatus />
-                <div className="pointer-events-auto min-w-0">
-                <div className="copilot-dock-composer rounded-[14px] border border-app-border bg-app-card shadow-[var(--app-shadow-card)]">
+                <div className="flex items-end gap-2 rounded-2xl border border-app-border bg-app-card p-2 shadow-sm">
                   <textarea
                     ref={questionInputRef}
                     rows={2}
-                    className="max-h-[200px] min-h-[4.5rem] w-full resize-none border-0 bg-transparent px-4 pb-2 pt-3 text-[15px] leading-relaxed text-app-primary outline-none placeholder:text-app-muted focus-visible:ring-0 disabled:opacity-50"
-                    placeholder="追加或继续提问…"
+                    className="max-h-[160px] min-h-[2.75rem] flex-1 resize-none border-0 bg-transparent px-2 py-1.5 text-[15px] leading-relaxed text-app-primary outline-none placeholder:text-app-muted disabled:opacity-50"
+                    placeholder="输入问题，Enter 发送"
                     value={question}
                     maxLength={2000}
                     disabled={!!activeAsk}
@@ -780,212 +579,68 @@ function CopilotPageContent() {
                       }
                     }}
                   />
-                  <div className="flex flex-nowrap items-center justify-between gap-2 px-3 py-2.5">
-                    <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-                      <div
-                        ref={chatModelDropdownRef}
-                        className="relative inline-flex min-h-[2rem] w-max shrink-0 items-center gap-1.5 rounded-full border border-app-border bg-app-hover px-2.5 py-1.5"
-                      >
-                        <span className="select-none shrink-0 text-[13px] leading-none text-app-secondary" aria-hidden title="模型">
-                          ∞
-                        </span>
-                        <button
-                          type="button"
-                          disabled={!llmCatalog?.has_llm || !!activeAsk}
-                          title={chatModelButtonTitle}
-                          aria-expanded={chatModelMenuOpen}
-                          aria-haspopup="listbox"
-                          className="flex cursor-pointer items-center gap-1 rounded-md py-0.5 text-left text-xs font-medium text-app-primary outline-none focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
-                          onClick={() => {
-                            setBizDomainMenuOpen(false);
-                            setChatModelMenuOpen((o) => !o);
-                          }}
-                        >
-                          <span className="whitespace-nowrap leading-snug">{chatModelDisplayFull}</span>
-                          <svg
-                            className={`h-3.5 w-3.5 shrink-0 text-app-secondary transition-transform ${chatModelMenuOpen ? "rotate-180" : ""}`}
-                            viewBox="0 0 24 24"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth="2"
-                            aria-hidden
-                          >
-                            <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-                          </svg>
-                        </button>
-                      </div>
-                      {activeSession ? (
-                        <div
-                          ref={bizDomainDropdownRef}
-                          className="relative inline-flex min-h-[2rem] w-max shrink-0 items-center gap-1.5 rounded-full border border-app-border bg-app-hover px-2.5 py-1.5"
-                        >
-                          <span className="shrink-0 text-app-secondary" aria-hidden title="业务域">
-                            <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden="true">
-                              <path d="M4 5h7v6H4zM13 5h7v4h-7zM13 11h7v8h-7zM4 13h7v6H4z" strokeLinejoin="round" />
-                            </svg>
-                          </span>
-                          <button
-                            type="button"
-                            disabled={!!activeAsk}
-                            title={activeSession.business_domain_id ? selectedBusinessDomainTitle : undefined}
-                            aria-expanded={bizDomainMenuOpen}
-                            aria-haspopup="listbox"
-                            className="flex cursor-pointer items-center gap-1 rounded-md py-0.5 text-left text-xs font-medium text-app-primary outline-none focus-visible:ring-2 focus-visible:ring-app-border focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
-                            onClick={() => {
-                              setChatModelMenuOpen(false);
-                              setBizDomainMenuOpen((o) => !o);
-                            }}
-                          >
-                            <span className="whitespace-nowrap leading-snug">{businessDomainDisplayFull}</span>
-                            <svg
-                              className={`h-3.5 w-3.5 shrink-0 text-app-secondary transition-transform ${bizDomainMenuOpen ? "rotate-180" : ""}`}
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              aria-hidden
-                            >
-                              <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
-                            </svg>
-                          </button>
-                        </div>
-                      ) : null}
-                    </div>
-                    <div className="flex shrink-0 items-center gap-2">
-                      {question.length > 1800 && (
-                        <span className="text-[10px] text-amber-600">{question.length}/2000</span>
-                      )}
-                      {tableIdFromUrl && Number.isFinite(Number(tableIdFromUrl)) && (
-                        <span
-                          className="max-w-[4.5rem] truncate text-[10px] text-app-secondary"
-                          title={`URL 已指定数据表 ID ${tableIdFromUrl}，请求将带上表级知识库与固定条目`}
-                        >
-                          表 {tableIdFromUrl}
-                        </span>
-                      )}
-                    </div>
-                  </div>
+                  <button
+                    type="button"
+                    className="app-button shrink-0 rounded-xl px-4 py-2 text-sm disabled:opacity-40"
+                    disabled={!!activeAsk || !question.trim()}
+                    onClick={() => submit()}
+                  >
+                    发送
+                  </button>
                 </div>
+                <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-app-muted">
+                  {llmCatalog?.has_llm ? (
+                    <label className="flex items-center gap-1">
+                      <span className="shrink-0">模型</span>
+                      <select
+                        className="app-input max-w-[12rem] py-1 text-xs"
+                        disabled={!!activeAsk}
+                        value={chatModelSelect}
+                        onChange={(e) => {
+                          setChatModelSelect(e.target.value);
+                          writeUserPreferences({ chatModel: e.target.value });
+                        }}
+                      >
+                        <option value={llmCatalog.auto_id}>自动</option>
+                        {preferenceChatModels.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {formatPreferenceModelDisplay(m)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
+                  {activeSession ? (
+                    <label className="flex items-center gap-1">
+                      <span className="shrink-0">业务域</span>
+                      <select
+                        className="app-input max-w-[10rem] py-1 text-xs"
+                        disabled={!!activeAsk}
+                        value={activeSession.business_domain_id ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setSessionBusinessDomain(
+                            activeSession.id,
+                            v === "" ? undefined : Number(v)
+                          );
+                          loadSessionsFromStorage();
+                        }}
+                      >
+                        <option value="">不关联</option>
+                        {businessDomains.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.name}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  ) : null}
                 </div>
               </div>
             </section>
           </CopilotGenerationProvider>
         )}
       </section>
-
-      {typeof document !== "undefined" &&
-        chatModelMenuOpen &&
-        llmCatalog &&
-        llmCatalog.has_llm &&
-        chatModelMenuFixedStyle &&
-        createPortal(
-          <ul
-            ref={chatModelMenuPortalRef}
-            role="listbox"
-            style={chatModelMenuFixedStyle}
-            className="w-max overflow-auto rounded-xl border border-app-border bg-app-card py-1 shadow-[var(--app-shadow-card)]"
-          >
-            <li role="none">
-              <button
-                type="button"
-                role="option"
-                aria-selected={chatModelSelect === llmCatalog.auto_id}
-                className={`flex w-full px-3 py-2 text-left text-xs ${
-                  chatModelSelect === llmCatalog.auto_id
-                    ? "bg-app-activeBg font-medium text-app-chipText"
-                    : "text-app-primary hover:bg-app-hover"
-                }`}
-                onClick={() => {
-                  setChatModelSelect(llmCatalog.auto_id);
-                  writeUserPreferences({ chatModel: llmCatalog.auto_id });
-                  setChatModelMenuOpen(false);
-                }}
-              >
-                自动
-              </button>
-            </li>
-            {preferenceChatModels.map((m) => {
-              const line = formatPreferenceModelDisplay(m);
-              return (
-                <li key={m.id} role="none">
-                  <button
-                    type="button"
-                    role="option"
-                    aria-selected={chatModelSelect === m.id}
-                    className={`flex w-full px-3 py-2 text-left text-xs whitespace-nowrap ${
-                      chatModelSelect === m.id
-                        ? "bg-app-activeBg font-medium text-app-chipText"
-                        : "text-app-primary hover:bg-app-hover"
-                    }`}
-                    onClick={() => {
-                      setChatModelSelect(m.id);
-                      writeUserPreferences({ chatModel: m.id });
-                      setChatModelMenuOpen(false);
-                    }}
-                  >
-                    {line}
-                  </button>
-                </li>
-              );
-            })}
-          </ul>,
-          document.body
-        )}
-
-      {typeof document !== "undefined" &&
-        bizDomainMenuOpen &&
-        activeSession &&
-        bizDomainMenuFixedStyle &&
-        createPortal(
-          <ul
-            ref={bizDomainMenuPortalRef}
-            role="listbox"
-            style={bizDomainMenuFixedStyle}
-            className="w-max overflow-auto rounded-xl border border-app-border bg-app-card py-1 shadow-[var(--app-shadow-card)]"
-          >
-            <li role="none">
-              <button
-                type="button"
-                role="option"
-                aria-selected={activeSession.business_domain_id == null}
-                className={`flex w-full px-3 py-2 text-left text-xs ${
-                  activeSession.business_domain_id == null
-                    ? "bg-app-activeBg font-medium text-app-chipText"
-                    : "text-app-primary hover:bg-app-hover"
-                }`}
-                onClick={() => {
-                  setSessionBusinessDomain(activeSession.id, undefined);
-                  loadSessionsFromStorage();
-                  setBizDomainMenuOpen(false);
-                }}
-              >
-                不关联
-              </button>
-            </li>
-            {businessDomains.map((d) => (
-              <li key={d.id} role="none">
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={activeSession.business_domain_id === d.id}
-                  className={`flex w-full px-3 py-2 text-left text-xs whitespace-nowrap ${
-                    activeSession.business_domain_id === d.id
-                      ? "bg-app-activeBg font-medium text-app-chipText"
-                      : "text-app-primary hover:bg-app-hover"
-                  }`}
-                  onClick={() => {
-                    setSessionBusinessDomain(activeSession.id, d.id);
-                    loadSessionsFromStorage();
-                    setBizDomainMenuOpen(false);
-                  }}
-                >
-                  {d.name}
-                </button>
-              </li>
-            ))}
-          </ul>,
-          document.body
-        )}
 
       <ConfirmDialog
         open={!!confirmState}
