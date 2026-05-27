@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   BookOpen,
   Code2,
@@ -11,18 +11,10 @@ import {
   Network,
   RefreshCw,
   Search,
-  Shield,
   Sparkles,
 } from "lucide-react";
-import OntologyCleanResultCards from "../knowledge-bases/OntologyCleanResultCards";
-import type { OntologyCleaningResults } from "../knowledge-bases/types";
-import ConceptHierarchyTree, { type HierarchyNode } from "./ConceptHierarchyTree";
-import ConfidenceDistribution from "./ConfidenceDistribution";
-import ModelingPipelineStatus, { type ModelingStatus } from "./ModelingPipelineStatus";
-import QuarantineList, { type QuarantineItem } from "./QuarantineList";
 import SparqlConsole from "./SparqlConsole";
 import RelationGraph from "./RelationGraph";
-import ShaclDashboard, { type ShaclReport } from "./ShaclDashboard";
 import TripleViewer, { type RawTriple } from "./TripleViewer";
 import Toast from "../Toast";
 import LineageGraph from "../knowledge-bases/LineageGraph";
@@ -47,6 +39,13 @@ import {
   SyncResult,
   TERM_TYPE_LABELS,
 } from "../../lib/ontologyTypes";
+import {
+  isOntologyBrowseTab,
+  kbModelingSectionUrl,
+  ontologyUrl,
+  parseKbIdFromSearchParams,
+  type OntologyBrowseTab,
+} from "../../lib/ontologyRoutes";
 import OntologyStatusBadge from "./OntologyStatusBadge";
 import CopilotValidatePanel from "./CopilotValidatePanel";
 
@@ -55,7 +54,6 @@ const TABS: { id: OntologyTab; label: string; icon: typeof BookOpen }[] = [
   { id: "semantics", label: "业务语义", icon: BookOpen },
   { id: "assets", label: "数据资产", icon: Database },
   { id: "graph", label: "关系图谱", icon: Network },
-  { id: "governance", label: "清洗治理", icon: Shield },
   { id: "expert", label: "专家", icon: Code2 },
 ];
 
@@ -65,16 +63,14 @@ function confidenceClass(v: number): string {
   return "app-text-danger";
 }
 
-export default function OntologyWorkspace({
-  fixedKbId,
-}: {
-  fixedKbId?: number;
-} = {}) {
-  const hideKbSidebar = fixedKbId != null;
+export default function OntologyWorkspace() {
+  const router = useRouter();
   const searchParams = useSearchParams();
+  const lockedKbId = parseKbIdFromSearchParams(searchParams);
+  const hideKbSidebar = lockedKbId != null;
   const { toast, notify, dismiss } = useToast();
   const [kbs, setKbs] = useState<KnowledgeBaseOption[]>([]);
-  const [selectedKbId, setSelectedKbId] = useState<number | null>(fixedKbId ?? null);
+  const [selectedKbId, setSelectedKbId] = useState<number | null>(lockedKbId);
   const [tab, setTab] = useState<OntologyTab>("overview");
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -91,13 +87,7 @@ export default function OntologyWorkspace({
   const [store, setStore] = useState<OntologyStoreInfo>({});
   const [globalStore, setGlobalStore] = useState<OntologyStoreInfo>({});
   const [rdfView, setRdfView] = useState<KbRdfView | null>(null);
-  const [modelingStatus, setModelingStatus] = useState<ModelingStatus | null>(null);
-  const [cleaningResults, setCleaningResults] = useState<OntologyCleaningResults | null>(null);
-  const [shaclReport, setShaclReport] = useState<ShaclReport | null>(null);
-  const [quarantineItems, setQuarantineItems] = useState<QuarantineItem[]>([]);
   const [semanticsSubTab, setSemanticsSubTab] = useState<"terms" | "metrics" | "dimensions" | "rules">("terms");
-  const [runningModeling, setRunningModeling] = useState(false);
-  const [hierarchyRoots, setHierarchyRoots] = useState<HierarchyNode[]>([]);
 
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
@@ -110,30 +100,55 @@ export default function OntologyWorkspace({
   );
 
   useEffect(() => {
-    const tabParam = searchParams.get("tab") as OntologyTab | null;
-    if (tabParam && TABS.some((t) => t.id === tabParam)) {
+    const tabParam = searchParams.get("tab");
+    if (tabParam === "governance") {
+      if (lockedKbId) {
+        router.replace(kbModelingSectionUrl(lockedKbId));
+      } else {
+        router.replace("/knowledge-bases");
+      }
+      return;
+    }
+    if (isOntologyBrowseTab(tabParam)) {
       setTab(tabParam);
     } else if (!tabParam) {
       setTab("overview");
     }
-  }, [searchParams]);
+  }, [searchParams, lockedKbId, router]);
+
+  const replaceOntologyUrl = useCallback(
+    (next: { kbId?: number | null; tab?: OntologyTab }) => {
+      const kb = next.kbId ?? selectedKbId;
+      const tabId = next.tab ?? tab;
+      const browseTab: OntologyBrowseTab =
+        tabId === "overview" ? "overview" : (tabId as OntologyBrowseTab);
+      router.replace(
+        ontologyUrl({
+          kbId: kb ?? undefined,
+          tab: browseTab === "overview" ? undefined : browseTab,
+        }),
+        { scroll: false },
+      );
+    },
+    [router, selectedKbId, tab],
+  );
 
   const loadKbList = useCallback(async () => {
     setKbListLoading(true);
     try {
       const res = await api<{ knowledge_bases: KnowledgeBaseOption[] }>("/api/knowledge-bases");
       let list = res.knowledge_bases || [];
-      if (fixedKbId && !list.some((k) => k.id === fixedKbId)) {
+      if (lockedKbId && !list.some((k) => k.id === lockedKbId)) {
         try {
-          const one = await api<{ knowledge_base: KnowledgeBaseOption }>(`/api/knowledge-bases/${fixedKbId}`);
+          const one = await api<{ knowledge_base: KnowledgeBaseOption }>(`/api/knowledge-bases/${lockedKbId}`);
           if (one.knowledge_base) list = [one.knowledge_base, ...list];
         } catch {
           /* 知识库可能已删除 */
         }
       }
       setKbs(list);
-      if (fixedKbId) {
-        setSelectedKbId(fixedKbId);
+      if (lockedKbId) {
+        setSelectedKbId(lockedKbId);
       } else if (list.length) {
         const kbParam = searchParams.get("kb");
         const kbFromUrl = kbParam ? Number(kbParam) : NaN;
@@ -149,7 +164,7 @@ export default function OntologyWorkspace({
     } finally {
       setKbListLoading(false);
     }
-  }, [fixedKbId, notify, searchParams]);
+  }, [lockedKbId, notify, searchParams]);
 
   const loadWorkspace = useCallback(async () => {
     if (!selectedKbId) return;
@@ -167,10 +182,6 @@ export default function OntologyWorkspace({
         lineageRes,
         healthRes,
         rdfRes,
-        modelingRes,
-        cleaningRes,
-        quarantineRes,
-        hierarchyRes,
       ] = await Promise.all([
         api<{ terms: OntologyTerm[] }>(`/api/ontology/knowledge-bases/${selectedKbId}/terms`),
         api<{ metrics: OntologyMetric[] }>(`/api/ontology/knowledge-bases/${selectedKbId}/metrics`),
@@ -191,16 +202,6 @@ export default function OntologyWorkspace({
         api<LineageData>(`/api/knowledge-bases/${selectedKbId}/lineage`).catch(() => null),
         api<{ ok: boolean } & OntologyStoreInfo>("/api/ontology/health"),
         api<{ ok: boolean } & KbRdfView>(`/api/ontology/knowledge-bases/${selectedKbId}/rdf-view`),
-        api<ModelingStatus>(`/api/ontology/knowledge-bases/${selectedKbId}/modeling/status`).catch(() => null),
-        api<OntologyCleaningResults>(
-          `/api/ontology/knowledge-bases/${selectedKbId}/ontology-cleaning-results`,
-        ).catch(() => null),
-        api<{ items?: QuarantineItem[] }>(
-          `/api/ontology/knowledge-bases/${selectedKbId}/quarantine`,
-        ).catch(() => ({ items: [] })),
-        api<{ roots?: HierarchyNode[] }>(
-          `/api/ontology/knowledge-bases/${selectedKbId}/views/hierarchy`,
-        ).catch(() => ({ roots: [] })),
       ]);
       setTerms(termsRes.terms || []);
       setMetrics(metricsRes.metrics || []);
@@ -213,21 +214,6 @@ export default function OntologyWorkspace({
       setLineage(lineageRes);
       setGlobalStore(healthRes);
       setRdfView(rdfRes);
-      setModelingStatus(modelingRes);
-      setCleaningResults(cleaningRes);
-      setQuarantineItems(quarantineRes?.items ?? []);
-      setHierarchyRoots(hierarchyRes?.roots ?? []);
-      const passRate = modelingRes?.quality?.shacl_pass_rate;
-      if (passRate != null) {
-        setShaclReport({
-          conforms: passRate >= 100,
-          totalAssertions: 0,
-          passed: 0,
-          violations: [],
-        });
-      } else {
-        setShaclReport(null);
-      }
       localStorage.setItem(ONTOLOGY_KB_STORAGE_KEY, String(selectedKbId));
     } catch (e: unknown) {
       notify(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "加载本体数据失败", "error");
@@ -237,22 +223,16 @@ export default function OntologyWorkspace({
   }, [selectedKbId, notify]);
 
   useEffect(() => {
+    if (lockedKbId) setSelectedKbId(lockedKbId);
+  }, [lockedKbId]);
+
+  useEffect(() => {
     loadKbList();
   }, [loadKbList]);
 
   useEffect(() => {
     if (selectedKbId) loadWorkspace();
   }, [selectedKbId, loadWorkspace]);
-
-  useEffect(() => {
-    if (!selectedKbId || modelingStatus?.extraction?.status !== "running") return;
-    const t = setInterval(() => {
-      api<ModelingStatus>(`/api/ontology/knowledge-bases/${selectedKbId}/modeling/status`)
-        .then(setModelingStatus)
-        .catch(() => {});
-    }, 4000);
-    return () => clearInterval(t);
-  }, [selectedKbId, modelingStatus?.extraction?.status]);
 
   useEffect(() => {
     if (selectedKbId && typeof window !== "undefined") {
@@ -266,6 +246,7 @@ export default function OntologyWorkspace({
     setSelectedKbId(id);
     setSearch("");
     setStatusFilter("all");
+    replaceOntologyUrl({ kbId: id, tab });
   };
 
   const handleSync = async () => {
@@ -294,26 +275,6 @@ export default function OntologyWorkspace({
       notify(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "同步失败", "error");
     } finally {
       setSyncing(false);
-    }
-  };
-
-  const handleRunModeling = async () => {
-    if (!selectedKbId) return;
-    setRunningModeling(true);
-    try {
-      const res = await api<{ ok: boolean; status: string; message?: string }>(
-        `/api/ontology/knowledge-bases/${selectedKbId}/modeling/runs`,
-        { method: "POST", body: JSON.stringify({ source_type: "manual_ui", skip_if_running: true }) },
-      );
-      notify(res.message || (res.status === "already_running" ? "建模任务已在运行" : "已启动建模流水线"), "success");
-      const statusRes = await api<ModelingStatus>(
-        `/api/ontology/knowledge-bases/${selectedKbId}/modeling/status`,
-      );
-      setModelingStatus(statusRes);
-    } catch (e: unknown) {
-      notify(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "启动建模失败", "error");
-    } finally {
-      setRunningModeling(false);
     }
   };
 
@@ -395,12 +356,12 @@ export default function OntologyWorkspace({
         >
           刷新
         </button>
-        {selectedKbId && !hideKbSidebar ? (
+        {selectedKbId ? (
           <Link
             href={`/knowledge-bases/${selectedKbId}`}
             className="app-button-secondary app-toolbar-action text-sm no-underline"
           >
-            打开知识库
+            {hideKbSidebar ? "返回数据接入" : "打开知识库"}
           </Link>
         ) : null}
       </div>
@@ -473,6 +434,15 @@ export default function OntologyWorkspace({
             </div>
           ) : (
             <>
+              {hideKbSidebar && selectedKb ? (
+                <p className="mb-2 text-xs text-app-muted">
+                  数据接入 › <span className="text-app-secondary">{selectedKb.name}</span>
+                  {" · "}
+                  <Link href={kbModelingSectionUrl(selectedKb.id)} className="app-link">
+                    查看建模进度
+                  </Link>
+                </p>
+              ) : null}
               {/* 统计卡片 */}
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 <StatCard label="业务术语" value={terms.length} sub={`待审核 ${termStatusCounts.pending_review ?? 0}`} />
@@ -499,6 +469,7 @@ export default function OntologyWorkspace({
                       setSearch("");
                       setSelectedTerm(null);
                       setSelectedMetric(null);
+                      replaceOntologyUrl({ tab: id });
                     }}
                     className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm transition-colors ${
                       tab === id
@@ -590,19 +561,16 @@ export default function OntologyWorkspace({
                     terms={terms}
                     metrics={metrics}
                     graphEdges={graphEdges}
-                    modelingStatus={modelingStatus}
-                    loading={loading}
-                    runningModeling={runningModeling}
-                    onRunModeling={handleRunModeling}
                     onOpenSemantics={() => {
                       setTab("semantics");
                       setSemanticsSubTab("terms");
+                      replaceOntologyUrl({ tab: "semantics" });
                     }}
                     onOpenMetrics={() => {
                       setTab("semantics");
                       setSemanticsSubTab("metrics");
+                      replaceOntologyUrl({ tab: "semantics" });
                     }}
-                    onOpenGovernance={() => setTab("governance")}
                   />
                 ) : tab === "semantics" ? (
                   semanticsSubTab === "terms" ? (
@@ -670,22 +638,6 @@ export default function OntologyWorkspace({
                     graphEdges={graphEdges}
                     lineage={lineage}
                   />
-                ) : tab === "governance" ? (
-                  <GovernanceTab
-                    kbId={selectedKb.id}
-                    modelingStatus={modelingStatus}
-                    cleaningResults={cleaningResults}
-                    shaclReport={shaclReport}
-                    quarantineItems={quarantineItems}
-                    confidenceItems={[...terms, ...metrics].map((t) => ({
-                      confidence: t.confidence,
-                      name: t.name,
-                    }))}
-                    onRefresh={loadWorkspace}
-                    onRunModeling={handleRunModeling}
-                    runningModeling={runningModeling}
-                    hierarchyRoots={hierarchyRoots}
-                  />
                 ) : (
                   <ExpertTab
                     kbId={selectedKb.id}
@@ -737,26 +689,16 @@ function OverviewTab({
   terms,
   metrics,
   graphEdges,
-  modelingStatus,
-  loading,
-  runningModeling,
-  onRunModeling,
   onOpenSemantics,
   onOpenMetrics,
-  onOpenGovernance,
 }: {
   kb: KnowledgeBaseOption;
   pipelineStats: PipelineStats | null;
   terms: OntologyTerm[];
   metrics: OntologyMetric[];
   graphEdges: GraphEdge[];
-  modelingStatus: ModelingStatus | null;
-  loading: boolean;
-  runningModeling?: boolean;
-  onRunModeling?: () => void;
   onOpenSemantics: () => void;
   onOpenMetrics: () => void;
-  onOpenGovernance: () => void;
 }) {
   const run = pipelineStats?.last_pipeline_run;
   const runStatus = run?.status;
@@ -768,13 +710,6 @@ function OverviewTab({
 
   return (
     <div className="space-y-4">
-      <ModelingPipelineStatus
-        status={modelingStatus}
-        loading={loading}
-        onRunModeling={onRunModeling}
-        runningModeling={runningModeling}
-      />
-
       <div className="app-card p-4">
         <h3 className="app-section-title">当前知识库</h3>
         <p className="mt-1 text-sm font-medium text-app-primary">{kb.name}</p>
@@ -799,9 +734,9 @@ function OverviewTab({
       </div>
 
       <div className="flex justify-end">
-        <button type="button" className="app-link text-xs" onClick={onOpenGovernance}>
-          查看清洗治理 →
-        </button>
+        <Link href={kbModelingSectionUrl(kb.id)} className="app-link text-xs no-underline">
+          查看建模进度与质量 →
+        </Link>
       </div>
 
       {graphEdges.length > 0 && (
@@ -1145,77 +1080,6 @@ function GraphTab({
         <RelationGraph nodes={rgNodes} edges={rgEdges} />
       </section>
       {showLineage ? <LineageGraph data={lineage} /> : null}
-    </div>
-  );
-}
-
-function GovernanceTab({
-  kbId,
-  modelingStatus,
-  cleaningResults,
-  shaclReport,
-  quarantineItems,
-  confidenceItems,
-  onRefresh,
-  onRunModeling,
-  runningModeling,
-  hierarchyRoots,
-}: {
-  kbId: number;
-  modelingStatus: ModelingStatus | null;
-  cleaningResults: OntologyCleaningResults | null;
-  shaclReport: ShaclReport | null;
-  quarantineItems: QuarantineItem[];
-  confidenceItems: { confidence?: number; name?: string }[];
-  onRefresh: () => void;
-  onRunModeling?: () => void;
-  runningModeling?: boolean;
-  hierarchyRoots: HierarchyNode[];
-}) {
-  const passRate = modelingStatus?.quality?.shacl_pass_rate;
-  const syntheticShacl: ShaclReport | null =
-    passRate != null
-      ? {
-          conforms: passRate >= 100 && quarantineItems.length === 0,
-          totalAssertions: 100,
-          passed: Math.round(passRate),
-          violations: quarantineItems.length
-            ? [{ focusNode: "—", constraintType: "quarantine", severity: "Violation", message: `${quarantineItems.length} 条隔离断言` }]
-            : [],
-        }
-      : shaclReport;
-
-  return (
-    <div className="space-y-6">
-      <p className="rounded-lg border border-app-border bg-app-hover/50 px-3 py-2 text-xs text-app-secondary">
-        <span className="font-medium text-app-primary">本体建模</span>
-        ：建模流水线、五层清洗结果、SHACL 校验与隔离区治理。侧栏「本体建模」入口直达本页。
-      </p>
-      <ModelingPipelineStatus
-        status={modelingStatus}
-        compact
-        onRunModeling={onRunModeling}
-        runningModeling={runningModeling}
-      />
-      <OntologyCleanResultCards results={cleaningResults} kbId={kbId} loading={false} />
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="app-card p-4">
-          <h3 className="app-section-title mb-3">SHACL 校验</h3>
-          <ShaclDashboard report={syntheticShacl} compact />
-        </div>
-        <div className="app-card p-4">
-          <h3 className="app-section-title mb-3">置信度分布</h3>
-          <ConfidenceDistribution items={confidenceItems} title="提取质量" />
-        </div>
-      </div>
-      <div className="app-card p-4">
-        <h3 className="app-section-title mb-3">概念层级</h3>
-        <ConceptHierarchyTree roots={hierarchyRoots} />
-      </div>
-      <div className="app-card p-4">
-        <h3 className="app-section-title mb-3">隔离区</h3>
-        <QuarantineList kbId={kbId} items={quarantineItems} onResolve={onRefresh} />
-      </div>
     </div>
   );
 }

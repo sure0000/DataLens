@@ -27,7 +27,8 @@ import GitSourceForm, {
 } from "../../../components/knowledge-bases/GitSourceForm";
 import ImportPickerModal from "../../../components/knowledge-bases/ImportPickerModal";
 import EvidencePackageList from "../../../components/knowledge-bases/EvidencePackageList";
-import OntologyCleanResultCards from "../../../components/knowledge-bases/OntologyCleanResultCards";
+import KbModelingQualitySection from "../../../components/knowledge-bases/KbModelingQualitySection";
+import { ontologyUrl } from "../../../lib/ontologyRoutes";
 import type { SourceItem } from "../../../components/knowledge-bases/SourceCard";
 import SourceCardGrid from "../../../components/knowledge-bases/SourceCardGrid";
 
@@ -201,6 +202,14 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   }
 
   useEffect(() => { loadAll(); }, [kbId]);
+
+  useEffect(() => {
+    if (loading || !kb) return;
+    const hash = typeof window !== "undefined" ? window.location.hash.slice(1) : "";
+    if (hash) {
+      document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [loading, kb]);
 
   // Cleanup polling interval on unmount
   useEffect(() => {
@@ -528,11 +537,11 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
           { label: kb?.name || "…" },
         ]}
         title={kb?.name || "语义知识库"}
-        subtitle={kb?.description || "数据接入层：登记证据包并查看进度；在下方导入源卡片点击「语义清洗」进入本体建模流水线。"}
+        subtitle={kb?.description || "数据接入：登记证据包、在导入源上触发语义清洗，并在本页查看建模进度与质量。"}
         actions={
           <div className="app-toolbar flex-wrap">
             <Link
-              href={`/knowledge-bases/${kbId}/ontology`}
+              href={ontologyUrl({ kbId })}
               className="app-button-secondary app-toolbar-action no-underline"
             >
               本体浏览
@@ -617,13 +626,20 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
             <EvidencePackageList kbId={kbId} />
           </section>
 
-          <div className="mt-8">
-            <OntologyCleanResultCards
-              results={cleaningResults}
+          <section id="modeling" className="mt-8 scroll-mt-20 space-y-4">
+            <div>
+              <h2 className="app-section-title">建模与质量</h2>
+              <p className="mt-1 text-xs text-app-muted">
+                语义清洗与完整建模流水线进度、五层结果、SHACL 与隔离区均在此查看与处理。
+              </p>
+            </div>
+            <KbModelingQualitySection
               kbId={kbId}
-              loading={cleaningResultsLoading}
+              cleaningResults={cleaningResults}
+              cleaningResultsLoading={cleaningResultsLoading}
+              onPipelineChange={loadCleaningResults}
             />
-          </div>
+          </section>
 
           {docsLoading && <p className="text-sm text-app-muted mt-3">加载文档状态…</p>}
 

@@ -76,13 +76,7 @@ export type SyncResult = {
   };
 };
 
-export type OntologyTab =
-  | "overview"
-  | "semantics"
-  | "assets"
-  | "graph"
-  | "governance"
-  | "expert";
+export type OntologyTab = "overview" | "semantics" | "assets" | "graph" | "expert";
 
 export type RdfEntity = {
   iri: string;

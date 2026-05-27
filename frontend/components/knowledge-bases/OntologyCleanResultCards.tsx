@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { kbModelingSectionUrl } from "../../lib/ontologyRoutes";
 import type { OntologyCleaningResults } from "./types";
 
 const LAYER_ICONS: Record<string, string> = {
@@ -9,14 +10,6 @@ const LAYER_ICONS: Record<string, string> = {
   "entity-concept": "🏷️",
   relation: "🔗",
   attribute: "📋",
-};
-
-const LAYER_ROUTES: Record<string, string> = {
-  vocabulary: "vocabulary",
-  rule: "rule",
-  "entity-concept": "entity-concept",
-  relation: "relation",
-  attribute: "attribute",
 };
 
 interface OntologyCleanResultCardsProps {
@@ -33,7 +26,7 @@ export default function OntologyCleanResultCards({
   if (loading) {
     return (
       <section className="space-y-4">
-        <h2 className="app-section-title">本体建模清洗结果</h2>
+        <h2 className="app-section-title">五层清洗结果</h2>
         <p className="text-sm text-app-muted">加载中…</p>
       </section>
     );
@@ -49,9 +42,9 @@ export default function OntologyCleanResultCards({
   if (allEmpty) {
     return (
       <section className="space-y-4">
-        <h2 className="app-section-title">本体建模清洗结果</h2>
+        <h2 className="app-section-title">五层清洗结果</h2>
         <p className="text-sm text-app-muted">
-          暂无本体建模数据，请先在导入源上点击「语义清洗」触发处理。
+          暂无清洗结果，请先在导入源上点击「语义清洗」触发处理。
         </p>
       </section>
     );
@@ -60,16 +53,15 @@ export default function OntologyCleanResultCards({
   return (
     <section className="space-y-4">
       <div className="flex items-center justify-between">
-        <h2 className="app-section-title">本体建模清洗结果</h2>
+        <h2 className="app-section-title">五层清洗结果</h2>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
         {Object.entries(layers).map(([key, layer]) => {
-          const routeKey = LAYER_ROUTES[key] || key;
           return (
             <Link
               key={key}
-              href={`/knowledge-bases/${kbId}/ontology?tab=governance`}
+              href={kbModelingSectionUrl(kbId, "quarantine")}
               className="app-card app-card-interactive flex flex-col gap-2 p-4 no-underline"
             >
               <div className="flex items-center gap-2">
