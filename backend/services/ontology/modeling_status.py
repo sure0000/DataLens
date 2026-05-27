@@ -35,11 +35,16 @@ _STEP_STATUS_ICON = {
 def _normalize_step(raw: Any) -> dict[str, Any]:
     if isinstance(raw, dict):
         status = str(raw.get("status", "pending"))
+        reason = raw.get("reason")
+        done = raw.get("chunk_done")
+        total = raw.get("chunk_total")
+        if status == "running" and done is not None and total:
+            reason = f"分块 {done}/{total}"
         return {
             "status": status,
             "icon": _STEP_STATUS_ICON.get(status, "pending"),
             "triples": raw.get("triples"),
-            "reason": raw.get("reason"),
+            "reason": reason,
         }
     if isinstance(raw, str):
         return {"status": raw, "icon": _STEP_STATUS_ICON.get(raw, "pending")}
@@ -104,6 +109,12 @@ def get_modeling_status(db: Session, kb_id: int) -> dict[str, Any]:
                 shacl_pass_rate = round(passed / total_a * 100, 1)
             elif report.get("conforms") is True:
                 shacl_pass_rate = 100.0
+            elif rdf_triple_count > 0:
+                # Fallback when runtime SHACL report payload is unavailable:
+                # estimate pass rate from production triples vs quarantine assertions.
+                denom = rdf_triple_count + quarantine_count
+                if denom > 0:
+                    shacl_pass_rate = round(max(0.0, (rdf_triple_count / denom) * 100), 1)
         except Exception:
             pass
 
@@ -136,10 +147,18 @@ def get_modeling_status(db: Session, kb_id: int) -> dict[str, Any]:
 
     indexing_complete = total_docs == 0 or indexed_docs >= total_docs
 
+    active_run = None
+    if last_run and last_run.status == "running":
+        active_run = {
+            "source_type": last_run.source_type,
+            "source_id": last_run.source_id,
+        }
+
     return {
         "ok": True,
         "kb_id": kb_id,
         "pipeline_phase": pipeline_phase,
+        "active_run": active_run,
         "indexing": {
             "total_documents": total_docs,
             "indexed_documents": indexed_docs,

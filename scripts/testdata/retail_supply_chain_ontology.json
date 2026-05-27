@@ -1,0 +1,410 @@
+{
+  "_description": "零售供应链域本体数据 — 对应 OntologyWriter 输入格式。可直接用于 POST /api/ontology/knowledge-bases/{kb_id}/terms, /metrics 等 API。",
+  "_domain": "supply_chain",
+  "_kb_id": "kb_retail_supply_chain",
+
+  "business_terms": [
+    {
+      "domain_id": 10,
+      "name": "SKU 编码",
+      "definition": "企业内唯一标识一个可售商品的编码，12位数字，前4位为品类码，后8位为流水号",
+      "term_type": "dimension",
+      "related_fields": ["scm.product.sku_code", "trade.order_line.sku_code", "wms.inventory.item_id"],
+      "confidence": 100,
+      "status": "approved"
+    },
+    {
+      "domain_id": 10,
+      "name": "在库数量",
+      "definition": "仓库中实际可用的商品数量，on_hand_qty - reserved_qty。包含在途未入库的数量，不含已锁定/冻结的数量。",
+      "term_type": "metric",
+      "related_fields": ["scm.inventory_snapshot.on_hand_qty", "scm.inventory_snapshot.reserved_qty"],
+      "confidence": 100,
+      "status": "approved"
+    },
+    {
+      "domain_id": 10,
+      "name": "采购单状态",
+      "definition": "采购单在其生命周期中所处的阶段：draft（草稿）、submitted（已提交）、approved（已审批）、received（已收货）、closed（已关闭）",
+      "term_type": "enum",
+      "related_fields": ["scm.purchase_order.status"],
+      "confidence": 100,
+      "status": "approved"
+    },
+    {
+      "domain_id": 10,
+      "name": "供应商编码",
+      "definition": "企业内唯一标识一个供应商的编码，与 ERP 系统供应商编码一致",
+      "term_type": "dimension",
+      "related_fields": ["scm.supplier.supplier_code", "scm.purchase_order.supplier_code"],
+      "confidence": 100,
+      "status": "approved"
+    },
+    {
+      "domain_id": 10,
+      "name": "门店编码",
+      "definition": "企业内物理门店的唯一编码，POS 系统、电商平台共享此编码",
+      "term_type": "dimension",
+      "related_fields": ["scm.store.store_code", "trade.order_header.store_code"],
+      "confidence": 100,
+      "status": "approved"
+    }
+  ],
+
+  "metrics": [
+    {
+      "domain_id": 10,
+      "name": "日销售额",
+      "formula": "SUM(trade.order_header.paid_amount) WHERE status IN ('paid','shipped','delivered')",
+      "caliber": "分子：实付金额 SUM；时间窗口：自然日（biz_date）；排除条件：status = 'cancelled'；含运费不含退款",
+      "bound_table_ids": [201],
+      "derived_from_metric_id": null,
+      "confidence": 100,
+      "status": "approved"
+    },
+    {
+      "domain_id": 10,
+      "name": "毛利率",
+      "formula": "(SUM(trade.order_line.paid_amount) - SUM(trade.order_line.cost_amt)) / SUM(trade.order_line.paid_amount) * 100",
+      "caliber": "cost_amt 按采购加权移动平均成本，从 SCM 域获取；时间窗口：自然月；过滤：排除已取消和已退款订单",
+      "bound_table_ids": [201, 202],
+      "derived_from_metric_id": null,
+      "confidence": 95,
+      "status": "approved"
+    },
+    {
+      "domain_id": 10,
+      "name": "库存周转天数",
+      "formula": "AVG(scm.inventory_snapshot.on_hand_qty) OVER 30 days / SUM(scm.outbound_delivery.qty) OVER 30 days * 30",
+      "caliber": "按 SKU + 仓库粒度逐日计算月均库存，排除 on_hand_qty=0 的行；节假日顺延",
+      "bound_table_ids": [103, 106],
+      "derived_from_metric_id": null,
+      "confidence": 80,
+      "status": "pending_review"
+    },
+    {
+      "domain_id": 10,
+      "name": "准时交付率",
+      "formula": "COUNT(CASE WHEN inbound_receipt.qty >= purchase_order_line.ordered_qty THEN 1 END) / COUNT(*) * 100",
+      "caliber": "按 PO 行项独立评价；仅统计 status='received' 的行项；时间窗口：自然月；冗余：包含部分到货也算足量",
+      "bound_table_ids": [102, 104],
+      "derived_from_metric_id": null,
+      "confidence": 60,
+      "status": "draft"
+    },
+    {
+      "domain_id": 10,
+      "name": "客单价",
+      "formula": "SUM(trade.order_header.paid_amount) / COUNT(DISTINCT trade.order_header.order_id)",
+      "caliber": "分子 = GMV；分母 = 去重订单数；排除取消订单；时间窗口：自然日",
+      "bound_table_ids": [201],
+      "derived_from_metric_id": null,
+      "confidence": 100,
+      "status": "approved"
+    }
+  ],
+
+  "dimensions": [
+    {
+      "domain_id": 10,
+      "name": "时间_日",
+      "dim_type": "time",
+      "related_fields": [
+        "scm.purchase_order.biz_date",
+        "trade.order_header.biz_date",
+        "scm.inventory_snapshot.snapshot_date"
+      ],
+      "confidence": 100
+    },
+    {
+      "domain_id": 10,
+      "name": "品类",
+      "dim_type": "category",
+      "related_fields": ["scm.product.category_l1", "scm.product.category_l2", "scm.product.category_l3"],
+      "confidence": 100
+    },
+    {
+      "domain_id": 10,
+      "name": "城市",
+      "dim_type": "geo",
+      "related_fields": ["scm.store.city", "scm.store.province", "scm.store.region"],
+      "confidence": 100
+    },
+    {
+      "domain_id": 10,
+      "name": "供应商等级",
+      "dim_type": "category",
+      "related_fields": ["scm.supplier.level"],
+      "confidence": 90
+    },
+    {
+      "domain_id": 10,
+      "name": "渠道",
+      "dim_type": "category",
+      "related_fields": ["trade.order_header.channel"],
+      "confidence": 100
+    }
+  ],
+
+  "relations": [
+    {
+      "kb_id": "kb_retail_supply_chain",
+      "subject_iri": "https://datalens.local/ontology/table-scm-purchase-order",
+      "predicate": "joinableWith",
+      "object_iri": "https://datalens.local/ontology/table-scm-supplier",
+      "is_uri": true,
+      "confidence": 100
+    },
+    {
+      "kb_id": "kb_retail_supply_chain",
+      "subject_iri": "https://datalens.local/ontology/table-scm-purchase-order",
+      "predicate": "joinableWith",
+      "object_iri": "https://datalens.local/ontology/table-scm-purchase-order-line",
+      "is_uri": true,
+      "confidence": 100
+    },
+    {
+      "kb_id": "kb_retail_supply_chain",
+      "subject_iri": "https://datalens.local/ontology/table-scm-inventory-snapshot",
+      "predicate": "joinableWith",
+      "object_iri": "https://datalens.local/ontology/table-scm-product",
+      "is_uri": true,
+      "confidence": 100
+    },
+    {
+      "kb_id": "kb_retail_supply_chain",
+      "subject_iri": "https://datalens.local/ontology/table-trade-order-line",
+      "predicate": "joinableWith",
+      "object_iri": "https://datalens.local/ontology/table-scm-product",
+      "is_uri": true,
+      "confidence": 85
+    },
+    {
+      "kb_id": "kb_retail_supply_chain",
+      "subject_iri": "https://datalens.local/ontology/metric-gross-margin-rate",
+      "predicate": "derivedFrom",
+      "object_iri": "https://datalens.local/ontology/metric-daily-gmv",
+      "is_uri": true,
+      "confidence": 95
+    },
+    {
+      "kb_id": "kb_retail_supply_chain",
+      "subject_iri": "https://datalens.local/ontology/term-inventory-qty",
+      "predicate": "dependsOn",
+      "object_iri": "https://datalens.local/ontology/term-sku",
+      "is_uri": true,
+      "confidence": 100
+    }
+  ],
+
+  "lineage": [
+    {
+      "kb_id": "kb_retail_supply_chain",
+      "source_table_id": 0,
+      "target_table_id": 102,
+      "source_field": "erp.po_header.*",
+      "target_field": "dwd.fact_purchase_order.*",
+      "layer": "ODS → DWD",
+      "transform_logic": "字段重命名 + 状态码标准化（purchase_order.status: '01'→'submitted', '02'→'approved'）+ 金额分转元",
+      "confidence": 100
+    },
+    {
+      "kb_id": "kb_retail_supply_chain",
+      "source_table_id": 102,
+      "target_table_id": 0,
+      "source_field": "dwd.fact_purchase_order + dwd.fact_inbound",
+      "target_field": "dws.agg_supplier_performance",
+      "layer": "DWD → DWS",
+      "transform_logic": "按供应商聚合：SUMPO金额、COUNT交付行项、AVG交付天数",
+      "confidence": 90
+    }
+  ],
+
+  "business_rules": [
+    {
+      "kb_id": "kb_retail_supply_chain",
+      "rule_type": "validation",
+      "rule_name": "采购金额必须大于零",
+      "rule_expression": "purchase_order.total_amount > 0",
+      "confidence": 100,
+      "status": "approved"
+    },
+    {
+      "kb_id": "kb_retail_supply_chain",
+      "rule_type": "validation",
+      "rule_name": "库存数量不得为负",
+      "rule_expression": "inventory_snapshot.on_hand_qty >= 0",
+      "confidence": 100,
+      "status": "approved"
+    },
+    {
+      "kb_id": "kb_retail_supply_chain",
+      "rule_type": "constraint",
+      "rule_name": "采购单状态流转规则",
+      "rule_expression": "status: draft → submitted → approved → received → closed",
+      "confidence": 100,
+      "status": "approved"
+    },
+    {
+      "kb_id": "kb_retail_supply_chain",
+      "rule_type": "derivation",
+      "rule_name": "采购行金额计算",
+      "rule_expression": "line_total = ordered_qty * unit_price",
+      "confidence": 100,
+      "status": "approved"
+    },
+    {
+      "kb_id": "kb_retail_supply_chain",
+      "rule_type": "constraint",
+      "rule_name": "仅活跃供应商可创建采购单",
+      "rule_expression": "supplier.status = 'active' 方可创建 purchase_order",
+      "confidence": 90,
+      "status": "approved"
+    },
+    {
+      "kb_id": "kb_retail_supply_chain",
+      "rule_type": "constraint",
+      "rule_name": "预留库存不超在库量",
+      "rule_expression": "inventory_snapshot.reserved_qty <= inventory_snapshot.on_hand_qty",
+      "confidence": 100,
+      "status": "approved"
+    }
+  ],
+
+  "concept_alignments": [
+    {
+      "concept_id": "product.sku",
+      "pref_label_zh": "SKU 编码",
+      "pref_label_en": "SKU Code",
+      "domain": "supply_chain",
+      "aliases": [
+        {"system": "scm", "label": "sku_code"},
+        {"system": "trade", "label": "product_code"},
+        {"system": "wms", "label": "item_id"},
+        {"system": "pos", "label": "product_id"}
+      ],
+      "match_type": "skos:exactMatch",
+      "status": "approved"
+    },
+    {
+      "concept_id": "finance.gmv",
+      "pref_label_zh": "GMV",
+      "pref_label_en": "Gross Merchandise Volume",
+      "domain": "trade",
+      "aliases": [
+        {"system": "trade", "label": "paid_amount_sum"},
+        {"system": "finance", "label": "total_revenue_gross"},
+        {"system": "bi", "label": "日交易额"}
+      ],
+      "close_match_to": "finance.net_revenue",
+      "close_match_note": "GMV 含运费，净收入去运费和退款，不能直接等同",
+      "match_type": "skos:closeMatch",
+      "status": "approved"
+    },
+    {
+      "concept_id": "scm.po_status_received",
+      "pref_label_zh": "已收货",
+      "pref_label_en": "Received",
+      "domain": "supply_chain",
+      "aliases": [
+        {"system": "scm", "label": "received"},
+        {"system": "wms", "label": "done"},
+        {"system": "erp", "label": "completed"}
+      ],
+      "match_type": "skos:exactMatch",
+      "status": "approved"
+    },
+    {
+      "concept_id": "org.store",
+      "pref_label_zh": "门店编码",
+      "pref_label_en": "Store Code",
+      "domain": "supply_chain",
+      "aliases": [
+        {"system": "scm", "label": "store_code"},
+        {"system": "trade", "label": "store_code"},
+        {"system": "pos", "label": "retailer_id"}
+      ],
+      "match_type": "skos:exactMatch",
+      "status": "approved"
+    },
+    {
+      "concept_id": "finance.cost_price",
+      "pref_label_zh": "采购成本价",
+      "pref_label_en": "Cost Price",
+      "domain": "supply_chain",
+      "aliases": [
+        {"system": "scm", "label": "unit_price"},
+        {"system": "finance", "label": "weighted_avg_cost"},
+        {"system": "erp", "label": "moving_avg_cost"}
+      ],
+      "close_match_to": "scm.unit_price",
+      "close_match_note": "SCM 用最近采购价，财务用加权移动平均成本，两者不总是一致",
+      "match_type": "skos:closeMatch",
+      "status": "approved"
+    }
+  ],
+
+  "physical_tables": [
+    {
+      "table_id": 101,
+      "datasource_id": 1,
+      "table_name": "scm.product",
+      "business_summary": "SKU 粒度商品主数据，含品类路径、品牌、规格、状态",
+      "row_count": 250000,
+      "sensitivity": "internal"
+    },
+    {
+      "table_id": 102,
+      "datasource_id": 1,
+      "table_name": "scm.purchase_order",
+      "business_summary": "采购订单头，含供应商、订单金额、审批状态",
+      "row_count": 1200000,
+      "sensitivity": "internal"
+    },
+    {
+      "table_id": 103,
+      "datasource_id": 1,
+      "table_name": "scm.inventory_snapshot",
+      "business_summary": "每日零点库存快照，SKU+仓库+批次粒度",
+      "row_count": 30000000,
+      "sensitivity": "confidential"
+    },
+    {
+      "table_id": 104,
+      "datasource_id": 1,
+      "table_name": "scm.inbound_receipt",
+      "business_summary": "仓库收货确认，关联 PO 行项",
+      "row_count": 8000000,
+      "sensitivity": "internal"
+    },
+    {
+      "table_id": 201,
+      "datasource_id": 2,
+      "table_name": "trade.order_header",
+      "business_summary": "销售订单头，含用户、实付金额、下单时间、渠道",
+      "row_count": 50000000,
+      "sensitivity": "restricted"
+    }
+  ],
+
+  "_cross_domain_notes": [
+    {
+      "issue": "SKU 编码跨域一致性问题",
+      "detail": "SCM 和 Trade 中 SKU 格式一致（varchar(12)），但 WMS 中为 int 类型（去掉品类码前缀）。跨域 JOIN 时需 CAST，或建议 WMS 统一为 varchar。",
+      "severity": "medium",
+      "suggested_fix": "在 ODS 层统一 SKU 格式，或在 concept_alias 中注册转换规则"
+    },
+    {
+      "issue": "时间维度口径不一致",
+      "detail": "采购域使用 biz_date（业务归属日），交易域使用 created_at（系统时间戳）。跨域分析时若混用会导致日期错位。",
+      "severity": "high",
+      "suggested_fix": "跨域分析统一使用 biz_date，各域在 DWD 层必须产出 biz_date 字段"
+    },
+    {
+      "issue": "库存金额双口径",
+      "detail": "SCM 域使用「最近采购价 × 在库量」，财务域使用「加权移动平均成本 × 在库量」。两者在原料价格波动期差异显著。",
+      "severity": "medium",
+      "suggested_fix": "两个口径都保留，分别注册为 metric.inventory_value_scm 和 metric.inventory_value_fin"
+    }
+  ]
+}

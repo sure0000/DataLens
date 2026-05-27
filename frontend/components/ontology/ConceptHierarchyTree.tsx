@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Dot } from "lucide-react";
+import { Icon } from "../AppIcons";
 
 export interface HierarchyNode {
   iri: string;
@@ -16,12 +16,15 @@ interface ConceptHierarchyTreeProps {
   roots: HierarchyNode[];
   onSelect?: (node: HierarchyNode) => void;
   selectedIri?: string;
+  /** Max depth to expand by default (0 = roots only). Default 2. */
+  defaultExpandDepth?: number;
 }
 
 export default function ConceptHierarchyTree({
   roots,
   onSelect,
   selectedIri,
+  defaultExpandDepth = 2,
 }: ConceptHierarchyTreeProps) {
   if (roots.length === 0) {
     return (
@@ -38,6 +41,7 @@ export default function ConceptHierarchyTree({
           key={node.iri}
           node={node}
           depth={0}
+          defaultExpandDepth={defaultExpandDepth}
           onSelect={onSelect}
           selectedIri={selectedIri}
         />
@@ -49,15 +53,17 @@ export default function ConceptHierarchyTree({
 function TreeNode({
   node,
   depth,
+  defaultExpandDepth,
   onSelect,
   selectedIri,
 }: {
   node: HierarchyNode;
   depth: number;
+  defaultExpandDepth: number;
   onSelect?: (node: HierarchyNode) => void;
   selectedIri?: string;
 }) {
-  const [expanded, setExpanded] = useState(depth < 2);
+  const [expanded, setExpanded] = useState(depth < defaultExpandDepth);
   const hasChildren = node.children.length > 0;
   const isSelected = selectedIri === node.iri;
 
@@ -84,13 +90,13 @@ function TreeNode({
           }}
         >
           {expanded ? (
-            <ChevronDown className="h-3.5 w-3.5 text-app-muted" />
+            <Icon name="chevronDown" className="h-3.5 w-3.5 text-app-muted" />
           ) : (
-            <ChevronRight className="h-3.5 w-3.5 text-app-muted" />
+            <Icon name="chevronRight" className="h-3.5 w-3.5 text-app-muted" />
           )}
         </button>
 
-        <Dot className="h-3 w-3 shrink-0 text-app-muted/60" aria-hidden />
+        <Icon name="dot" className="h-3 w-3 shrink-0 text-app-muted/60" aria-hidden />
 
         <div className="min-w-0 flex-1">
           <span className="text-sm font-medium text-app-primary block truncate">
@@ -132,6 +138,7 @@ function TreeNode({
               key={child.iri}
               node={child}
               depth={depth + 1}
+              defaultExpandDepth={defaultExpandDepth}
               onSelect={onSelect}
               selectedIri={selectedIri}
             />

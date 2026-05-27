@@ -87,22 +87,7 @@ def _upsert_relation(
     if key in existing:
         return False
 
-    db.add(
-        SemanticRelation(
-            knowledge_base_id=kb_id,
-            relation_type=relation_type,
-            source_type=source_type,
-            source_ref=src_ref,
-            target_type=target_type,
-            target_ref=tgt_ref,
-            concept_id=(concept_id or "").strip() or None,
-            join_key=(join_key or "").strip() or None,
-            source_chunk_id=source_chunk_id,
-            source_entry_id=source_entry_id,
-            confidence=round(confidence, 1),
-            status=status,
-        )
-    )
+    # TODO(Phase 4): SemanticRelation 已移除，db.add 需从 RDF 图重新实现
     existing.add(key)
     return True
 

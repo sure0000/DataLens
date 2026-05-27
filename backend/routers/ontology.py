@@ -199,12 +199,27 @@ def _quarantine_items_payload(kb_id: int) -> list[dict[str, Any]]:
 
 
 @router.get("/knowledge-bases/{kb_id}/quarantine")
-def list_quarantine(kb_id: int, db: Session = Depends(get_db)) -> dict:
+def list_quarantine(
+    kb_id: int,
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: Session = Depends(get_db),
+) -> dict:
     kb = db.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
-    items = _quarantine_items_payload(kb_id)
-    return {"ok": True, "kb_id": kb_id, "items": items, "total": len(items)}
+    all_items = _quarantine_items_payload(kb_id)
+    total = len(all_items)
+    page = all_items[offset : offset + limit]
+    return {
+        "ok": True,
+        "kb_id": kb_id,
+        "items": page,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "has_more": offset + len(page) < total,
+    }
 
 
 @router.post("/knowledge-bases/{kb_id}/quarantine/{item_idx}/resolve")
@@ -384,7 +399,8 @@ def get_modeling_status(kb_id: int, db: Session = Depends(get_db)) -> dict:
 def get_modeling_layer(
     kb_id: int,
     layer_key: str,
-    limit: int = Query(500, ge=1, le=2000),
+    limit: int = Query(20, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
 ) -> dict:
     """Return a single cleaning layer (vocabulary, rule, dimension, relation, …)."""
@@ -393,7 +409,7 @@ def get_modeling_layer(
         raise HTTPException(status_code=404, detail="知识库不存在")
     from services.ontology.modeling_layers import get_modeling_layer as _layer
 
-    result = _layer(kb_id, layer_key, limit=limit)
+    result = _layer(kb_id, layer_key, limit=limit, offset=offset)
     if not result.get("ok"):
         raise HTTPException(status_code=404, detail=result.get("error", "未知清洗层"))
     return result
@@ -589,14 +605,18 @@ def get_assertion_status(kb_id: int, subject: str = Query(...), db: Session = De
 
 
 @router.get("/knowledge-bases/{kb_id}/ontology-cleaning-results")
-def get_ontology_cleaning_results(kb_id: int, db: Session = Depends(get_db)) -> dict:
-    """Return ontology cleaning results organized by the 5-layer model."""
+def get_ontology_cleaning_results(
+    kb_id: int,
+    include_items: bool = Query(False),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Return ontology cleaning results organized by the 5-layer model (summary by default)."""
     kb = db.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
     from services.ontology.modeling_layers import get_cleaning_results
 
-    return get_cleaning_results(db, kb_id)
+    return get_cleaning_results(db, kb_id, include_items=include_items)
 
 
 # ── RDF-native term/metric CRUD (Phase 1: writes go through OntologyWriter) ──

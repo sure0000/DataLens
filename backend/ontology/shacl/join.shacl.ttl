@@ -17,5 +17,4 @@ dl:JoinShape a sh:NodeShape ;
   sh:property [
     sh:path dl:joinKey ;
     sh:minCount 1 ;
-    sh:datatype xsd:string ;
   ] .

@@ -75,6 +75,10 @@ export function docStatusChip(
       text: "向量化中",
       className: chipInfo,
     },
+    ontology_assertion: {
+      text: "结构化中",
+      className: chipProgress,
+    },
     indexed: {
       text: "已索引",
       className: chipSuccess,

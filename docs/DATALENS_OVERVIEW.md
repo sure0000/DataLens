@@ -395,7 +395,7 @@ sample_data─┼→ profile_column() ─→ profiles[] ─→┤→ ColumnMeta.
 | `/table/[id]` | 表详情 | 列信息+摘要 |
 | `/business-domains/[id]` | 业务域详情 | 描述+库表选择 |
 | `/knowledge-bases` | 知识库列表 | 管理入口 |
-| `/knowledge-bases/[id]` | 知识库详情 | 导入源卡片（语义清洗）+ 证据包登记 + 清洗结果 |
+| `/knowledge-bases/[id]` | 知识库详情 | 导入源（语义清洗）+ 证据包登记 + `#modeling` 建模与质量（流水线 / 五层结果 / 质量与隔离，见 [ONTOLOGY_LAYER_UI_OPTIMIZATION §5.3.1](./ONTOLOGY_LAYER_UI_OPTIMIZATION.md)） |
 | `/settings` | 设置 | LLM偏好 |
 
 ## 11. 现有限制与风险

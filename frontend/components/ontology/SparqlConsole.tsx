@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Play } from "lucide-react";
+import { Icon } from "../AppIcons";
 import { api } from "../../lib/api";
 
 export default function SparqlConsole({ kbId }: { kbId: number }) {
@@ -46,7 +46,7 @@ export default function SparqlConsole({ kbId }: { kbId: number }) {
         disabled={running || !query.trim()}
         onClick={() => void run()}
       >
-        <Play className="inline h-4 w-4 mr-1" />
+        <Icon name="play" className="inline h-4 w-4 mr-1" />
         执行 SPARQL
       </button>
       {error && <p className="text-xs text-red-600">{error}</p>}

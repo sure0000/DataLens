@@ -80,6 +80,7 @@ def _ensure_safety_columns(conn) -> None:
         ("knowledge_git_sources", "category", "TEXT"),
         ("knowledge_git_sources", "tags", "JSON"),
         ("document_chunks", "semantic_meta", "JSONB"),
+        ("documents", "index_attempts", "INT NOT NULL DEFAULT 0"),
         ("pipeline_runs", "source_id", "INT"),
         # Legacy semantic table columns (removed in Phase 1 ontology refactoring)
         # ("metric_definitions", "bound_table_refs", "JSONB"),

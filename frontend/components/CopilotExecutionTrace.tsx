@@ -1,13 +1,13 @@
-import { AlertTriangle, Ban, Check, Code2, ListTree, PackageX, Sparkles, XCircle } from "lucide-react";
 import { memo } from "react";
 import type { ReactNode } from "react";
+import { Icon } from "./AppIcons";
+import { TraceCheckpointIcon } from "./icons";
 import type { PipelineTraceStep, TraceEntityLink } from "../lib/chatSessions";
 import { splitTraceStepDetailIntoSubCheckpoints, type TraceSubCheckpoint } from "../lib/copilotTraceMarkdown";
 import { parseTraceEntityLinks, renderTraceDetailWithLinks } from "../lib/traceEntityLinks";
 import { renderReasoning3Row, tryParseReasoning3Line } from "../lib/traceReasoning3";
 import {
   annotateSubCheckpointsWithStatus,
-  traceCheckpointIconClass,
   traceCheckpointStatusLabel,
   traceCheckpointStripClass,
   type TraceCheckpointStatus
@@ -33,25 +33,7 @@ type Props = {
 };
 
 function StatusGlyph({ status, className }: { status: TraceCheckpointStatus; className?: string }) {
-  const tone = traceCheckpointIconClass(status);
-  const c = `shrink-0 ${tone} ${className || ""}`;
-  const stroke = 2.75;
-  switch (status) {
-    case "verified":
-      return <Check className={c} strokeWidth={stroke} aria-hidden />;
-    case "context_missing":
-      return <PackageX className={c} strokeWidth={stroke} aria-hidden />;
-    case "inferred_ok":
-      return <Sparkles className={c} strokeWidth={stroke} aria-hidden />;
-    case "inferred_review":
-      return <AlertTriangle className={c} strokeWidth={stroke} aria-hidden />;
-    case "skipped":
-      return <Ban className={c} strokeWidth={stroke} aria-hidden />;
-    case "issue":
-      return <XCircle className={c} strokeWidth={stroke} aria-hidden />;
-    default:
-      return <Sparkles className={c} strokeWidth={stroke} aria-hidden />;
-  }
+  return <TraceCheckpointIcon status={status} className={className} />;
 }
 
 type AnnotatedSub = TraceSubCheckpoint & { status: TraceCheckpointStatus };
@@ -103,7 +85,7 @@ function Reasoning4StepLayout({
       {logicSubs.length > 0 ? (
         <div className={traceCard}>
           <div className={`flex items-center gap-2 px-2.5 py-1.5 ${traceCardHeader}`}>
-            <ListTree className="h-3.5 w-3.5 shrink-0 text-app-secondary" strokeWidth={2.25} aria-hidden />
+            <Icon name="listTree" className="h-3.5 w-3.5 shrink-0 text-app-secondary" aria-hidden />
             <span className="text-[11px] font-semibold uppercase tracking-wide text-app-secondary">查询逻辑</span>
           </div>
           <ol className="app-trace-divide m-0 list-none p-0">
@@ -143,7 +125,7 @@ function Reasoning4StepLayout({
             className={`${traceIndigoPanel}${isLive ? " ring-2 ring-[var(--app-live-highlight-ring)]" : ""}`}
           >
             <div className={`flex items-center gap-2 px-2.5 py-1.5 ${traceIndigoHeader}`}>
-              <Code2 className={`h-3.5 w-3.5 shrink-0 ${textAccent}`} strokeWidth={2.25} aria-hidden />
+              <Icon name="code" className={`h-3.5 w-3.5 shrink-0 ${textAccent}`} aria-hidden />
               <span className="min-w-0 flex-1 truncate text-[11px] font-semibold leading-tight">
                 {title}
               </span>

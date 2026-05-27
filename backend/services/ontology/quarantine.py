@@ -143,7 +143,7 @@ class QuarantineManager:
                     break
             if target and target.raw_triple:
                 from ontology import kb_graph_iri
-                from ontology_triple_cleaner import RawTriple, clean_triples, persist_clean_result
+                from services.ontology_triple_cleaner import RawTriple, clean_triples, persist_clean_result
 
                 t = target.raw_triple
                 triple = RawTriple(
@@ -181,7 +181,7 @@ class QuarantineManager:
         return items.total
 
     def _add(self, subj: str, pred: str, obj: str, is_uri: bool) -> None:
-        from ontology_triple_cleaner import RawTriple
+        from services.ontology_triple_cleaner import RawTriple
 
         t = RawTriple(
             subject=subj,

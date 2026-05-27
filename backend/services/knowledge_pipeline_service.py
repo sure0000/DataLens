@@ -15,6 +15,7 @@ from models import Document, DocumentChunk, KnowledgeBase, KnowledgeEntry, Pipel
 from services.chunk_semantic_structuring import structure_document_chunks
 from services.document_cleaner import clean_text, filter_chunks
 from services.document_chunker import chunk_text
+from services.document_index_policy import bump_index_attempt
 from services.embedding_service import _embed
 
 _logger = logging.getLogger(__name__)
@@ -75,6 +76,8 @@ def create_document(
 def run_pipeline(db: Session, doc: Document, raw_text: str) -> None:
     """同步执行完整流水线。在后台线程中调用。"""
     timings: dict[str, int] = {}
+    bump_index_attempt(doc)
+    db.flush()
 
     try:
         cfg = _get_pipeline_config(db, doc.knowledge_base_id)
@@ -220,9 +223,25 @@ def delete_document(db: Session, doc_id: int) -> None:
 
 
 def retry_document(db: Session, doc_id: int) -> Document | None:
-    """重置失败文档状态为 pending，触发重新处理。"""
+    """重置文档为 pending 并重新跑索引（failed/pending，自动重试受次数上限约束）。"""
+    from services.document_index_policy import can_auto_retry_index
+
     doc = db.get(Document, doc_id)
-    if doc and doc.status == "failed" and doc.raw_text:
+    if doc and can_auto_retry_index(doc):
+        doc.error_message = None
+        _set_document_status(db, doc, "pending")
+        db.commit()
+        db.refresh(doc)
+    return doc
+
+
+def manual_index_document(db: Session, doc_id: int) -> Document | None:
+    """用户手动触发索引：不受自动重试次数上限约束。"""
+    from services.document_index_policy import can_manual_index
+
+    doc = db.get(Document, doc_id)
+    if doc and can_manual_index(doc):
+        doc.error_message = None
         _set_document_status(db, doc, "pending")
         db.commit()
     return doc
@@ -238,6 +257,7 @@ def _doc_row(d: Document) -> dict[str, Any]:
         "char_count": d.char_count,
         "status": d.status,
         "error_message": d.error_message,
+        "index_attempts": int(getattr(d, "index_attempts", 0) or 0),
         "stage_timings": d.stage_timings or {},
         "knowledge_entry_id": d.knowledge_entry_id,
         "created_at": d.created_at.isoformat() if d.created_at else "",

@@ -79,6 +79,8 @@ Layer 5: 属性层 (Attribute / Data Property)
 
 **清洗管线映射：** 五层数据统一经过 `clean_triples()` 的 9 阶段管道（语法规范化 → 实体链接 → TBox 谓词白名单 → 去重 → 状态门控 → SHACL 校验），按层分类写入对应命名图。
 
+**UI 查阅：** 知识库详情 `#modeling` 中「五层结果」与「质量与隔离」子 Tab 分别展示已入图分层资产与 SHACL/隔离区治理，详见 [ONTOLOGY_LAYER_UI_OPTIMIZATION §5.3.1](./ONTOLOGY_LAYER_UI_OPTIMIZATION.md)（章节「5.3.1 建模与质量：子 Tab 说明」）。
+
 **术语/指标定位：**
 - **术语 (BusinessTerm)** 属于 **词汇层** — 定义业务语言的含义和指称
 - **指标 (Metric)** 属于 **规则层** — 定义可量化的计算口径和判定逻辑

@@ -177,3 +177,27 @@ def test_connector_registry_resolve():
     assert ak == "semantic_doc" and conn == "file"
     ak2, conn2 = resolve_asset_connector(source_kind="notion")
     assert ak2 == "semantic_doc" and conn2 == "api"
+
+
+def test_list_quarantine_pagination():
+    from unittest.mock import MagicMock, patch
+
+    from routers.ontology import list_quarantine
+
+    kb = MagicMock()
+    db = MagicMock()
+    db.get.return_value = kb
+    payload = [{"item_idx": i, "reason": "test"} for i in range(25)]
+
+    with patch("routers.ontology._quarantine_items_payload", return_value=payload):
+        page0 = list_quarantine(kb_id=1, limit=20, offset=0, db=db)
+        page1 = list_quarantine(kb_id=1, limit=20, offset=20, db=db)
+
+    assert page0["total"] == 25
+    assert len(page0["items"]) == 20
+    assert page0["has_more"] is True
+    assert page0["items"][0]["item_idx"] == 0
+
+    assert len(page1["items"]) == 5
+    assert page1["has_more"] is False
+    assert page1["items"][0]["item_idx"] == 20

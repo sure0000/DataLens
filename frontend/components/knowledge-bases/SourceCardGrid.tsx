@@ -2,6 +2,7 @@
 
 import type { DatabaseImport, DocRow, Entry, GitSource, OntologyCounts, SourceCleaningStat } from "./types";
 import SourceCard, { type SourceItem } from "./SourceCard";
+import { importSourceCleaningKey } from "./sourceCleaningKey";
 
 interface SourceCardGridProps {
   gitSources: GitSource[];
@@ -12,6 +13,7 @@ interface SourceCardGridProps {
   gitSyncingId?: number | null;
   onSyncGit?: (id: number) => void;
   onRetryDoc?: (docId: number) => void;
+  onManualIndexDoc?: (docId: number) => void;
   onRefresh?: () => void;
   onAddTag?: (source: SourceItem, tag: string) => void;
   onRemoveTag?: (source: SourceItem, tag: string) => void;
@@ -31,6 +33,7 @@ export default function SourceCardGrid({
   gitSyncingId,
   onSyncGit,
   onRetryDoc,
+  onManualIndexDoc,
   onRefresh,
   onAddTag,
   onRemoveTag,
@@ -55,17 +58,17 @@ export default function SourceCardGrid({
     }
   }
 
-  // File entries and API-imported entries — each gets a card
-  const importedKinds = new Set(["file", "notion_api", "confluence_api", "feishu_api"]);
+  // File / API-imported entries — include any entry with a linked document or known import kind
+  const importedKinds = new Set(["file", "notion_api", "confluence_api", "feishu_api", "web"]);
   const importedEntries = entries.filter((e) => {
     const kind = e.source_meta?.kind;
-    return kind != null && importedKinds.has(kind);
+    return docByEntryId[e.id] != null || (kind != null && importedKinds.has(kind));
   });
 
   for (const entry of importedEntries) {
     const doc = docByEntryId[entry.id];
-    const metaKind = entry.source_meta?.kind;
-    if (metaKind === "file") {
+    const metaKind = entry.source_meta?.kind ?? "";
+    if (metaKind === "file" || metaKind === "web" || (!metaKind.includes("_api") && doc)) {
       items.push({ kind: "file", entry, doc });
     } else {
       items.push({ kind: "api_entry", entry, doc });
@@ -117,12 +120,12 @@ export default function SourceCardGrid({
             `file-${item.entry.id}`;
 
           const cleaningKey =
-            item.kind === "git" ? `source:git:${item.data.id}` :
-            item.kind === "api" ? `source:api:${item.data.id}` :
-            item.kind === "database" ? `source:database:${item.data.id}` :
-            item.kind === "api_entry" ? `api:${item.entry.id}` :
-            item.kind === "manual" ? `source:manual:${item.entry.id}` :
-            `source:file:${item.entry.id}`;
+            item.kind === "git" ? importSourceCleaningKey("git", item.data.id) :
+            item.kind === "api" ? importSourceCleaningKey("api", item.data.id) :
+            item.kind === "database" ? importSourceCleaningKey("database", item.data.id) :
+            item.kind === "api_entry" ? importSourceCleaningKey("api_entry", item.entry.id) :
+            item.kind === "manual" ? importSourceCleaningKey("manual", item.entry.id) :
+            importSourceCleaningKey("file", item.entry.id);
 
           const cleaningStat = cleaningStats?.[cleaningKey];
 
@@ -134,6 +137,7 @@ export default function SourceCardGrid({
               gitSyncingId={gitSyncingId}
               onSyncGit={onSyncGit}
               onRetryDoc={onRetryDoc}
+              onManualIndexDoc={onManualIndexDoc}
               onAddTag={onAddTag}
               onRemoveTag={onRemoveTag}
               tagLoading={tagLoading}

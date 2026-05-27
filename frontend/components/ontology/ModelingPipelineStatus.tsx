@@ -1,6 +1,6 @@
 "use client";
 
-import { CheckCircle2, Circle, Loader2, MinusCircle, XCircle } from "lucide-react";
+import { PipelineStepIcon, type PipelineStepIconStatus } from "../icons";
 
 export type ModelingStep = {
   key: string;
@@ -15,6 +15,10 @@ export type ModelingStatus = {
   ok: boolean;
   kb_id: number;
   pipeline_phase: string;
+  active_run?: {
+    source_type: string | null;
+    source_id: number | null;
+  } | null;
   indexing: {
     total_documents: number;
     indexed_documents: number;
@@ -37,11 +41,10 @@ export type ModelingStatus = {
 };
 
 function StepIcon({ icon }: { icon: string }) {
-  if (icon === "ok") return <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden />;
-  if (icon === "fail") return <XCircle className="h-4 w-4 text-red-500" aria-hidden />;
-  if (icon === "running") return <Loader2 className="h-4 w-4 animate-spin text-indigo-500" aria-hidden />;
-  if (icon === "skip") return <MinusCircle className="h-4 w-4 text-app-muted" aria-hidden />;
-  return <Circle className="h-4 w-4 text-app-muted" aria-hidden />;
+  const status = (["ok", "fail", "running", "skip", "pending", "warning"].includes(icon)
+    ? icon
+    : "pending") as PipelineStepIconStatus;
+  return <PipelineStepIcon status={status} />;
 }
 
 const PHASE_LABELS: Record<string, string> = {
@@ -50,6 +53,10 @@ const PHASE_LABELS: Record<string, string> = {
   completed: "已完成",
   failed: "失败",
 };
+
+const RUN_MODELING_HINT =
+  "对已索引文档块后台执行 8 步抽取（术语、指标、维度、规则、关系、层级；Git 源另含血缘与 JOIN），" +
+  "经清洗与 SHACL 校验后写入 RDF。不重新导入或分块索引；需已配置 LLM 且存在 quality_score ≥ 0.4 的文档块。";
 
 export default function ModelingPipelineStatus({
   status,
@@ -82,23 +89,26 @@ export default function ModelingPipelineStatus({
   return (
     <div className="space-y-4">
       {onRunModeling && (
-        <div className="flex justify-end">
+        <div className="flex items-start gap-3">
           <button
             type="button"
-            className={`app-button text-sm ${runningModeling ? "is-loading" : ""}`}
+            className={`app-button shrink-0 text-sm ${runningModeling ? "is-loading" : ""}`}
             disabled={runningModeling || ext.status === "running"}
             onClick={onRunModeling}
           >
             {runningModeling || ext.status === "running" ? "建模运行中…" : "运行完整建模"}
           </button>
+          <p className="min-w-0 flex-1 text-xs leading-relaxed text-app-muted">
+            {RUN_MODELING_HINT}
+          </p>
         </div>
       )}
       {/* Pipeline flow */}
       <div className="app-card p-4">
         <div className="flex flex-wrap items-center gap-2 text-xs text-app-muted">
-          <span className={idx.complete ? "text-emerald-600 font-medium" : ""}>
+          <span className="inline-flex items-center gap-1">
             分块索引 {idx.indexed_documents}/{idx.total_documents}
-            {idx.complete ? " ✓" : ""}
+            {idx.complete ? <PipelineStepIcon status="ok" className="h-3.5 w-3.5" /> : null}
           </span>
           <span>→</span>
           <span className={ext.status === "running" ? "text-indigo-600 font-medium" : ""}>
@@ -107,7 +117,13 @@ export default function ModelingPipelineStatus({
           <span>→</span>
           <span>清洗 / SHACL</span>
           <span>→</span>
-          <span>入图 {q.rdf_triple_count > 0 ? "✓" : "○"}</span>
+          <span className="inline-flex items-center gap-1">
+            入图
+            <PipelineStepIcon
+              status={q.rdf_triple_count > 0 ? "ok" : "pending"}
+              className="h-3.5 w-3.5"
+            />
+          </span>
         </div>
         {ext.status === "running" && (
           <div className="mt-3 h-2 rounded-full bg-app-hover overflow-hidden">

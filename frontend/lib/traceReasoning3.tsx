@@ -1,10 +1,9 @@
 "use client";
 
-import { AlertTriangle, Ban, Check, CircleHelp, PackageX, Sparkles, XCircle } from "lucide-react";
 import type { ReactNode } from "react";
 import type { TraceEntityLink } from "./chatSessions";
+import { TraceCheckpointIcon, TrustLevelIcon } from "../components/icons";
 import {
-  traceCheckpointIconClass,
   traceCheckpointStatusLabel,
   traceCheckpointStripClass,
   type TraceCheckpointStatus
@@ -70,31 +69,10 @@ function inferBasisLayerStatus(layer: string, trust: TrustUiCode): TraceCheckpoi
 }
 
 function StatusGlyph({ status, className }: { status: TraceCheckpointStatus; className?: string }) {
-  const tone = traceCheckpointIconClass(status);
-  const c = `shrink-0 ${tone} ${className || ""}`;
-  const stroke = 2.75;
-  switch (status) {
-    case "verified":
-      return <Check className={c} strokeWidth={stroke} aria-hidden />;
-    case "context_missing":
-      return <PackageX className={c} strokeWidth={stroke} aria-hidden />;
-    case "inferred_ok":
-      return <Sparkles className={c} strokeWidth={stroke} aria-hidden />;
-    case "inferred_review":
-      return <AlertTriangle className={c} strokeWidth={stroke} aria-hidden />;
-    case "skipped":
-      return <Ban className={c} strokeWidth={stroke} aria-hidden />;
-    case "issue":
-      return <XCircle className={c} strokeWidth={stroke} aria-hidden />;
-    default:
-      return <Sparkles className={c} strokeWidth={stroke} aria-hidden />;
-  }
+  return <TraceCheckpointIcon status={status} className={className} />;
 }
 
-/** 可信度：图标 + 文字（五档独立图标，避免中与中高完全同形） */
 function TrustBadge({ code }: { code: TrustUiCode }) {
-  const stroke = 2.75;
-  const iconBox = "h-4 w-4 shrink-0";
   const labelCls = "text-[12px] font-medium leading-none text-app-ink";
   const wrap = "inline-flex items-center gap-1";
   const a11y: Record<TrustUiCode, string> = {
@@ -104,45 +82,19 @@ function TrustBadge({ code }: { code: TrustUiCode }) {
     low: "可信度：低",
     review: "可信度：待核对"
   };
-  switch (code) {
-    case "high":
-      return (
-        <span className={wrap} role="img" aria-label={a11y.high} title={a11y.high}>
-          <Check className={`${iconBox} ${traceCheckpointIconClass("verified")}`} strokeWidth={stroke} aria-hidden />
-          <span className={labelCls}>高</span>
-        </span>
-      );
-    case "medium-high":
-      return (
-        <span className={wrap} role="img" aria-label={a11y["medium-high"]} title={a11y["medium-high"]}>
-          <Sparkles className={`${iconBox} ${traceCheckpointIconClass("inferred_ok")}`} strokeWidth={stroke} aria-hidden />
-          <span className={labelCls}>中高</span>
-        </span>
-      );
-    case "medium":
-      return (
-        <span className={wrap} role="img" aria-label={a11y.medium} title={a11y.medium}>
-          <CircleHelp className={`${iconBox} ${traceCheckpointIconClass("inferred_review")}`} strokeWidth={stroke} aria-hidden />
-          <span className={labelCls}>中</span>
-        </span>
-      );
-    case "low":
-      return (
-        <span className={wrap} role="img" aria-label={a11y.low} title={a11y.low}>
-          <PackageX className={`${iconBox} ${traceCheckpointIconClass("context_missing")}`} strokeWidth={stroke} aria-hidden />
-          <span className={labelCls}>低</span>
-        </span>
-      );
-    case "review":
-      return (
-        <span className={wrap} role="img" aria-label={a11y.review} title={a11y.review}>
-          <AlertTriangle className={`${iconBox} ${traceCheckpointIconClass("inferred_review")}`} strokeWidth={stroke} aria-hidden />
-          <span className={labelCls}>待核</span>
-        </span>
-      );
-    default:
-      return null;
-  }
+  const labels: Record<TrustUiCode, string> = {
+    high: "高",
+    "medium-high": "中高",
+    medium: "中",
+    low: "低",
+    review: "待核",
+  };
+  return (
+    <span className={wrap} role="img" aria-label={a11y[code]} title={a11y[code]}>
+      <TrustLevelIcon code={code} />
+      <span className={labelCls}>{labels[code]}</span>
+    </span>
+  );
 }
 
 type RoleTone = "locked" | "primary" | "join" | "alert" | "context" | "missing" | "other";

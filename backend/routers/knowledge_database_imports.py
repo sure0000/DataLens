@@ -8,6 +8,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from database import get_db
+from routers.datasources import _extract_business_description
 from models import (
     DataSource,
     KnowledgeBase,
@@ -165,7 +166,11 @@ def get_database_import_detail(kb_id: int, import_id: int, db: Session = Depends
                     "database_name": t.database_name,
                     "status": t.status,
                     "row_count": t.row_count,
-                    "ai_summary": summary.summary if summary else None,
+                    "ai_summary": (
+                        _extract_business_description(summary.summary)
+                        if summary and summary.summary
+                        else None
+                    ),
                     "use_cases": summary.use_cases if summary else None,
                     "analyzed_at": t.created_at.isoformat() if t.created_at else None,
                 }

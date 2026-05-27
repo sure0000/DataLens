@@ -193,6 +193,8 @@ class Document(Base):
     # 流水线状态: pending → extracting → cleaning → chunking → embedding → indexed | failed
     status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 索引流水线执行次数（含首次导入与重试；达上限后需手动索引）
+    index_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # 各阶段耗时（毫秒）
     stage_timings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     # 关联的 KnowledgeEntry（手动条目为 None）

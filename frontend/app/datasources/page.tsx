@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Eye, EyeOff } from "lucide-react";
 import { useEffect, useState, type CSSProperties } from "react";
+import { Icon } from "../../components/AppIcons";
 import { api, ApiError, formatApiError } from "../../lib/api";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import ConfirmDialog from "../../components/ConfirmDialog";
@@ -641,7 +641,7 @@ export default function DataSourcesPage() {
                       aria-pressed={showDatasourcePassword}
                       onClick={() => setShowDatasourcePassword((v) => !v)}
                     >
-                      {showDatasourcePassword ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
+                      {showDatasourcePassword ? <Icon name="eyeOff" className="size-4" aria-hidden /> : <Icon name="eye" className="size-4" aria-hidden />}
                     </button>
                   </div>
                   {editingId ? (

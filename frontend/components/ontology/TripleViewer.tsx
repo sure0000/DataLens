@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import { ChevronDown, ChevronRight, Copy, Search } from "lucide-react";
+import { Icon } from "../AppIcons";
 
 export interface RawTriple {
   subject: string;
@@ -70,14 +70,14 @@ export default function TripleViewer({ triples, compact = false }: TripleViewerP
           onClick={() => setExpanded(!expanded)}
         >
           {expanded ? (
-            <ChevronDown className="h-3 w-3" />
+            <Icon name="chevronDown" className="h-3 w-3" />
           ) : (
-            <ChevronRight className="h-3 w-3" />
+            <Icon name="chevronRight" className="h-3 w-3" />
           )}
           {expanded ? "收起" : "展开"} ({triples.length})
         </button>
         <div className="relative flex-1 max-w-[240px]">
-          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-app-muted" />
+          <Icon name="search" className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-app-muted" />
           <input
             type="text"
             value={search}
@@ -92,7 +92,7 @@ export default function TripleViewer({ triples, compact = false }: TripleViewerP
           onClick={handleCopyAll}
           title="复制全部三元组"
         >
-          <Copy className="h-3 w-3" />
+          <Icon name="copy" className="h-3 w-3" />
           N-Triples
         </button>
       </div>

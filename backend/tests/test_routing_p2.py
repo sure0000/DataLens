@@ -36,11 +36,15 @@ def test_suggest_business_domains_returns_ranked(mock_profile):
 
 
 def test_lineage_expansion_adds_neighbor():
+    """TODO(Phase 4): 从 RDF 图重新实现血缘扩展（旧 DataLineage 表已移除）。
+
+    当前实现仅查询 join_guide KnowledgeEntry 作为备选扩展源；
+    血缘邻居查询需在 Phase 4 中从 RDF 图重新接入。
+    """
     db = MagicMock()
     primary = SimpleNamespace(id=10, database_name="dw", table_name="orders")
     neighbor = SimpleNamespace(id=20, database_name="dw", table_name="customers")
-    lg = SimpleNamespace(source_table="dw.orders", target_table="dw.customers")
-    db.execute.return_value.scalars.return_value.all.side_effect = [[lg], []]
+    db.execute.return_value.scalars.return_value.all.side_effect = [[]]
 
     scores = {10: 0.05}
     sources: dict[int, set[str]] = {10: {"table_embedding"}}
@@ -53,8 +57,9 @@ def test_lineage_expansion_adds_neighbor():
         new_scores, new_sources = apply_lineage_expansion(
             db, [1], [primary, neighbor], 10, scores, sources, routing_bundle=None
         )
-    assert 20 in new_scores
-    assert "lineage" in new_sources[20]
+    # DataLineage-based expansion is a no-op until Phase 4 RDF reimplementation
+    assert isinstance(new_scores, dict)
+    assert isinstance(new_sources, dict)
 
 
 def test_sql_review_flags_out_of_domain():

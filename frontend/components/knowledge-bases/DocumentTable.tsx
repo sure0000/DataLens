@@ -2,6 +2,7 @@
 
 import { Fragment } from "react";
 import type { ChunkRow, DocRow, Entry } from "./types";
+import { canManualDocumentIndex, canRetryDocumentIndex } from "./documentIndexPolicy";
 import { docStatusChip } from "./utils";
 
 type UnifiedItem = { kind: "doc"; data: DocRow } | { kind: "entry"; data: Entry };
@@ -16,6 +17,7 @@ interface DocumentTableProps {
   onDeleteDoc: (doc: DocRow) => void;
   onDeleteEntry: (entry: Entry) => void;
   onRetryDoc: (docId: number) => void;
+  onManualIndexDoc?: (docId: number) => void;
   onViewChunks: (docId: number) => void;
   expandedDocId: number | null;
   chunks: ChunkRow[];
@@ -35,6 +37,7 @@ export default function DocumentTable({
   onDeleteDoc,
   onDeleteEntry,
   onRetryDoc,
+  onManualIndexDoc,
   onViewChunks,
   expandedDocId,
   chunks,
@@ -100,7 +103,7 @@ export default function DocumentTable({
                           >
                             {chip.text}
                           </span>
-                          {doc.status === "failed" && (
+                          {canRetryDocumentIndex(doc) && (
                             <button
                               className="app-button text-xs leading-none"
                               type="button"
@@ -110,6 +113,18 @@ export default function DocumentTable({
                               }}
                             >
                               重试
+                            </button>
+                          )}
+                          {canManualDocumentIndex(doc) && onManualIndexDoc && (
+                            <button
+                              className="app-button text-xs leading-none"
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                onManualIndexDoc(doc.id);
+                              }}
+                            >
+                              手动索引
                             </button>
                           )}
                         </div>

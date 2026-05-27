@@ -84,8 +84,12 @@ export type DocStatus =
   | "cleaning"
   | "chunking"
   | "embedding"
+  | "ontology_assertion"
   | "indexed"
   | "failed";
+
+/** 自动重试索引上限（与后端 MAX_AUTO_INDEX_ATTEMPTS 一致） */
+export const MAX_AUTO_INDEX_ATTEMPTS = 3;
 
 /** 与后端 GET .../documents 响应对齐 */
 export type DocRow = {
@@ -96,6 +100,7 @@ export type DocRow = {
   char_count: number | null;
   status: DocStatus;
   error_message: string | null;
+  index_attempts: number;
   stage_timings: Record<string, number>;
   knowledge_entry_id: number | null;
   created_at: string;
@@ -258,13 +263,13 @@ export type DatabaseTableNode = {
   analyzed_at: string | null;
 };
 
-/** 本体清洗五层中的一层 */
+/** 本体清洗五层中的一层（摘要，不含明细 items） */
 export type OntologyCleaningLayer = {
   label: string;
   description: string;
   total: number;
   ontology_class: string;
-  items: Record<string, string>[];
+  items?: Record<string, string>[];
 };
 
 /** 本体清洗五层结果 */
@@ -275,11 +280,30 @@ export type OntologyCleaningResults = {
   last_cleaning_at: string | null;
 };
 
+/** 单层清洗明细（分页） */
+export type OntologyLayerDetail = {
+  ok: boolean;
+  kb_id: number;
+  layer_key: string;
+  label: string;
+  description: string;
+  ontology_class: string;
+  total: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
+  items: Record<string, string>[];
+};
+
 /** Per-source cleaning status (from pipeline_runs) */
 export type SourceCleaningStat = {
   status: "running" | "completed" | "failed";
   started_at: string | null;
   completed_at: string | null;
+  failure_reason?: string | null;
+  message?: string | null;
+  run_id?: number;
+  steps?: Record<string, { status?: string; reason?: string; icon?: string } | string> | null;
 };
 
 /** Ontology entity/relation counts for source cards */

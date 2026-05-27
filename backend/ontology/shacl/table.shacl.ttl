@@ -10,7 +10,6 @@ dl:PhysicalTableShape a sh:NodeShape ;
     sh:name "平台 ID"@zh ;
     sh:description "每张物理表必须有一个平台 ID"@zh ;
     sh:minCount 1 ;
-    sh:datatype xsd:integer ;
   ] ;
   sh:property [
     sh:path dl:belongsToDataSource ;

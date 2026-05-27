@@ -47,15 +47,8 @@ def _resolve_table_ref(ref: str, domain_tables: list[TableMeta]) -> int | None:
     return None
 
 
-def _lineage_neighbor_refs(primary: TableMeta, lineage: DataLineage) -> str | None:
-    primary_fq = f"{primary.database_name}.{primary.table_name}".lower()
-    primary_tn = (primary.table_name or "").lower()
-    src = (lineage.source_table or "").strip().lower()
-    tgt = (lineage.target_table or "").strip().lower()
-    if src in (primary_fq, primary_tn):
-        return tgt
-    if tgt in (primary_fq, primary_tn):
-        return src
+def _lineage_neighbor_refs(primary, lineage) -> str | None:
+    """TODO(Phase 4): 从 RDF 图重新实现血缘邻居查询（旧 DataLineage 表已移除）。"""
     return None
 
 
@@ -84,9 +77,8 @@ def apply_lineage_expansion(
     expanded: list[int] = []
 
     if kb_ids:
-        lineages = db.execute(
-            select(DataLineage).where(DataLineage.knowledge_base_id.in_(kb_ids))
-        ).scalars().all()
+        # TODO(Phase 4): 从 RDF 图重新实现血缘扩展（旧 DataLineage 表已移除）。
+        lineages: list = []
         for lg in lineages:
             neighbor_ref = _lineage_neighbor_refs(primary, lg)
             if not neighbor_ref:

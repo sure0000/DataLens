@@ -23,11 +23,13 @@ from services.knowledge_ingest import (
     normalize_filename,
     title_from_filename,
 )
+from services.document_index_policy import MAX_AUTO_INDEX_ATTEMPTS, can_auto_retry_index, can_manual_index
 from services.knowledge_pipeline_service import (
     create_document,
     delete_document,
     get_document_chunks,
     get_document_list,
+    manual_index_document,
     retry_document,
     run_pipeline,
 )
@@ -409,17 +411,7 @@ def remove_document(kb_id: int, doc_id: int, db: Session = Depends(get_db)) -> d
     return {"ok": True}
 
 
-@router.post("/{kb_id}/documents/{doc_id}/retry")
-def retry_doc(kb_id: int, doc_id: int, db: Session = Depends(get_db)) -> dict:
-    doc = db.get(Document, doc_id)
-    if not doc or doc.knowledge_base_id != kb_id:
-        raise HTTPException(status_code=404, detail="文档不存在")
-    if doc.status != "failed":
-        raise HTTPException(status_code=400, detail="只有失败的文档可以重试")
-    if not doc.raw_text:
-        raise HTTPException(status_code=400, detail="原始文本已丢失，无法重试")
-    retry_document(db, doc_id)
-    raw_text = doc.raw_text
+def _start_document_pipeline_background(doc_id: int, raw_text: str, *, log_label: str) -> None:
     def _bg():
         bg_db = SessionLocal()
         try:
@@ -427,11 +419,53 @@ def retry_doc(kb_id: int, doc_id: int, db: Session = Depends(get_db)) -> dict:
             if bg_doc:
                 run_pipeline(bg_db, bg_doc, raw_text)
         except Exception:
-            _logger.exception("Document retry pipeline failed doc=%d", doc_id)
+            _logger.exception("%s pipeline failed for doc=%d", log_label, doc_id)
         finally:
             bg_db.close()
-    threading.Thread(target=_bg, daemon=True).start()
+
+    threading.Thread(target=_bg, daemon=True, name=f"doc-pipeline-{doc_id}").start()
+
+
+@router.post("/{kb_id}/documents/{doc_id}/retry")
+def retry_doc(kb_id: int, doc_id: int, db: Session = Depends(get_db)) -> dict:
+    doc = db.get(Document, doc_id)
+    if not doc or doc.knowledge_base_id != kb_id:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if doc.status not in ("failed", "pending"):
+        raise HTTPException(status_code=400, detail="只有失败或等待中的文档可以重试索引")
+    if not doc.raw_text:
+        raise HTTPException(status_code=400, detail="原始文本已丢失，无法重试")
+    if not can_auto_retry_index(doc):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"已自动重试 {int(doc.index_attempts or 0)} 次仍未成功，"
+                f"请使用「手动索引」（上限 {MAX_AUTO_INDEX_ATTEMPTS} 次自动重试）"
+            ),
+        )
+    updated = retry_document(db, doc_id)
+    if not updated:
+        raise HTTPException(status_code=400, detail="无法重试该文档")
+    _start_document_pipeline_background(doc_id, doc.raw_text, log_label="Document retry")
     return {"ok": True}
+
+
+@router.post("/{kb_id}/documents/{doc_id}/manual-index")
+def manual_index_doc(kb_id: int, doc_id: int, db: Session = Depends(get_db)) -> dict:
+    doc = db.get(Document, doc_id)
+    if not doc or doc.knowledge_base_id != kb_id:
+        raise HTTPException(status_code=404, detail="文档不存在")
+    if doc.status != "failed":
+        raise HTTPException(status_code=400, detail="只有失败的文档可以手动索引")
+    if not doc.raw_text:
+        raise HTTPException(status_code=400, detail="原始文本已丢失，无法手动索引")
+    if not can_manual_index(doc):
+        raise HTTPException(status_code=400, detail="当前状态不允许手动索引")
+    updated = manual_index_document(db, doc_id)
+    if not updated:
+        raise HTTPException(status_code=400, detail="无法手动索引该文档")
+    _start_document_pipeline_background(doc_id, doc.raw_text, log_label="Document manual index")
+    return {"ok": True, "index_attempts": int(doc.index_attempts or 0)}
 
 
 @router.get("/{kb_id}/documents/{doc_id}/chunks")

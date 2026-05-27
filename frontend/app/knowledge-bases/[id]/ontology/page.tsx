@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
-import { isOntologyBrowseTab, ontologyUrl } from "../../../../lib/ontologyRoutes";
+import { isOntologyBrowseTab, kbModelingSectionUrl, ontologyUrl } from "../../../../lib/ontologyRoutes";
 
-/** 遗留路由 → canonical /ontology?kb= 或知识库 #modeling */
+/** 遗留路由 → canonical /ontology?kb= 或知识库「建模与质量」页面 */
 export default function KnowledgeBaseOntologyRedirect({
   params,
   searchParams,
@@ -17,7 +17,7 @@ export default function KnowledgeBaseOntologyRedirect({
   const tab = searchParams?.tab;
 
   if (tab === "governance") {
-    redirect(`/knowledge-bases/${kbId}#modeling`);
+    redirect(kbModelingSectionUrl(kbId, { tab: "quality", qualitySub: "todo" }));
   }
 
   if (tab && isOntologyBrowseTab(tab)) {

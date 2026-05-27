@@ -1,15 +1,29 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import ConceptHierarchyTree, { type HierarchyNode } from "../ontology/ConceptHierarchyTree";
-import ConfidenceDistribution from "../ontology/ConfidenceDistribution";
-import ModelingPipelineStatus, { type ModelingStatus } from "../ontology/ModelingPipelineStatus";
-import QuarantineList, { type QuarantineItem } from "../ontology/QuarantineList";
-import ShaclDashboard, { type ShaclReport } from "../ontology/ShaclDashboard";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { type ModelingStatus } from "../ontology/ModelingPipelineStatus";
+import { type ShaclReport } from "../ontology/ShaclDashboard";
 import { api, ApiError, formatApiError } from "../../lib/api";
+import {
+  buildModelingHash,
+  parseModelingHash,
+  type ModelingSectionTab,
+} from "../../lib/ontologyRoutes";
 import type { OntologyMetric, OntologyTerm } from "../../lib/ontologyTypes";
 import type { OntologyCleaningResults } from "./types";
+import KbModelingQualityPanel from "./KbModelingQualityPanel";
 import OntologyCleanResultCards from "./OntologyCleanResultCards";
+
+const MODELING_TABS: { id: ModelingSectionTab; label: string }[] = [
+  { id: "layers", label: "五层结果" },
+  { id: "quality", label: "质量与隔离" },
+];
+
+function defaultModelingTab(
+  _cleaningResults: OntologyCleaningResults | null,
+): ModelingSectionTab {
+  return "layers";
+}
 
 export default function KbModelingQualitySection({
   kbId,
@@ -22,27 +36,69 @@ export default function KbModelingQualitySection({
   cleaningResultsLoading: boolean;
   onPipelineChange?: () => void;
 }) {
+  const [modelingTab, setModelingTab] = useState<ModelingSectionTab>(() =>
+    defaultModelingTab(cleaningResults),
+  );
+  const [selectedLayer, setSelectedLayer] = useState<string | null>(null);
   const [modelingStatus, setModelingStatus] = useState<ModelingStatus | null>(null);
-  const [quarantineItems, setQuarantineItems] = useState<QuarantineItem[]>([]);
-  const [hierarchyRoots, setHierarchyRoots] = useState<HierarchyNode[]>([]);
-  const [shaclReport, setShaclReport] = useState<ShaclReport | null>(null);
+  const [quarantineTotal, setQuarantineTotal] = useState(0);
   const [confidenceItems, setConfidenceItems] = useState<{ confidence?: number; name?: string }[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [runningModeling, setRunningModeling] = useState(false);
+  const [metricsLoading, setMetricsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [metricsLoaded, setMetricsLoaded] = useState(false);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  useEffect(() => {
+    setMetricsLoaded(false);
+    setConfidenceItems([]);
+    setQuarantineTotal(0);
+  }, [kbId]);
+
+  const syncHashToState = useCallback(() => {
+    if (typeof window === "undefined") return;
+    const parsed = parseModelingHash(window.location.hash);
+    setModelingTab(parsed.tab);
+    if (parsed.layer) setSelectedLayer(parsed.layer);
+  }, []);
+
+  useEffect(() => {
+    syncHashToState();
+    window.addEventListener("hashchange", syncHashToState);
+    return () => window.removeEventListener("hashchange", syncHashToState);
+  }, [syncHashToState]);
+
+  useEffect(() => {
+    if (!cleaningResultsLoading && cleaningResults && typeof window !== "undefined") {
+      const hash = window.location.hash;
+      const parsed = parseModelingHash(hash);
+      if (!hash.includes("tab=") && !hash.includes("layer=")) {
+        setModelingTab(defaultModelingTab(cleaningResults));
+      } else {
+        setModelingTab(parsed.tab);
+      }
+    }
+  }, [cleaningResults, cleaningResultsLoading]);
+
+  const loadStatus = useCallback(async () => {
     setError(null);
     try {
-      const [statusRes, quarantineRes, hierarchyRes, termsRes, metricsRes] = await Promise.all([
-        api<ModelingStatus>(`/api/ontology/knowledge-bases/${kbId}/modeling/status`).catch(() => null),
-        api<{ items?: QuarantineItem[] }>(`/api/ontology/knowledge-bases/${kbId}/quarantine`).catch(() => ({
-          items: [],
-        })),
-        api<{ roots?: HierarchyNode[] }>(
-          `/api/ontology/knowledge-bases/${kbId}/views/hierarchy`,
-        ).catch(() => ({ roots: [] })),
+      const statusRes = await api<ModelingStatus>(
+        `/api/ontology/knowledge-bases/${kbId}/modeling/status`,
+      ).catch(() => null);
+      setModelingStatus(statusRes);
+      const qCount = statusRes?.quality?.quarantine_count;
+      if (qCount != null) {
+        setQuarantineTotal(qCount);
+      }
+    } catch (e: unknown) {
+      setError(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "加载失败");
+    }
+  }, [kbId]);
+
+  const loadMetrics = useCallback(async () => {
+    if (metricsLoaded) return;
+    setMetricsLoading(true);
+    try {
+      const [termsRes, metricsRes] = await Promise.all([
         api<{ terms: OntologyTerm[] }>(`/api/ontology/knowledge-bases/${kbId}/terms`).catch(() => ({
           terms: [],
         })),
@@ -50,109 +106,134 @@ export default function KbModelingQualitySection({
           () => ({ metrics: [] }),
         ),
       ]);
-      setModelingStatus(statusRes);
-      setQuarantineItems(quarantineRes.items ?? []);
-      setHierarchyRoots(hierarchyRes.roots ?? []);
-      setShaclReport(null);
       setConfidenceItems(
         [...(termsRes.terms ?? []), ...(metricsRes.metrics ?? [])].map((t) => ({
           confidence: t.confidence,
           name: t.name,
         })),
       );
-    } catch (e: unknown) {
-      setError(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "加载失败");
+      setMetricsLoaded(true);
     } finally {
-      setLoading(false);
+      setMetricsLoading(false);
     }
-  }, [kbId]);
+  }, [kbId, metricsLoaded]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
-
-  useEffect(() => {
-    if (modelingStatus?.extraction?.status !== "running") return;
-    const t = setInterval(() => {
-      api<ModelingStatus>(`/api/ontology/knowledge-bases/${kbId}/modeling/status`)
-        .then(setModelingStatus)
-        .catch(() => {});
-    }, 4000);
-    return () => clearInterval(t);
-  }, [kbId, modelingStatus?.extraction?.status]);
-
-  async function handleRunModeling() {
-    setRunningModeling(true);
-    try {
-      await api(`/api/ontology/knowledge-bases/${kbId}/modeling/runs`, {
-        method: "POST",
-        body: JSON.stringify({ source_type: "manual_ui", skip_if_running: true }),
-      });
-      const statusRes = await api<ModelingStatus>(
-        `/api/ontology/knowledge-bases/${kbId}/modeling/status`,
-      );
-      setModelingStatus(statusRes);
-      onPipelineChange?.();
-    } finally {
-      setRunningModeling(false);
+    if (modelingTab === "quality") {
+      void loadStatus();
     }
-  }
+    if (modelingTab === "quality") {
+      void loadMetrics();
+    }
+  }, [modelingTab, loadStatus, loadMetrics]);
+
+  const setTab = useCallback(
+    (tab: ModelingSectionTab) => {
+      setModelingTab(tab);
+      if (typeof window !== "undefined") {
+        const parsed = parseModelingHash(window.location.hash);
+        window.history.replaceState(
+          null,
+          "",
+          `${window.location.pathname}${buildModelingHash({
+            tab,
+            layer: tab === "layers" ? selectedLayer : null,
+            qualitySub: tab === "quality" ? parsed.qualitySub ?? undefined : undefined,
+            quarantine: tab === "quality" && parsed.scrollQuarantine,
+          })}`,
+        );
+      }
+    },
+    [selectedLayer],
+  );
+
+  const handleQuarantineResolve = useCallback(async () => {
+    await loadStatus();
+    onPipelineChange?.();
+  }, [loadStatus, onPipelineChange]);
 
   const passRate = modelingStatus?.quality?.shacl_pass_rate;
   const syntheticShacl: ShaclReport | null =
     passRate != null
       ? {
-          conforms: passRate >= 100 && quarantineItems.length === 0,
+          conforms: passRate >= 100 && quarantineTotal === 0,
           totalAssertions: 100,
           passed: Math.round(passRate),
-          violations: quarantineItems.length
+          violations: quarantineTotal
             ? [
                 {
                   focusNode: "—",
                   constraintType: "quarantine",
                   severity: "Violation",
-                  message: `${quarantineItems.length} 条隔离断言`,
+                  message: `${quarantineTotal} 条隔离断言`,
                 },
               ]
             : [],
         }
-      : shaclReport;
+      : null;
+
+  const quarantineBadge = useMemo(
+    () => (quarantineTotal > 0 ? quarantineTotal : null),
+    [quarantineTotal],
+  );
 
   if (error) {
     return <p className="text-sm text-app-danger">{error}</p>;
   }
 
   return (
-    <div className="space-y-6">
-      <ModelingPipelineStatus
-        status={modelingStatus}
-        loading={loading}
-        onRunModeling={handleRunModeling}
-        runningModeling={runningModeling}
-      />
-      <OntologyCleanResultCards
-        results={cleaningResults}
-        kbId={kbId}
-        loading={cleaningResultsLoading}
-      />
-      <div className="grid gap-4 lg:grid-cols-2">
-        <div className="app-card p-4">
-          <h3 className="app-section-title mb-3">SHACL 校验</h3>
-          <ShaclDashboard report={syntheticShacl} compact />
-        </div>
-        <div className="app-card p-4">
-          <h3 className="app-section-title mb-3">置信度分布</h3>
-          <ConfidenceDistribution items={confidenceItems} title="提取质量" />
-        </div>
+    <div className="space-y-4">
+      <div
+        className="flex flex-wrap gap-1 border-b border-app-border pb-2"
+        role="tablist"
+        aria-label="建模与质量"
+      >
+        {MODELING_TABS.map(({ id, label }) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={modelingTab === id}
+            className={`rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+              modelingTab === id
+                ? "bg-app-activeBg text-app-chipText"
+                : "text-app-muted hover:bg-app-hover hover:text-app-primary"
+            }`}
+            onClick={() => setTab(id)}
+          >
+            {label}
+            {id === "quality" && quarantineBadge != null && (
+              <span className="ml-1.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800">
+                {quarantineBadge}
+              </span>
+            )}
+          </button>
+        ))}
       </div>
-      <div className="app-card p-4">
-        <h3 className="app-section-title mb-3">概念层级</h3>
-        <ConceptHierarchyTree roots={hierarchyRoots} />
-      </div>
-      <div id="quarantine" className="app-card scroll-mt-24 p-4">
-        <h3 className="app-section-title mb-3">隔离区</h3>
-        <QuarantineList kbId={kbId} items={quarantineItems} onResolve={load} />
-      </div>
+
+      {modelingTab === "layers" && (
+        <OntologyCleanResultCards
+          results={cleaningResults}
+          kbId={kbId}
+          loading={cleaningResultsLoading}
+          selectedLayer={selectedLayer}
+          onLayerChange={setSelectedLayer}
+        />
+      )}
+
+      {modelingTab === "quality" && (
+        <KbModelingQualityPanel
+          kbId={kbId}
+          shaclReport={syntheticShacl}
+          shaclPassRate={passRate}
+          quarantineTotal={quarantineTotal}
+          confidenceItems={confidenceItems}
+          metricsLoading={metricsLoading}
+          onQuarantineResolve={() => void handleQuarantineResolve()}
+          onQuarantineTotalChange={setQuarantineTotal}
+          onRequestMetrics={() => void loadMetrics()}
+        />
+      )}
     </div>
   );
 }

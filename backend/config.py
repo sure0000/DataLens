@@ -50,8 +50,10 @@ class Settings(BaseSettings):
     copilot_lineage_expand_top_k: int = Field(default=4, ge=0, le=20, alias="COPILOT_LINEAGE_EXPAND_TOP_K")
     copilot_routing_weight_lineage: float = Field(default=0.006, ge=0.0, alias="COPILOT_ROUTING_WEIGHT_LINEAGE")
     copilot_join_blacklist: str = Field(default="", alias="COPILOT_JOIN_BLACKLIST")
-    # 语义流水线超时阈值（秒），超过此时间的 running 状态自动标记为 failed
-    pipeline_run_timeout_seconds: int = Field(default=300, ge=60, le=3600, alias="PIPELINE_RUN_TIMEOUT_SECONDS")
+    # 语义流水线：超过此秒数未更新 progress_at 的 running 任务视为卡住（默认 15 分钟）
+    pipeline_run_timeout_seconds: int = Field(default=900, ge=60, le=3600, alias="PIPELINE_RUN_TIMEOUT_SECONDS")
+    # 单次抽取最多处理的文档分块数（每块 1 次 LLM；4 个 chunk 步骤串行）
+    extraction_max_chunks: int = Field(default=20, ge=1, le=80, alias="EXTRACTION_MAX_CHUNKS")
     # RRF 融合常数 k
     rrf_k: int = Field(default=60, ge=1, alias="RRF_K")
     # 知识库分块语义结构化：单文档最多 LLM 处理的 chunk 数

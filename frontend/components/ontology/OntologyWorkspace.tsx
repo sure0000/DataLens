@@ -3,16 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import {
-  BookOpen,
-  Code2,
-  Database,
-  Layers,
-  Network,
-  RefreshCw,
-  Search,
-  Sparkles,
-} from "lucide-react";
+import { Icon, type NavIcon } from "../AppIcons";
 import SparqlConsole from "./SparqlConsole";
 import RelationGraph from "./RelationGraph";
 import TripleViewer, { type RawTriple } from "./TripleViewer";
@@ -49,12 +40,12 @@ import {
 import OntologyStatusBadge from "./OntologyStatusBadge";
 import CopilotValidatePanel from "./CopilotValidatePanel";
 
-const TABS: { id: OntologyTab; label: string; icon: typeof BookOpen }[] = [
-  { id: "overview", label: "总览", icon: Layers },
-  { id: "semantics", label: "业务语义", icon: BookOpen },
-  { id: "assets", label: "数据资产", icon: Database },
-  { id: "graph", label: "关系图谱", icon: Network },
-  { id: "expert", label: "专家", icon: Code2 },
+const TABS: { id: OntologyTab; label: string; icon: NavIcon }[] = [
+  { id: "overview", label: "总览", icon: "layers" },
+  { id: "semantics", label: "业务语义", icon: "bookOpen" },
+  { id: "assets", label: "数据资产", icon: "database" },
+  { id: "graph", label: "关系图谱", icon: "network" },
+  { id: "expert", label: "专家", icon: "code" },
 ];
 
 function confidenceClass(v: number): string {
@@ -103,7 +94,7 @@ export default function OntologyWorkspace() {
     const tabParam = searchParams.get("tab");
     if (tabParam === "governance") {
       if (lockedKbId) {
-        router.replace(kbModelingSectionUrl(lockedKbId));
+        router.replace(kbModelingSectionUrl(lockedKbId, { tab: "quality", qualitySub: "todo" }));
       } else {
         router.replace("/knowledge-bases");
       }
@@ -345,7 +336,7 @@ export default function OntologyWorkspace() {
           disabled={!selectedKbId || syncing || loading}
           onClick={handleSync}
         >
-          <RefreshCw className="mr-1.5 inline h-4 w-4" aria-hidden />
+          <Icon name="refresh" className="mr-1.5 inline h-4 w-4" aria-hidden />
           {syncing ? "同步中…" : "同步到 RDF"}
         </button>
         <button
@@ -423,7 +414,7 @@ export default function OntologyWorkspace() {
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           {!selectedKb ? (
             <div className="app-card flex flex-1 flex-col items-center justify-center p-10 text-center">
-              <Layers className="h-10 w-10 text-app-muted" aria-hidden />
+              <Icon name="layers" className="h-10 w-10 text-app-muted" aria-hidden />
               <p className="mt-3 text-sm text-app-secondary">
                 {kbListLoading || loading
                   ? "正在加载本体数据…"
@@ -439,7 +430,7 @@ export default function OntologyWorkspace() {
                   数据接入 › <span className="text-app-secondary">{selectedKb.name}</span>
                   {" · "}
                   <Link href={kbModelingSectionUrl(selectedKb.id)} className="app-link">
-                    查看建模进度
+                    查看建模与质量
                   </Link>
                 </p>
               ) : null}
@@ -460,7 +451,7 @@ export default function OntologyWorkspace() {
               </div>
 
               <div className="mt-4 flex flex-wrap items-center gap-2 border-b border-app-border pb-2">
-                {TABS.map(({ id, label, icon: Icon }) => (
+                {TABS.map(({ id, label, icon }) => (
                   <button
                     key={id}
                     type="button"
@@ -477,7 +468,7 @@ export default function OntologyWorkspace() {
                         : "text-app-secondary hover:bg-app-hover"
                     }`}
                   >
-                    <Icon className="h-4 w-4 shrink-0" aria-hidden />
+                    <Icon name={icon} className="h-4 w-4 shrink-0" aria-hidden />
                     {label}
                   </button>
                 ))}
@@ -513,7 +504,7 @@ export default function OntologyWorkspace() {
                     ))}
                   </div>
                   <div className="relative min-w-[200px] flex-1">
-                    <Search className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-app-muted" />
+                    <Icon name="search" className="absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-app-muted" />
                     <input
                       className="app-input w-full pl-9"
                       placeholder={
@@ -735,7 +726,7 @@ function OverviewTab({
 
       <div className="flex justify-end">
         <Link href={kbModelingSectionUrl(kb.id)} className="app-link text-xs no-underline">
-          查看建模进度与质量 →
+          查看建模与质量 →
         </Link>
       </div>
 

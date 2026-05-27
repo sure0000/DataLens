@@ -396,16 +396,19 @@ async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None
             )
         ).scalars().first()
         if existing:
-            # 如果卡住超过 5 分钟，自动标记为失败并继续
-            elapsed = datetime.now(timezone.utc) - existing.started_at
-            if elapsed.total_seconds() > 300:
-                _logger.warning("PipelineRun %s stuck for %s, auto-failing", existing.id, elapsed)
-                existing.status = "failed"
-                existing.steps = {
-                    k: (v if isinstance(v, dict) else {"status": "failed", "reason": "timeout"})
-                    for k, v in (existing.steps or {}).items()
-                }
-                existing.completed_at = datetime.now(timezone.utc)
+            from services.extraction.pipeline_status import (
+                fail_stale_pipeline_run,
+                is_pipeline_run_stale,
+                pipeline_run_elapsed_seconds,
+            )
+
+            if is_pipeline_run_stale(existing):
+                _logger.warning(
+                    "PipelineRun %s stuck for %ss, auto-failing",
+                    existing.id,
+                    pipeline_run_elapsed_seconds(existing),
+                )
+                fail_stale_pipeline_run(existing)
                 db.commit()
             else:
                 _logger.info("Semantic pipeline already running for kb=%s (run_id=%s), skipping", kb_id, existing.id)
@@ -413,7 +416,9 @@ async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None
 
     run = _start_pipeline_run(db, kb_id, source_type, source_id)
     steps_status: dict[str, Any] = {}
-    _pipeline_timeout = 600  # 整体超时 10 分钟
+    from services.extraction.pipeline_status import pipeline_execution_timeout_seconds
+
+    _pipeline_timeout = pipeline_execution_timeout_seconds()
 
     async def _run_steps() -> dict[str, Any]:
         # Step 1: 术语提取
@@ -500,7 +505,14 @@ async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None
     }
 
 
-def trigger_semantic_pipeline_background(kb_id: int, source_type: str = "auto", source_id: int | None = None, skip_if_running: bool = True) -> None:
+def trigger_semantic_pipeline_background(
+    kb_id: int,
+    source_type: str = "auto",
+    source_id: int | None = None,
+    skip_if_running: bool = True,
+    resume: bool = False,
+    resume_from_run_id: int | None = None,
+) -> None:
     """在后台线程中触发语义提取流水线（术语、指标、血缘）。
 
     可从任意上下文（文件导入、API 导入、Git 同步）调用，不阻塞调用方。
@@ -512,7 +524,17 @@ def trigger_semantic_pipeline_background(kb_id: int, source_type: str = "auto", 
         db2 = SessionLocal()
         try:
             from services.extraction.orchestrator import run_extraction_pipeline
-            asyncio.run(run_extraction_pipeline(db2, kb_id, source_type=source_type, source_id=source_id, skip_if_running=skip_if_running))
+            asyncio.run(
+                run_extraction_pipeline(
+                    db2,
+                    kb_id,
+                    source_type=source_type,
+                    source_id=source_id,
+                    skip_if_running=skip_if_running,
+                    resume=resume,
+                    resume_from_run_id=resume_from_run_id,
+                )
+            )
         except Exception:
             _logger.exception("Background semantic pipeline failed for kb=%s", kb_id)
             # Mark any orphaned running runs as failed
@@ -553,12 +575,22 @@ def cleanup_orphaned_pipeline_runs() -> int:
                 select(PipelineRun).where(PipelineRun.status == "running")
             ).scalars().all()
             count = 0
+            from services.extraction.pipeline_status import humanize_reason
+
             for run in runs:
                 run.status = "failed"
-                run.steps = {
-                    k: (v if isinstance(v, dict) else {"status": "failed", "reason": "server_restart"})
-                    for k, v in (run.steps or {}).items()
+                steps = dict(run.steps) if isinstance(run.steps, dict) else {}
+                steps["_pipeline"] = {
+                    "status": "failed",
+                    "reason": "server_restart",
+                    "message": humanize_reason("server_restart"),
                 }
+                for key, val in list(steps.items()):
+                    if key.startswith("_"):
+                        continue
+                    if not isinstance(val, dict):
+                        steps[key] = {"status": "failed", "reason": "server_restart"}
+                run.steps = steps
                 run.completed_at = datetime.now(timezone.utc)
                 count += 1
                 _logger.warning("Cleaned up orphaned PipelineRun id=%s kb=%s", run.id, run.knowledge_base_id)

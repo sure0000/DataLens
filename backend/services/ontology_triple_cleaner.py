@@ -251,6 +251,12 @@ def triples_to_ttl(triples: list[RawTriple]) -> str:
         elif t.lang:
             esc = str(t.object).replace("\\", "\\\\").replace('"', '\\"')
             lines.append(f'<{t.subject}> <{t.predicate}> "{esc}"@{t.lang} .')
+        elif t.predicate in (f"{NS}confidence",):
+            esc = str(t.object).replace("\\", "\\\\").replace('"', '\\"')
+            lines.append(f'<{t.subject}> <{t.predicate}> "{esc}"^^<{XSD.decimal}> .')
+        elif t.predicate in (f"{NS}rowCount", f"{NS}platformId", f"{NS}chunkIndex"):
+            esc = str(t.object).replace("\\", "\\\\").replace('"', '\\"')
+            lines.append(f'<{t.subject}> <{t.predicate}> "{esc}"^^<{XSD.integer}> .')
         else:
             esc = str(t.object).replace("\\", "\\\\").replace('"', '\\"')
             lines.append(f'<{t.subject}> <{t.predicate}> "{esc}" .')

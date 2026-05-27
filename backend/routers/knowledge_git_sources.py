@@ -42,7 +42,7 @@ def _mask_row(r: KnowledgeGitSource) -> dict:
         "uses_default_branch": not (r.branch or "").strip(),
         "path_prefix": r.path_prefix or "",
         "has_token": bool((r.token or "").strip()),
-        "token": (r.token or "").strip(),
+        "token": "",  # 列表接口永远不返回原始 token，仅通过 has_token 标识是否已配置
         "include_globs": r.include_globs,
         "max_file_kb": r.max_file_kb,
         "max_files": r.max_files,

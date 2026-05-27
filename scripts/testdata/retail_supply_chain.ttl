@@ -1,0 +1,411 @@
+@prefix rdf:     <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl:     <http://www.w3.org/2002/07/owl#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
+@prefix prov:    <http://www.w3.org/ns/prov#> .
+@prefix dl:      <https://datalens.local/ontology/> .
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Enterprise Ontology ABox — Retail Supply Chain Domain
+# Graph: https://datalens.local/graph/kb/retail-supply-chain
+#
+# 本文档演示「概念实体、关系、规则、属性、词汇」五类要素的完整 RDF 表示。
+# 所有个体的 rdf:type 引用 TBox 中定义的 OWL 类（参见 tbox/core.ttl）。
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# ─── PREFIX DECLARATIONS FOR GRAPH ───
+
+<> rdf:type owl:Ontology ;
+  rdfs:label "零售供应链域本体实例"@zh , "Retail Supply Chain Ontology ABox"@en ;
+  rdfs:comment "演示企业核心概念、指标、关系、规则和跨域对齐的完整示例"@zh ;
+  owl:imports <https://datalens.local/ontology/tbox/core.ttl> ,
+              <https://datalens.local/ontology/tbox/enterprise.ttl> .
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 1. 业务域 (BusinessDomain)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+<#domain-supply-chain> rdf:type dl:BusinessDomain ;
+  rdfs:label "供应链域"@zh , "Supply Chain Domain"@en ;
+  rdfs:comment "涵盖采购、仓储、物流、供应商管理 — 上游连接交易域，下游连接财务域"@zh .
+
+<#domain-trade> rdf:type dl:BusinessDomain ;
+  rdfs:label "交易域"@zh , "Trade Domain"@en ;
+  rdfs:comment "涵盖订单、支付、退款、用户行为"@zh .
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 2. 物理数据资产 (PhysicalTable, PhysicalColumn)
+#    — 企业最基础的"可查、可分析"对象
+# ═══════════════════════════════════════════════════════════════════════════════
+
+<#table-scm-product> rdf:type dl:PhysicalTable ;
+  dl:platformId "101"^^xsd:integer ;
+  rdfs:label "商品主数据"@zh , "scm.product"@en ;
+  dl:businessSummary "SKU 粒度商品主数据，含品类路径、品牌、规格、状态"@zh ;
+  dl:rowCount "250000"^^xsd:integer ;
+  dl:sensitivityLevel "internal" ;
+  dl:belongsToDomain <#domain-supply-chain> ;
+  dl:belongsToDataSource <#ds-scm-mysql> .
+
+<#table-scm-purchase-order> rdf:type dl:PhysicalTable ;
+  dl:platformId "102"^^xsd:integer ;
+  rdfs:label "采购订单"@zh , "scm.purchase_order"@en ;
+  dl:businessSummary "采购订单头，含供应商、订单金额、审批状态"@zh ;
+  dl:rowCount "1200000"^^xsd:integer ;
+  dl:sensitivityLevel "internal" ;
+  dl:belongsToDomain <#domain-supply-chain> .
+
+<#table-scm-inventory-snapshot> rdf:type dl:PhysicalTable ;
+  dl:platformId "103"^^xsd:integer ;
+  rdfs:label "库存快照"@zh , "scm.inventory_snapshot"@en ;
+  dl:businessSummary "每日零点库存快照，SKU+仓库+批次粒度"@zh ;
+  dl:rowCount "30000000"^^xsd:integer ;
+  dl:sensitivityLevel "confidential" ;
+  dl:belongsToDomain <#domain-supply-chain> .
+
+<#table-trade-order-header> rdf:type dl:PhysicalTable ;
+  dl:platformId "201"^^xsd:integer ;
+  rdfs:label "销售订单头"@zh , "trade.order_header"@en ;
+  dl:businessSummary "销售订单头，含用户、实付金额、下单时间、渠道"@zh ;
+  dl:rowCount "50000000"^^xsd:integer ;
+  dl:sensitivityLevel "restricted" ;
+  dl:belongsToDomain <#domain-trade> .
+
+# --- PhysicalColumns ---
+
+<#col-sku-code> rdf:type dl:PhysicalColumn ;
+  rdfs:label "SKU 编码"@zh ;
+  dl:semanticType "dimension" ;
+  dl:semanticDescription "商品唯一标识，12位数字编码，前4位为品类码"@zh ;
+  dl:dataType "varchar(12)" ;
+  dl:nullable "false"^^xsd:boolean ;
+  schema:isPartOf <#table-scm-product> .
+
+<#col-unit-price> rdf:type dl:PhysicalColumn ;
+  rdfs:label "采购单价"@zh ;
+  dl:semanticType "metric" ;
+  dl:semanticDescription "不含税采购单价，单位为人民币元，保留4位小数"@zh ;
+  dl:dataType "decimal(18,4)" ;
+  dl:nullable "false"^^xsd:boolean ;
+  schema:isPartOf <#table-scm-product> .
+
+<#col-paid-amount> rdf:type dl:PhysicalColumn ;
+  rdfs:label "实付金额"@zh ;
+  dl:semanticType "metric" ;
+  dl:semanticDescription "用户实际支付金额（含运费、含优惠抵扣），单位为人民币元"@zh ;
+  dl:dataType "decimal(18,2)" ;
+  dl:nullable "false"^^xsd:boolean ;
+  schema:isPartOf <#table-trade-order-header> .
+
+<#col-po-status> rdf:type dl:PhysicalColumn ;
+  rdfs:label "采购单状态"@zh ;
+  dl:semanticType "enum" ;
+  dl:semanticDescription "采购单据生命周期状态：draft→submitted→approved→received→closed"@zh ;
+  dl:dataType "varchar(20)" ;
+  dl:nullable "false"^^xsd:boolean ;
+  schema:isPartOf <#table-scm-purchase-order> .
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 3. 业务概念实体 (BusinessTerm, Metric, Dimension)
+#    — 企业对业务含义的正式定义
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 3.1 业务术语 (BusinessTerm) — 词汇层
+
+<#term-sku> rdf:type dl:BusinessTerm ;
+  skos:prefLabel "SKU 编码"@zh , "SKU Code"@en ;
+  skos:altLabel "货号"@zh , "商品编码"@zh , "product_code"@en , "item_id"@en ;
+  skos:definition "企业内唯一标识一个可售商品的编码，12位数字，前4位为品类码"@zh ;
+  dl:termType "dimension" ;
+  dl:confidence "100"^^xsd:decimal ;
+  dl:approvalStatus "approved" ;
+  dl:belongsToDomain <#domain-supply-chain> ;
+  dl:mapsToColumn <#col-sku-code> ;
+  dl:groundedBy <#chunk-product-master> .
+
+<#term-inventory-qty> rdf:type dl:BusinessTerm ;
+  skos:prefLabel "在库数量"@zh , "On-Hand Quantity"@en ;
+  skos:altLabel "库存量"@zh , "可用库存"@zh , "inventory_qty"@en ;
+  skos:definition "仓库中实际可用的商品数量，= on_hand_qty - reserved_qty"@zh ;
+  dl:termType "metric" ;
+  dl:confidence "100"^^xsd:decimal ;
+  dl:approvalStatus "approved" ;
+  dl:belongsToDomain <#domain-supply-chain> .
+
+<#term-po-status> rdf:type dl:BusinessTerm ;
+  skos:prefLabel "采购单状态"@zh , "Purchase Order Status"@en ;
+  skos:definition "采购单在其生命周期中所处的阶段"@zh ;
+  dl:termType "enum" ;
+  dl:confidence "100"^^xsd:decimal ;
+  dl:approvalStatus "approved" ;
+  dl:belongsToDomain <#domain-supply-chain> ;
+  dl:mapsToColumn <#col-po-status> .
+
+# 3.2 指标 (Metric) — 规则层
+
+<#metric-daily-gmv> rdf:type dl:Metric ;
+  skos:prefLabel "日销售额"@zh , "Daily GMV"@en ;
+  skos:altLabel "GMV"@zh , "日交易额"@zh , "daily_sales"@en ;
+  skos:definition "按自然日汇总的实付金额总和，含运费不含退款"@zh ;
+  dl:formula "SUM(trade.order_header.paid_amount) WHERE status IN ('paid','shipped','delivered')" ;
+  dl:caliber "分子=实付金额SUM；分母=无（绝对指标）；时间窗口=自然日(biz_date)；排除status=cancelled"@zh ;
+  dl:confidence "100"^^xsd:decimal ;
+  dl:approvalStatus "approved" ;
+  dl:belongsToDomain <#domain-trade> ;
+  dl:computedFromTable <#table-trade-order-header> ;
+  dl:aggregatesOver <#dim-time-day> .
+
+<#metric-gross-margin-rate> rdf:type dl:Metric ;
+  skos:prefLabel "毛利率"@zh , "Gross Margin Rate"@en ;
+  skos:altLabel "毛利占比"@zh ;
+  skos:definition "(销售额 - 销售成本) / 销售额 × 100%，反映商品盈利能力"@zh ;
+  dl:formula "(SUM(trade.order_line.paid_amount) - SUM(trade.order_line.cost_amt)) / SUM(trade.order_line.paid_amount) * 100" ;
+  dl:caliber "cost_amt 按采购加权移动平均成本，从 scm 域获取；时间窗口=自然月"@zh ;
+  dl:confidence "95"^^xsd:decimal ;
+  dl:approvalStatus "approved" ;
+  dl:belongsToDomain <#domain-trade> ;
+  dl:computedFromTable <#table-trade-order-header> ;
+  dl:derivedFrom <#metric-daily-gmv> ;
+  dl:aggregatesOver <#dim-category> .
+
+<#metric-inventory-turnover-days> rdf:type dl:Metric ;
+  skos:prefLabel "库存周转天数"@zh , "Inventory Turnover Days"@en ;
+  skos:altLabel "周转天数"@zh , "库存周转"@zh ;
+  skos:definition "月度平均在库量 / 月出库量 × 30，衡量库存管理效率"@zh ;
+  dl:formula "(AVG(scm.inventory_snapshot.on_hand_qty) OVER 30 days) / SUM(scm.outbound_delivery.qty) OVER 30 days * 30" ;
+  dl:caliber "按SKU+仓库粒度计算月均值；排除滞销品(qty=0)行；节假日顺延"@zh ;
+  dl:confidence "80"^^xsd:decimal ;
+  dl:approvalStatus "pending_review" ;
+  dl:belongsToDomain <#domain-supply-chain> ;
+  dl:computedFromTable <#table-scm-inventory-snapshot> ;
+  dl:dependsOn <#term-inventory-qty> .
+
+<#metric-fill-rate> rdf:type dl:Metric ;
+  skos:prefLabel "准时交付率"@zh , "Fill Rate"@en ;
+  skos:altLabel "交付率"@zh , "履约率"@zh ;
+  skos:definition "PO 行项中 received_qty >= ordered_qty 的占比，衡量供应商履约质量"@zh ;
+  dl:formula "COUNT(CASE WHEN inbound_receipt.qty >= purchase_order_line.ordered_qty THEN 1 END) / COUNT(*) * 100" ;
+  dl:caliber "按PO行项独立评价；仅统计status='received'的行项；窗口=自然月"@zh ;
+  dl:confidence "60"^^xsd:decimal ;
+  dl:approvalStatus "draft" ;
+  dl:belongsToDomain <#domain-supply-chain> .
+
+# 3.3 分析维度 (Dimension) — 维度层
+
+<#dim-time-day> rdf:type dl:Dimension ;
+  skos:prefLabel "时间_日"@zh , "Time - Day"@en ;
+  skos:definition "自然日维度，支持上卷到周/月/季/年"@zh ;
+  dl:dimensionType "time" ;
+  dl:confidence "100"^^xsd:decimal ;
+  dl:approvalStatus "approved" ;
+  dl:belongsToDomain <#domain-supply-chain> .
+
+<#dim-category> rdf:type dl:Dimension ;
+  skos:prefLabel "品类"@zh , "Product Category"@en ;
+  skos:definition "商品品类层级：SKU→子类→大类→品类，用于分类下钻分析"@zh ;
+  dl:dimensionType "category" ;
+  dl:confidence "100"^^xsd:decimal ;
+  dl:approvalStatus "approved" ;
+  dl:belongsToDomain <#domain-supply-chain> .
+
+<#dim-geo-city> rdf:type dl:Dimension ;
+  skos:prefLabel "城市"@zh , "City"@en ;
+  skos:definition "门店所在城市，可上卷到省份、大区、全国"@zh ;
+  dl:dimensionType "geo" ;
+  dl:confidence "100"^^xsd:decimal ;
+  dl:approvalStatus "approved" ;
+  dl:belongsToDomain <#domain-supply-chain> .
+
+<#dim-supplier-level> rdf:type dl:Dimension ;
+  skos:prefLabel "供应商等级"@zh , "Supplier Level"@en ;
+  skos:definition "供应商等级 S/A/B/C/D，基于交付质量、价格竞争力综合评定"@zh ;
+  dl:dimensionType "category" ;
+  dl:confidence "90"^^xsd:decimal ;
+  dl:approvalStatus "approved" ;
+  dl:belongsToDomain <#domain-supply-chain> .
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 4. 关系 (ObjectProperty 实例)
+#    — 用 Objective Property 表示的所有连接
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# 4.1 JOIN 关系 (JoinRelation)
+
+<#join-po-to-supplier> rdf:type dl:JoinRelation ;
+  dl:leftTable <#table-scm-purchase-order> ;
+  dl:rightTable <#table-scm-product> ;
+  dl:joinKey "scm.purchase_order.supplier_code = scm.supplier.supplier_code" ;
+  dl:joinType "left" ;
+  dl:confidence "100"^^xsd:decimal ;
+  dl:approvalStatus "approved" .
+
+<#join-po-to-lines> rdf:type dl:JoinRelation ;
+  dl:leftTable <#table-scm-purchase-order> ;
+  dl:rightTable <#table-scm-product> ;
+  dl:joinKey "scm.purchase_order.po_id = scm.purchase_order_line.po_id" ;
+  dl:joinType "inner" ;
+  dl:confidence "100"^^xsd:decimal ;
+  dl:approvalStatus "approved" .
+
+# 4.2 对称 JOIN 断言 (joinableWith)
+<#table-scm-purchase-order> dl:joinableWith <#table-scm-product> .
+<#table-scm-inventory-snapshot> dl:joinableWith <#table-scm-product> .
+
+# 4.3 数据血缘 (LineageAssertion)
+
+<#lineage-ods-to-dwd-po> rdf:type dl:LineageAssertion ;
+  rdfs:label "ODS→DWD 采购订单清洗"@zh ;
+  dl:transformsFrom <#table-scm-purchase-order> ;
+  dl:layer "ODS" ;
+  dl:sourceField "erp.po_header.*" ;
+  dl:targetField "dwd.fact_purchase_order.*" ;
+  dl:transformLogic "字段重命名 + 状态码标准化 + 金额分转元换算" ;
+  dl:confidence "100"^^xsd:decimal ;
+  dl:approvalStatus "approved" .
+
+<#lineage-dwd-to-dws-supplier> rdf:type dl:LineageAssertion ;
+  rdfs:label "DWD→DWS 供应商绩效汇总"@zh ;
+  dl:transformsFrom <#table-scm-purchase-order> ;
+  dl:layer "DWS" ;
+  dl:sourceField "dwd.fact_purchase_order + dwd.fact_inbound" ;
+  dl:targetField "dws.agg_supplier_performance" ;
+  dl:transformLogic "按供应商聚合采购额、交付及时率、退货率" ;
+  dl:confidence "90"^^xsd:decimal ;
+  dl:approvalStatus "approved" .
+
+# 4.4 概念间关系
+<#metric-gross-margin-rate> dl:derivedFrom <#metric-daily-gmv> .
+<#term-inventory-qty> dl:dependsOn <#term-sku> .
+<#term-po-status> dl:relatedTo <#metric-fill-rate> .
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 5. 业务规则 (BusinessRule)
+#    — 校验、派生、约束
+# ═══════════════════════════════════════════════════════════════════════════════
+
+<#rule-po-amount-positive> rdf:type dl:BusinessRule ;
+  skos:prefLabel "采购金额必须大于零"@zh ;
+  dl:ruleExpression "purchase_order.total_amount > 0" ;
+  dl:ruleType "validation" ;
+  dl:confidence "100"^^xsd:decimal ;
+  dl:approvalStatus "approved" ;
+  dl:belongsToDomain <#domain-supply-chain> .
+
+<#rule-inventory-non-negative> rdf:type dl:BusinessRule ;
+  skos:prefLabel "库存数量不得为负"@zh ;
+  dl:ruleExpression "inventory_snapshot.on_hand_qty >= 0" ;
+  dl:ruleType "validation" ;
+  dl:confidence "100"^^xsd:decimal ;
+  dl:approvalStatus "approved" ;
+  dl:belongsToDomain <#domain-supply-chain> .
+
+<#rule-po-status-flow> rdf:type dl:BusinessRule ;
+  skos:prefLabel "采购单状态流转"@zh ;
+  dl:ruleExpression "status: draft → submitted → approved → received → closed" ;
+  dl:ruleType "constraint" ;
+  dl:confidence "100"^^xsd:decimal ;
+  dl:approvalStatus "approved" ;
+  dl:belongsToDomain <#domain-supply-chain> .
+
+<#rule-gross-margin-calc> rdf:type dl:BusinessRule ;
+  skos:prefLabel "毛利率计算公式"@zh ;
+  dl:ruleExpression "gross_margin_rate = (SUM(paid_amount) - SUM(cost_amt)) / SUM(paid_amount) * 100" ;
+  dl:ruleType "derivation" ;
+  dl:confidence "100"^^xsd:decimal ;
+  dl:approvalStatus "approved" ;
+  dl:belongsToDomain <#domain-trade> .
+
+<#rule-supplier-active-only> rdf:type dl:BusinessRule ;
+  skos:prefLabel "仅活跃供应商可创建采购单"@zh ;
+  dl:ruleExpression "supplier.status = 'active' THEN ALLOW create purchase_order" ;
+  dl:ruleType "constraint" ;
+  dl:confidence "90"^^xsd:decimal ;
+  dl:approvalStatus "approved" ;
+  dl:belongsToDomain <#domain-supply-chain> .
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 6. 跨域词汇对齐 (SKOS ConceptScheme + exactMatch/closeMatch)
+#    — 企业薄层的核心：解决同名异义和异名同义
+# ═══════════════════════════════════════════════════════════════════════════════
+
+<#cs-enterprise-core> rdf:type dl:ConceptScheme ;
+  skos:prefLabel "企业核心概念体系"@zh , "Enterprise Core Concept Scheme"@en ;
+  rdfs:comment "跨域统一概念标识，各域别名在此对齐"@zh .
+
+# 6.1 SKU 跨系统对齐
+<#concept-sku> rdf:type skos:Concept ;
+  skos:prefLabel "SKU 编码"@zh , "SKU Code"@en ;
+  skos:altLabel "货号"@zh , "商品编码"@zh , "product_code"@en , "item_id"@en ;
+  skos:inScheme <#cs-enterprise-core> ;
+  skos:definition "企业内唯一标识可售商品的编码"@zh .
+
+<#term-sku> skos:exactMatch <#concept-sku> .
+
+# WMS 系统中的等价概念
+<#concept-item-id> rdf:type skos:Concept ;
+  skos:prefLabel "WMS 货品 ID"@zh ;
+  skos:altLabel "item_id"@en ;
+  skos:exactMatch <#concept-sku> ;
+  rdfs:comment "WMS 系统的 item_id 等价于 scm.sku_code，映射关系：wms.item_id = CAST(scm.sku_code AS int)"@zh .
+
+# 6.2 GMV / 销售额的跨域差异（不是 exactMatch，而是 closeMatch）
+<#concept-gmv> rdf:type skos:Concept ;
+  skos:prefLabel "GMV"@zh , "Gross Merchandise Volume"@en ;
+  skos:definition "交易域的日销售额 = SUM(paid_amount)，含运费不含退款"@zh ;
+  skos:inScheme <#cs-enterprise-core> .
+
+<#metric-daily-gmv> skos:exactMatch <#concept-gmv> .
+
+<#concept-net-revenue> rdf:type skos:Concept ;
+  skos:prefLabel "净收入"@zh , "Net Revenue"@en ;
+  skos:definition "财务域的净收入 = SUM(paid_amount - freight - refund)，去运费、去退款"@zh ;
+  skos:closeMatch <#concept-gmv> ;
+  rdfs:comment "GMV 与净收入的差异 = 运费 + 退款，不能混用"@zh .
+
+# 6.3 枚举值跨域对齐
+<#concept-status-received> rdf:type skos:Concept ;
+  skos:prefLabel "已收货"@zh , "Received"@en ;
+  skos:definition "采购单行项已完成入库确认"@zh ;
+  skos:altLabel "received"@en , "done"@en , "completed"@en ;
+  skos:inScheme <#cs-enterprise-core> ;
+  rdfs:comment "scm: po.status='received' ≡ wms: inbound.status='done'"@zh .
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 7. 数据源 (DataSource)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+<#ds-scm-mysql> rdf:type dl:DataSource ;
+  rdfs:label "SCM MySQL"@zh ;
+  dl:sourceType "mysql" ;
+  dl:host "scm-db.internal.example.com" ;
+  dl:sensitivityLevel "internal" ;
+  dl:belongsToDomain <#domain-supply-chain> .
+
+<#ds-trade-mysql> rdf:type dl:DataSource ;
+  rdfs:type dl:DataSource ;
+  rdfs:label "Trade MySQL"@zh ;
+  dl:sourceType "mysql" ;
+  dl:host "trade-db.internal.example.com" ;
+  dl:sensitivityLevel "restricted" ;
+  dl:belongsToDomain <#domain-trade> .
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# 8. 溯源信息 (Provenance)
+#    — 每个概念都可以追溯到源头文档
+# ═══════════════════════════════════════════════════════════════════════════════
+
+<#doc-product-master> rdf:type dl:Document ;
+  rdfs:label "商品主数据规范 v3.2"@zh ;
+  dl:title "商品主数据管理规范 v3.2" ;
+  dl:mimeType "application/pdf" ;
+  dl:sourceUri <https://wiki.internal.example.com/product-master-spec> .
+
+<#chunk-product-master> rdf:type dl:DocumentChunk ;
+  dl:chunkText "SKU 编码为12位数字，前4位为品类码，后8位为流水号。各系统（SCM、WMS、Trade）统一使用此编码作为商品唯一标识。" ;
+  dl:chunkIndex "3"^^xsd:integer ;
+  dl:confidence "95"^^xsd:decimal ;
+  dl:partOf <#doc-product-master> .
+
+<#term-sku> dl:groundedBy <#chunk-product-master> .
+<#chunk-product-master> prov:wasDerivedFrom <#doc-product-master> .

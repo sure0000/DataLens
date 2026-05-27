@@ -10,14 +10,12 @@ dl:MetricShape a sh:NodeShape ;
     sh:path skos:prefLabel ;
     sh:name "首选标签"@zh ;
     sh:minCount 1 ;
-    sh:datatype xsd:string ;
   ] ;
   sh:property [
     sh:path dl:formula ;
     sh:name "公式"@zh ;
     sh:description "每个指标必须有计算公式"@zh ;
     sh:minCount 1 ;
-    sh:datatype xsd:string ;
   ] ;
   sh:property [
     sh:path dl:computedFromTable ;

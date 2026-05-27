@@ -1,5 +1,6 @@
 "use client";
 
+import { PipelineStatusBadge, PipelineStepIcon } from "../icons";
 import type { PipelineStats } from "./types";
 
 interface DetailStatsPanelProps {
@@ -125,13 +126,19 @@ export default function DetailStatsPanel({ stats, loading }: DetailStatsPanelPro
                   <span
                     className={
                       stats.last_pipeline_run.status === "completed"
-                        ? "app-text-success font-medium"
+                        ? "app-text-success font-medium inline-flex items-center gap-1"
                         : stats.last_pipeline_run.status === "failed"
-                        ? "app-text-danger font-medium"
-                        : "app-text-info font-medium"
+                        ? "app-text-danger font-medium inline-flex items-center gap-1"
+                        : "app-text-info font-medium inline-flex items-center gap-1"
                     }
                   >
-                    {stats.last_pipeline_run.status === "completed" ? "✓ 完成" : stats.last_pipeline_run.status === "failed" ? "✗ 失败" : "◐ 运行中"}
+                    {stats.last_pipeline_run.status === "completed" ? (
+                      <PipelineStatusBadge status="done" />
+                    ) : stats.last_pipeline_run.status === "failed" ? (
+                      <PipelineStatusBadge status="failed" />
+                    ) : (
+                      <PipelineStatusBadge status="progress" />
+                    )}
                   </span>
                 </p>
                 {stats.last_pipeline_run.started_at && (
@@ -157,11 +164,20 @@ function StatusRow({ label, done, total }: { label: string; done: number; total:
     <div className="flex items-center justify-between">
       <span className="text-app-secondary">{label}</span>
       <span
-        className={`font-medium ${
+        className={`inline-flex items-center gap-1 font-medium ${
           status === "done" ? "app-text-success" : status === "progress" ? "app-text-info" : "text-app-muted"
         }`}
       >
-        {status === "done" ? `✓ ${done}条` : status === "progress" ? `◐ ${done}/${total}` : "○ —"}
+        {status === "done" ? (
+          <PipelineStatusBadge status="done" suffix={`${done}条`} />
+        ) : status === "progress" ? (
+          <PipelineStatusBadge status="progress" suffix={`${done}/${total}`} />
+        ) : (
+          <>
+            <PipelineStepIcon status="pending" className="h-3.5 w-3.5" />
+            <span>—</span>
+          </>
+        )}
       </span>
     </div>
   );

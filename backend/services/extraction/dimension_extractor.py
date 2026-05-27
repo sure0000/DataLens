@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from ontology import NS, chunk_iri, concept_slug, dimension_iri, domain_iri, kb_graph_iri
+from services.extraction.chunk_progress import ChunkProgressCallback, iter_chunks_with_progress
 from services.ontology_triple_cleaner import RawTriple
 
 _logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ async def extract_dimension_triples(
     load_prompt: Any,
     auto_approve_confidence: float = 80.0,
     domain_id: int | None = None,
+    on_chunk_progress: ChunkProgressCallback | None = None,
 ) -> list[RawTriple]:
     """Extract dl:Dimension triples from document chunks via LLM.
 
@@ -35,10 +37,8 @@ async def extract_dimension_triples(
     triples: list[RawTriple] = []
     seen_names: set[str] = set()
 
-    for chunk in chunks:
+    async for chunk in iter_chunks_with_progress(chunks, on_chunk_progress):
         content = getattr(chunk, "content", "") or ""
-        if not content.strip():
-            continue
 
         try:
             result = await call_llm_json(

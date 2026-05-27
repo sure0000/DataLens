@@ -20,6 +20,10 @@ import type {
 } from "../../../../../components/knowledge-bases/types";
 
 import { linkAccent } from "../../../../../lib/themeClasses";
+import {
+  canManualDocumentIndex,
+  canRetryDocumentIndex,
+} from "../../../../../components/knowledge-bases/documentIndexPolicy";
 import { docStatusChip, gitSyncStatusChip } from "../../../../../components/knowledge-bases/utils";
 
 export default function SourceDetailPage({
@@ -243,6 +247,27 @@ export default function SourceDetailPage({
 
   // Filtered data
   const sourceDocs = documents.filter(isSourceDoc);
+  const primaryDoc = sourceDocs[0] ?? null;
+
+  async function retryDocumentIndex(docId: number) {
+    try {
+      await api(`/api/knowledge-bases/${kbId}/documents/${docId}/retry`, { method: "POST" });
+      notifyUser("已重新提交索引", "success");
+      await loadDocuments();
+    } catch (e: unknown) {
+      notifyUser(e instanceof Error ? e.message : "重试失败", "error");
+    }
+  }
+
+  async function manualDocumentIndex(docId: number) {
+    try {
+      await api(`/api/knowledge-bases/${kbId}/documents/${docId}/manual-index`, { method: "POST" });
+      notifyUser("已提交手动索引", "success");
+      await loadDocuments();
+    } catch (e: unknown) {
+      notifyUser(e instanceof Error ? e.message : "手动索引失败", "error");
+    }
+  }
 
   // Auto-load chunks for all source documents
   useEffect(() => {
@@ -341,6 +366,24 @@ export default function SourceDetailPage({
                 {statusChip.text}
               </span>
             )}
+            {primaryDoc && canRetryDocumentIndex(primaryDoc) && (
+              <button
+                className="app-button app-toolbar-action"
+                type="button"
+                onClick={() => retryDocumentIndex(primaryDoc.id)}
+              >
+                {primaryDoc.status === "pending" ? "开始索引" : "重试索引"}
+              </button>
+            )}
+            {primaryDoc && canManualDocumentIndex(primaryDoc) && (
+              <button
+                className="app-button app-toolbar-action"
+                type="button"
+                onClick={() => manualDocumentIndex(primaryDoc.id)}
+              >
+                手动索引
+              </button>
+            )}
             <div className="relative" ref={settingsMenuRef}>
               <button
                 className="app-button-secondary app-toolbar-action"
@@ -401,7 +444,7 @@ export default function SourceDetailPage({
                         <th className="px-3 py-2.5">表名</th>
                         <th className="px-3 py-2.5">数据库</th>
                         <th className="w-28 px-3 py-2.5">状态</th>
-                        <th className="px-3 py-2.5">AI 分析摘要</th>
+                        <th className="px-3 py-2.5">表描述</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -409,7 +452,7 @@ export default function SourceDetailPage({
                         <tr key={`tbl-${t.id}`} className="hover:bg-app-hover">
                           <td className="px-3 py-2.5">
                             <Link
-                              href={`/datasources/${dbImport?.datasource_id}/tables/${t.table_name}`}
+                              href={`/table/${t.id}`}
                               className={`text-sm font-medium ${linkAccent}`}
                             >
                               {t.table_name}

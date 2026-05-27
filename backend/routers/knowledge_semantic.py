@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -11,6 +11,7 @@ from database import get_db, SessionLocal
 from config import get_settings
 from models import (
     Document,
+    KnowledgeBase,
     KnowledgeGitSource,
     PipelineRun,
 )
@@ -280,17 +281,6 @@ def get_pipeline_stats(kb_id: int, db: Session = Depends(get_db)):
         except Exception:
             rdf_stats = None
 
-    if last_run and last_run.status == "running" and last_run.started_at:
-        elapsed = datetime.utcnow() - last_run.started_at
-        if elapsed.total_seconds() > 300:
-            last_run.status = "failed"
-            last_run.steps = {
-                k: (v if isinstance(v, dict) else {"status": "failed", "reason": "timeout"})
-                for k, v in (last_run.steps or {}).items()
-            }
-            last_run.completed_at = datetime.utcnow()
-            db.commit()
-
     return {
         "term_count": term_count,
         "metric_count": metric_count,
@@ -354,14 +344,39 @@ def get_source_cleaning_stats(kb_id: int, db: Session = Depends(get_db)):
 
     stats: dict[str, dict] = {}
     for run in db.execute(runs).scalars().all():
+        from services.extraction.pipeline_status import pipeline_failure_reason
+
         key = f"{run.source_type}:{run.source_id}"
+        failure_reason = pipeline_failure_reason(run)
+        pipeline_meta = (run.steps or {}).get("_pipeline") if isinstance(run.steps, dict) else None
+        message = pipeline_meta.get("message") if isinstance(pipeline_meta, dict) else None
         stats[key] = {
             "status": run.status,
             "started_at": run.started_at.isoformat() if run.started_at else None,
             "completed_at": run.completed_at.isoformat() if run.completed_at else None,
+            "failure_reason": failure_reason,
+            "message": message or failure_reason,
+            "run_id": run.id,
+            "steps": run.steps if isinstance(run.steps, dict) else None,
         }
 
     return {"ok": True, "kb_id": kb_id, "stats": stats}
+
+
+# ── Resume options ───────────────────────────────────────────────────────
+
+
+@router.get("/{kb_id}/sources/{source_id}/clean-resume-options")
+def get_source_clean_resume_options(
+    kb_id: int,
+    source_id: int,
+    source_type: str = "git",
+    db: Session = Depends(get_db),
+):
+    """Return whether a failed pipeline run can be resumed for this import source."""
+    from services.extraction.step_cache import resume_options_payload
+
+    return {"ok": True, "kb_id": kb_id, "source_id": source_id, "source_type": source_type, **resume_options_payload(db, kb_id, source_type, source_id)}
 
 
 # ── Trigger Pipeline ─────────────────────────────────────────────────────
@@ -381,14 +396,10 @@ def trigger_semantic_pipeline(kb_id: int, db: Session = Depends(get_db)):
     ).scalars().first()
 
     if existing:
-        elapsed = datetime.now(timezone.utc) - existing.started_at
-        if elapsed.total_seconds() > 300:
-            existing.status = "failed"
-            existing.steps = {
-                k: (v if isinstance(v, dict) else {"status": "failed", "reason": "timeout"})
-                for k, v in (existing.steps or {}).items()
-            }
-            existing.completed_at = datetime.now(timezone.utc)
+        from services.extraction.pipeline_status import fail_stale_pipeline_run, is_pipeline_run_stale
+
+        if is_pipeline_run_stale(existing):
+            fail_stale_pipeline_run(existing)
             db.commit()
         else:
             return {"status": "skipped", "reason": "已有正在运行的流水线", "run_id": existing.id}
@@ -401,11 +412,28 @@ def trigger_semantic_pipeline(kb_id: int, db: Session = Depends(get_db)):
 
 
 @router.post("/{kb_id}/sources/{source_id}/clean")
-def trigger_source_cleaning(kb_id: int, source_id: int, source_type: str = "git"):
+def trigger_source_cleaning(
+    kb_id: int,
+    source_id: int,
+    source_type: str = "git",
+    resume: bool = Query(False, description="为 true 时从上次失败且已缓存的步骤续跑"),
+    resume_from_run_id: int | None = Query(None, description="指定要续跑的 pipeline run id"),
+    db: Session = Depends(get_db),
+):
     """对单个导入源触发语义清洗（后台执行，立即返回）。"""
     import logging as _log
 
+    from services.document_index_policy import assert_document_indexed_for_semantic_clean
     from services.semantic_extraction import trigger_semantic_pipeline_background
+
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
+    try:
+        assert_document_indexed_for_semantic_clean(db, kb_id, source_id, source_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     _log.getLogger(__name__).info(
         "Manual source cleaning triggered: kb=%d source=%d type=%s",
@@ -414,5 +442,18 @@ def trigger_source_cleaning(kb_id: int, source_id: int, source_type: str = "git"
         source_type,
     )
 
-    trigger_semantic_pipeline_background(kb_id, source_type=f"source:{source_type}", source_id=source_id, skip_if_running=False)
-    return {"status": "started", "source_id": source_id, "source_type": source_type}
+    trigger_semantic_pipeline_background(
+        kb_id,
+        source_type=f"source:{source_type}",
+        source_id=source_id,
+        skip_if_running=False,
+        resume=resume,
+        resume_from_run_id=resume_from_run_id,
+    )
+    return {
+        "status": "started",
+        "source_id": source_id,
+        "source_type": source_type,
+        "resume": resume,
+        "resume_from_run_id": resume_from_run_id,
+    }

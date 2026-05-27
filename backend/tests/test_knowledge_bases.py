@@ -36,6 +36,7 @@ def test_entry_row_returns_full_body_and_fields():
         title="标题",
         summary="简述行",
         body=body,
+        tags=["demo"],
         sort_order=1,
         source_url=" https://x.example/p ",
         source_meta={"kind": "web", "ref": "https://x.example/p"},

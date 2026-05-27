@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import OntologyWorkspace from "../../components/ontology/OntologyWorkspace";
 import PageHeader from "../../components/PageHeader";
 
-/** 全局本体浏览入口；建模进度见各知识库详情「建模与质量」 */
+/** 全局本体浏览入口；建模进度见各知识库「建模与质量」页面 */
 export default function OntologyPage() {
   return (
     <main className="app-page flex min-h-0 flex-col">

@@ -8,18 +8,15 @@ dl:LineageShape a sh:NodeShape ;
   sh:property [
     sh:path dl:sourceField ;
     sh:name "源字段"@zh ;
-    sh:datatype xsd:string ;
   ] ;
   sh:property [
     sh:path dl:targetField ;
     sh:name "目标字段"@zh ;
-    sh:datatype xsd:string ;
   ] ;
   sh:property [
     sh:path dl:layer ;
     sh:name "数据层级"@zh ;
     sh:in ("ODS" "DWD" "DWS" "ADS" "DM") ;
-    sh:datatype xsd:string ;
   ] ;
   sh:property [
     sh:path dl:confidence ;

@@ -111,7 +111,7 @@ docker compose up --build
 
 - `command not found: docker`：本机未安装 Docker，使用“本地启动方式”即可。
 - 前端请求失败：确认 `.env` 中 `NEXT_PUBLIC_API_URL` 指向正确后端地址；访问前端时勿混用 `localhost` 与 `127.0.0.1`（可配置 `CORS_ORIGINS`，见 `.env.example`）。
-- 知识库建模：在详情页**导入源卡片**点击「语义清洗」；**证据包登记**表格为只读进度视图，详见 [`docs/ONTOLOGY_LAYER_UI_OPTIMIZATION.md`](docs/ONTOLOGY_LAYER_UI_OPTIMIZATION.md) §5.3。
+- 知识库建模：在详情页**导入源卡片**点击「语义清洗」；**建模与质量**（`#modeling`）含 **流水线**、**五层结果**（实体概念层支持列表/树形）、**质量与隔离**（KPI + 待办隔离区 / 指标 SHACL·置信度）。详见 [`docs/ONTOLOGY_LAYER_UI_OPTIMIZATION.md`](docs/ONTOLOGY_LAYER_UI_OPTIMIZATION.md) §5.3.1。
 - 后端启动时报数据库错误：确认 PostgreSQL 已启动、`DATABASE_URL` 正确、并已启用 `pgvector`。
 - SQL Copilot 空结果：检查 `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` 是否有效。
 

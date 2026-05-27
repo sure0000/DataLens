@@ -1,5 +1,6 @@
 "use client";
 
+import { PipelineStatusBadge, PipelineStepIcon } from "../icons";
 import type { LineageData } from "./types";
 
 interface LineageGraphProps {
@@ -89,17 +90,19 @@ export default function LineageGraph({ data }: LineageGraphProps) {
           <span className="text-xs text-app-muted">
             共 {totalEdges} 条边
           </span>
-          <span className="text-xs app-text-success">
-            ✓ 已完成 {data.stats.done} 条
+          <span className="text-xs app-text-success inline-flex items-center gap-1">
+            <PipelineStatusBadge status="done" suffix={`${data.stats.done} 条`} iconClassName="h-3 w-3" />
           </span>
           {data.stats.processing > 0 && (
-            <span className="text-xs text-amber-600">
-              ⏳ 处理中 {data.stats.processing} 条
+            <span className="text-xs text-amber-600 inline-flex items-center gap-1">
+              <PipelineStepIcon status="running" className="h-3 w-3" />
+              处理中 {data.stats.processing} 条
             </span>
           )}
           {data.stats.pending > 0 && (
-            <span className="text-xs text-app-muted">
-              ○ 待处理 {data.stats.pending} 条
+            <span className="text-xs text-app-muted inline-flex items-center gap-1">
+              <PipelineStepIcon status="pending" className="h-3 w-3" />
+              待处理 {data.stats.pending} 条
             </span>
           )}
         </div>

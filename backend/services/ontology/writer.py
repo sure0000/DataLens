@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ontology import NS, kb_graph_iri, term_iri, metric_iri, dimension_iri, rule_iri, concept_slug, chunk_iri, domain_iri
+from services.ontology_triple_cleaner import RawTriple, clean_triples, persist_clean_result
 
 _logger = logging.getLogger(__name__)
 
@@ -125,8 +126,6 @@ class OntologyWriter:
 
     def write_term(self, kb_id: int, term: TermInput) -> dict[str, Any]:
         """Write a dl:BusinessTerm to the KB's production graph."""
-        from ontology_triple_cleaner import RawTriple, clean_triples, persist_clean_result
-
         term_slug = concept_slug(term.name, "term")
         iri = term_iri(term.domain_id, term_slug)
         graph = kb_graph_iri(kb_id)
@@ -146,15 +145,13 @@ class OntologyWriter:
         if term.chunk_id:
             triples.append(RawTriple(iri, f"{NS}groundedBy", chunk_iri(term.chunk_id), True, graph=graph, confidence=term.confidence))
 
-        result = clean_triples(triples, kb_id)
-        return persist_clean_result(result, kb_id, self._store, self._quarantine)
+        result = clean_triples(triples, kb_id=kb_id)
+        return persist_clean_result(result, kb_id)
 
     # ── Metric ────────────────────────────────────────
 
     def write_metric(self, kb_id: int, metric: MetricInput) -> dict[str, Any]:
         """Write a dl:Metric to the KB's production graph."""
-        from ontology_triple_cleaner import RawTriple, clean_triples, persist_clean_result
-
         metric_slug = concept_slug(metric.name, "metric")
         iri = metric_iri(metric.domain_id, metric_slug)
         graph = kb_graph_iri(kb_id)
@@ -183,15 +180,13 @@ class OntologyWriter:
         if metric.chunk_id:
             triples.append(RawTriple(iri, f"{NS}groundedBy", chunk_iri(metric.chunk_id), True, graph=graph, confidence=metric.confidence))
 
-        result = clean_triples(triples, kb_id)
-        return persist_clean_result(result, kb_id, self._store, self._quarantine)
+        result = clean_triples(triples, kb_id=kb_id)
+        return persist_clean_result(result, kb_id)
 
     # ── Dimension ─────────────────────────────────────
 
     def write_dimension(self, kb_id: int, dim: DimensionInput) -> dict[str, Any]:
         """Write a dl:Dimension to the KB's production graph."""
-        from ontology_triple_cleaner import RawTriple, clean_triples, persist_clean_result
-
         dim_slug = concept_slug(dim.name, "dim")
         iri = dimension_iri(dim.domain_id, dim_slug)
         graph = kb_graph_iri(kb_id)
@@ -206,15 +201,13 @@ class OntologyWriter:
         if dim.chunk_id:
             triples.append(RawTriple(iri, f"{NS}groundedBy", chunk_iri(dim.chunk_id), True, graph=graph, confidence=dim.confidence))
 
-        result = clean_triples(triples, kb_id)
-        return persist_clean_result(result, kb_id, self._store, self._quarantine)
+        result = clean_triples(triples, kb_id=kb_id)
+        return persist_clean_result(result, kb_id)
 
     # ── Relation ──────────────────────────────────────
 
     def write_relation(self, relation: RelationInput) -> dict[str, Any]:
         """Write a single semantic relation triple."""
-        from ontology_triple_cleaner import RawTriple, clean_triples, persist_clean_result
-
         graph = kb_graph_iri(relation.kb_id)
         triple = RawTriple(
             relation.subject_iri,
@@ -224,14 +217,13 @@ class OntologyWriter:
             graph=graph,
             confidence=relation.confidence,
         )
-        result = clean_triples([triple], relation.kb_id)
-        return persist_clean_result(result, relation.kb_id, self._store, self._quarantine)
+        result = clean_triples([triple], kb_id=relation.kb_id)
+        return persist_clean_result(result, relation.kb_id)
 
     # ── Lineage ───────────────────────────────────────
 
     def write_lineage(self, lineage: LineageInput) -> dict[str, Any]:
         """Write a dl:LineageAssertion to the KB's production graph."""
-        from ontology_triple_cleaner import RawTriple, clean_triples, persist_clean_result
         from ontology import table_iri
 
         graph = kb_graph_iri(lineage.kb_id)
@@ -255,14 +247,13 @@ class OntologyWriter:
         if lineage.transform_logic:
             triples.append(RawTriple(lin_iri, f"{NS}transformLogic", lineage.transform_logic, False, graph=graph, confidence=lineage.confidence))
 
-        result = clean_triples(triples, lineage.kb_id)
-        return persist_clean_result(result, lineage.kb_id, self._store, self._quarantine)
+        result = clean_triples(triples, kb_id=lineage.kb_id)
+        return persist_clean_result(result, lineage.kb_id)
 
     # ── Physical Table ────────────────────────────────
 
     def write_physical_table(self, kb_id: int, pt: PhysicalTableInput) -> dict[str, Any]:
         """Write/update a dl:PhysicalTable in the KB's production graph."""
-        from ontology_triple_cleaner import RawTriple, clean_triples, persist_clean_result
         from ontology import table_iri, datasource_iri
 
         iri = table_iri(pt.table_id)
@@ -283,8 +274,8 @@ class OntologyWriter:
         if pt.row_count > 0:
             triples.append(RawTriple(iri, f"{NS}rowCount", str(pt.row_count), False, graph=graph))
 
-        result = clean_triples(triples, kb_id)
-        return persist_clean_result(result, kb_id, self._store, self._quarantine)
+        result = clean_triples(triples, kb_id=kb_id)
+        return persist_clean_result(result, kb_id)
 
     # ── Bulk ──────────────────────────────────────────
 
@@ -298,8 +289,6 @@ class OntologyWriter:
         Returns:
             Summary dict with written, quarantined, and stats.
         """
-        from ontology_triple_cleaner import RawTriple, clean_triples, persist_clean_result
-
         raw: list[RawTriple] = []
         for t in triples:
             if isinstance(t, RawTriple):
@@ -307,5 +296,5 @@ class OntologyWriter:
             elif isinstance(t, dict):
                 raw.append(RawTriple(**t))
 
-        result = clean_triples(raw, kb_id)
-        return persist_clean_result(result, kb_id, self._store, self._quarantine)
+        result = clean_triples(raw, kb_id=kb_id)
+        return persist_clean_result(result, kb_id)

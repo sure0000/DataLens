@@ -27,10 +27,17 @@ import GitSourceForm, {
 } from "../../../components/knowledge-bases/GitSourceForm";
 import ImportPickerModal from "../../../components/knowledge-bases/ImportPickerModal";
 import EvidencePackageList from "../../../components/knowledge-bases/EvidencePackageList";
-import KbModelingQualitySection from "../../../components/knowledge-bases/KbModelingQualitySection";
-import { ontologyUrl } from "../../../lib/ontologyRoutes";
+import { kbModelingSectionUrl } from "../../../lib/ontologyRoutes";
 import type { SourceItem } from "../../../components/knowledge-bases/SourceCard";
 import SourceCardGrid from "../../../components/knowledge-bases/SourceCardGrid";
+import {
+  canSemanticCleanSource,
+  isDocumentIndexingInProgress,
+  semanticCleanDisabledReason,
+} from "../../../components/knowledge-bases/documentIndexPolicy";
+import SemanticCleanChoiceDialog, {
+  type SemanticCleanResumeOptions,
+} from "../../../components/knowledge-bases/SemanticCleanChoiceDialog";
 
 type GitHubDiagProbe = {
   reachable?: boolean;
@@ -116,10 +123,19 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   // ── Semantic cleaning ──
   const [cleaningSourceId, setCleaningSourceId] = useState<number | null>(null);
   const cleaningPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [cleanChoiceOpen, setCleanChoiceOpen] = useState(false);
+  const [cleanChoiceOptions, setCleanChoiceOptions] = useState<SemanticCleanResumeOptions | null>(null);
+  const [cleanChoicePending, setCleanChoicePending] = useState<{
+    source: SourceItem;
+    sourceId: number;
+    sourceType: string;
+    label: string;
+  } | null>(null);
+  const [cleanChoiceLoading, setCleanChoiceLoading] = useState(false);
 
   // ── Ontology cleaning results ──
   const [cleaningResults, setCleaningResults] = useState<OntologyCleaningResults | null>(null);
-  const [cleaningResultsLoading, setCleaningResultsLoading] = useState(false);
+  const [, setCleaningResultsLoading] = useState(false);
 
   // ── Per-source cleaning stats ──
   const [cleaningStats, setCleaningStats] = useState<Record<string, SourceCleaningStat> | null>(null);
@@ -128,13 +144,17 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   // Data fetching
   // ═══════════════════════════════════════════════════
 
-  async function loadDocuments() {
+  const loadDocuments = useCallback(async () => {
     setDocsLoading(true);
     try {
       const res = await api<{ documents: DocRow[] }>(`/api/knowledge-bases/${kbId}/documents`);
       setDocuments(res.documents ?? []);
-    } catch { setDocuments([]); } finally { setDocsLoading(false); }
-  }
+    } catch {
+      setDocuments([]);
+    } finally {
+      setDocsLoading(false);
+    }
+  }, [kbId]);
 
   async function loadAll() {
     if (!Number.isFinite(kbId)) return;
@@ -161,6 +181,14 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!documents.some((d) => isDocumentIndexingInProgress(d))) return;
+    const t = setInterval(() => {
+      void loadDocuments();
+    }, 3000);
+    return () => clearInterval(t);
+  }, [documents, loadDocuments]);
 
   function checkRunningPipeline() {
     if (cleaningPollRef.current) return;
@@ -238,7 +266,23 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       notifyUser("已重新提交处理", "success");
       loadDocuments();
     } catch (e: unknown) {
-      notifyUser(e instanceof Error ? e.message : "重试失败", "error");
+      notifyUser(
+        e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "重试失败",
+        "error",
+      );
+    }
+  }
+
+  async function manualIndexDocument(docId: number) {
+    try {
+      await api(`/api/knowledge-bases/${kbId}/documents/${docId}/manual-index`, { method: "POST" });
+      notifyUser("已提交手动索引，正在后台处理", "success");
+      loadDocuments();
+    } catch (e: unknown) {
+      notifyUser(
+        e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "手动索引失败",
+        "error",
+      );
     }
   }
 
@@ -279,6 +323,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
 
         if (run.status === "running") {
           seenRunning = true;
+          void loadSourceCleaningStats();
           return;
         }
 
@@ -304,35 +349,114 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     }, 3000);
   }
 
-  async function handleSemanticClean(source: SourceItem) {
-    let sourceId: number;
-    let sourceType: string;
-    if (source.kind === "git") { sourceId = source.data.id; sourceType = "git"; }
-    else if (source.kind === "database") { sourceId = source.data.id; sourceType = "database"; }
-    else if (source.kind === "api") { sourceId = source.data.id; sourceType = "api"; }
-    else if (source.kind === "manual") { sourceId = source.entry.id; sourceType = "manual"; }
-    else { sourceId = source.entry.id; sourceType = source.kind === "api_entry" ? "api" : "file"; }
+  function resolveSemanticCleanTarget(source: SourceItem): {
+    sourceId: number;
+    sourceType: string;
+    label: string;
+  } {
+    if (source.kind === "git") {
+      return { sourceId: source.data.id, sourceType: "git", label: source.data.name };
+    }
+    if (source.kind === "database") {
+      return {
+        sourceId: source.data.id,
+        sourceType: "database",
+        label: source.data.datasource_name || "数据库导入",
+      };
+    }
+    if (source.kind === "api") {
+      return { sourceId: source.data.id, sourceType: "api", label: source.data.name };
+    }
+    if (source.kind === "manual") {
+      return { sourceId: source.entry.id, sourceType: "manual", label: source.entry.title };
+    }
+    const sourceType = source.kind === "api_entry" ? "api" : "file";
+    return { sourceId: source.entry.id, sourceType, label: source.entry.title };
+  }
 
+  async function startSemanticClean(
+    sourceId: number,
+    sourceType: string,
+    opts: { resume: boolean; resumeFromRunId?: number },
+  ) {
     setCleaningSourceId(sourceId);
-    notifyUser("正在触发语义清洗…", "info");
+    notifyUser(opts.resume ? "正在从上次失败处续跑…" : "正在触发语义清洗（完整重跑）…", "info");
     try {
       let previousRunId: number | null = null;
       try {
         const stats = await api<{ last_pipeline_run: { id: number } | null }>(
-          `/api/knowledge-bases/${kbId}/pipeline-stats`
+          `/api/knowledge-bases/${kbId}/pipeline-stats`,
         );
         previousRunId = stats.last_pipeline_run?.id ?? null;
-      } catch { /* proceed without snapshot */ }
+      } catch {
+        /* proceed */
+      }
 
-      await api(`/api/knowledge-bases/${kbId}/sources/${sourceId}/clean?source_type=${sourceType}`, { method: "POST" });
-      notifyUser("语义清洗已触发，正在后台运行…", "success");
+      const params = new URLSearchParams({ source_type: sourceType });
+      if (opts.resume) {
+        params.set("resume", "true");
+        if (opts.resumeFromRunId != null) {
+          params.set("resume_from_run_id", String(opts.resumeFromRunId));
+        }
+      }
+      await api(`/api/knowledge-bases/${kbId}/sources/${sourceId}/clean?${params.toString()}`, {
+        method: "POST",
+      });
+      notifyUser(opts.resume ? "续跑已启动，正在后台运行…" : "语义清洗已触发，正在后台运行…", "success");
+      void loadSourceCleaningStats();
       startCleaningPoll(previousRunId);
     } catch (e: unknown) {
       notifyUser(
         e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "清洗启动失败",
-        "error"
+        "error",
       );
       setCleaningSourceId(null);
+    }
+  }
+
+  async function handleSemanticClean(source: SourceItem) {
+    if (!canSemanticCleanSource(source)) {
+      notifyUser(semanticCleanDisabledReason(source) ?? "文档尚未完成索引", "error");
+      return;
+    }
+
+    const { sourceId, sourceType, label } = resolveSemanticCleanTarget(source);
+
+    try {
+      const options = await api<SemanticCleanResumeOptions & { ok?: boolean }>(
+        `/api/knowledge-bases/${kbId}/sources/${sourceId}/clean-resume-options?source_type=${encodeURIComponent(sourceType)}`,
+      );
+      if (options.can_resume) {
+        setCleanChoicePending({ source, sourceId, sourceType, label });
+        setCleanChoiceOptions(options);
+        setCleanChoiceOpen(true);
+        return;
+      }
+    } catch {
+      /* 无法查询续跑选项时仍允许完整重跑 */
+    }
+
+    await startSemanticClean(sourceId, sourceType, { resume: false });
+  }
+
+  async function confirmSemanticCleanChoice(mode: "resume" | "restart") {
+    if (!cleanChoicePending) return;
+    setCleanChoiceLoading(true);
+    const { sourceId, sourceType } = cleanChoicePending;
+    try {
+      if (mode === "resume") {
+        await startSemanticClean(sourceId, sourceType, {
+          resume: true,
+          resumeFromRunId: cleanChoiceOptions?.resume_from_run_id,
+        });
+      } else {
+        await startSemanticClean(sourceId, sourceType, { resume: false });
+      }
+      setCleanChoiceOpen(false);
+      setCleanChoicePending(null);
+      setCleanChoiceOptions(null);
+    } finally {
+      setCleanChoiceLoading(false);
     }
   }
 
@@ -537,14 +661,14 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
           { label: kb?.name || "…" },
         ]}
         title={kb?.name || "语义知识库"}
-        subtitle={kb?.description || "数据接入：登记证据包、在导入源上触发语义清洗，并在本页查看建模进度与质量。"}
+        subtitle={kb?.description || "数据接入：登记证据包并在导入源上触发语义清洗。"}
         actions={
           <div className="app-toolbar flex-wrap">
             <Link
-              href={ontologyUrl({ kbId })}
+              href={kbModelingSectionUrl(kbId)}
               className="app-button-secondary app-toolbar-action no-underline"
             >
-              本体浏览
+              建模与质量
             </Link>
             <div className="relative" ref={settingsMenuRef}>
               <button
@@ -605,6 +729,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                   gitSyncingId={gitSyncingId}
                   onSyncGit={syncGitSourceNow}
                   onRetryDoc={retryDocument}
+                  onManualIndexDoc={manualIndexDocument}
                   onRefresh={loadAll}
                   onAddTag={handleAddTag}
                   onRemoveTag={handleRemoveTag}
@@ -623,22 +748,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
             <p className="text-xs text-app-muted">
               导入层统一视图：按语义资产类型与连接器登记的证据（写入 RDF 前仅作溯源与进度展示）。需推进建模时，请在上方对应导入源上点击「语义清洗」。
             </p>
-            <EvidencePackageList kbId={kbId} />
-          </section>
-
-          <section id="modeling" className="mt-8 scroll-mt-20 space-y-4">
-            <div>
-              <h2 className="app-section-title">建模与质量</h2>
-              <p className="mt-1 text-xs text-app-muted">
-                语义清洗与完整建模流水线进度、五层结果、SHACL 与隔离区均在此查看与处理。
-              </p>
-            </div>
-            <KbModelingQualitySection
-              kbId={kbId}
-              cleaningResults={cleaningResults}
-              cleaningResultsLoading={cleaningResultsLoading}
-              onPipelineChange={loadCleaningResults}
-            />
+            <EvidencePackageList kbId={kbId} cleaningStats={cleaningStats} />
           </section>
 
           {docsLoading && <p className="text-sm text-app-muted mt-3">加载文档状态…</p>}
@@ -698,6 +808,21 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
               </div>
             </div>
           )}
+
+          <SemanticCleanChoiceDialog
+            open={cleanChoiceOpen}
+            sourceLabel={cleanChoicePending?.label ?? "导入源"}
+            options={cleanChoiceOptions}
+            loading={cleanChoiceLoading}
+            onResume={() => void confirmSemanticCleanChoice("resume")}
+            onRestart={() => void confirmSemanticCleanChoice("restart")}
+            onCancel={() => {
+              if (cleanChoiceLoading) return;
+              setCleanChoiceOpen(false);
+              setCleanChoicePending(null);
+              setCleanChoiceOptions(null);
+            }}
+          />
 
           <ConfirmDialog
             open={!!confirmState}

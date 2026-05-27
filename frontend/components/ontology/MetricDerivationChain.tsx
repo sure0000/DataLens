@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, Database, FunctionSquare, Layers } from "lucide-react";
+import { Icon, type NavIcon } from "../AppIcons";
 
 export interface DerivationStep {
   iri: string;
@@ -14,11 +14,11 @@ interface MetricDerivationChainProps {
   metricLabel?: string;
 }
 
-const stepIcons = {
-  metric: FunctionSquare,
-  table: Database,
-  transformation: ArrowRight,
-  intermediate: Layers,
+const stepIcons: Record<DerivationStep["stepType"], NavIcon> = {
+  metric: "functionSquare",
+  table: "database",
+  transformation: "arrowRight",
+  intermediate: "layers",
 };
 
 const stepTones = {
@@ -26,6 +26,13 @@ const stepTones = {
   table: "border-emerald-500/30 bg-emerald-500/5",
   transformation: "border-indigo-500/30 bg-indigo-500/5",
   intermediate: "border-app-muted/20 bg-app-surface-subtle",
+};
+
+const stepIconTones = {
+  metric: "text-amber-600 dark:text-amber-400",
+  table: "text-emerald-600 dark:text-emerald-400",
+  transformation: "text-indigo-500 dark:text-indigo-400",
+  intermediate: "text-app-muted",
 };
 
 export default function MetricDerivationChain({
@@ -52,22 +59,22 @@ export default function MetricDerivationChain({
         {steps.map((step, i) => {
           const tone =
             stepTones[step.stepType] || stepTones.intermediate;
-          const Icon =
+          const iconName =
             stepIcons[step.stepType] || stepIcons.intermediate;
+          const iconTone =
+            stepIconTones[step.stepType] || stepIconTones.intermediate;
 
           return (
             <div key={step.iri || i} className="flex items-center gap-2">
-              {/* Connector arrow */}
               {i > 0 && (
-                <ArrowRight className="h-4 w-4 shrink-0 text-app-muted/50" />
+                <Icon name="arrowRight" className="h-4 w-4 shrink-0 text-indigo-400/70" aria-hidden />
               )}
 
-              {/* Step card */}
               <div
                 className={`shrink-0 rounded-xl border px-4 py-3 min-w-[120px] max-w-[200px] ${tone}`}
               >
                 <div className="flex items-center gap-1.5 mb-1">
-                  <Icon className="h-3.5 w-3.5 text-app-muted" aria-hidden />
+                  <Icon name={iconName} className={`h-3.5 w-3.5 ${iconTone}`} aria-hidden />
                   <span className="text-[10px] uppercase tracking-wider text-app-muted">
                     {stepTypeLabel(step.stepType)}
                   </span>

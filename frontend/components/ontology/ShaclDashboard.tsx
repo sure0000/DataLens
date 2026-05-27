@@ -1,6 +1,7 @@
 "use client";
 
-import { CheckCircle, XCircle, AlertTriangle, Shield } from "lucide-react";
+import { Icon } from "../AppIcons";
+import { QualityStatIcon } from "../icons";
 
 export interface ShaclViolation {
   focusNode: string;
@@ -39,7 +40,7 @@ export default function ShaclDashboard({ report, compact = false }: ShaclDashboa
   if (!report) {
     return (
       <div className="app-card p-6 text-center text-sm text-app-muted">
-        <Shield className="h-8 w-8 mx-auto mb-2 opacity-40" />
+        <Icon name="shield" className="h-8 w-8 mx-auto mb-2 opacity-40" />
         暂未执行 SHACL 校验。导入三元组时将自动触发校验。
       </div>
     );
@@ -58,19 +59,16 @@ export default function ShaclDashboard({ report, compact = false }: ShaclDashboa
           label="校验通过率"
           value={`${passRate}%`}
           tone={report.conforms ? "success" : "danger"}
-          icon={report.conforms ? CheckCircle : XCircle}
         />
         <StatCard
           label="通过"
           value={String(report.passed)}
           tone="success"
-          icon={CheckCircle}
         />
         <StatCard
           label="违规"
           value={String(report.violations.length)}
           tone={report.violations.length > 0 ? "danger" : "success"}
-          icon={AlertTriangle}
         />
       </div>
 
@@ -78,7 +76,7 @@ export default function ShaclDashboard({ report, compact = false }: ShaclDashboa
       {report.violations.length > 0 && (
         <div className="space-y-1.5">
           <h4 className="text-sm font-medium text-app-primary flex items-center gap-1.5">
-            <AlertTriangle className="h-3.5 w-3.5 text-red-500" />
+            <QualityStatIcon tone="danger" className="h-3.5 w-3.5" />
             违规详情
           </h4>
 
@@ -115,7 +113,7 @@ export default function ShaclDashboard({ report, compact = false }: ShaclDashboa
       {report.warnings && report.warnings.length > 0 && (
         <div className="space-y-1.5">
           <h4 className="text-sm font-medium text-app-primary flex items-center gap-1.5">
-            <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
+            <QualityStatIcon tone="warning" className="h-3.5 w-3.5" />
             警告
           </h4>
           <div className="space-y-1">
@@ -138,23 +136,16 @@ function StatCard({
   label,
   value,
   tone,
-  icon: Icon,
 }: {
   label: string;
   value: string;
   tone: "success" | "danger" | "muted";
-  icon: typeof CheckCircle;
 }) {
-  const toneCls =
-    tone === "success"
-      ? "text-emerald-600 dark:text-emerald-400"
-      : tone === "danger"
-        ? "text-red-600 dark:text-red-400"
-        : "text-app-muted";
+  const iconTone = tone === "muted" ? "muted" : tone;
 
   return (
     <div className="app-card p-3 flex items-center gap-3">
-      <Icon className={`h-5 w-5 shrink-0 ${toneCls}`} />
+      <QualityStatIcon tone={iconTone} className="h-5 w-5" />
       <div>
         <p className="text-lg font-bold text-app-primary">{value}</p>
         <p className="text-[11px] text-app-muted">{label}</p>
