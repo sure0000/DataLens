@@ -7,8 +7,11 @@
 
 # Runtime artifacts
 .run/
+run/
 *.log
 *.pid
+**/test-results/
+scripts/e2e/screenshots/
 
 # Python
 __pycache__/

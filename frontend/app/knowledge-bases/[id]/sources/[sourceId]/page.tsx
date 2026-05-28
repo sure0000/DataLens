@@ -82,6 +82,7 @@ export default function SourceDetailPage({
   // ── Git 文件树选中 ──
   const [selectedGitPath, setSelectedGitPath] = useState<string | null>(null);
   const [selectedGitEntry, setSelectedGitEntry] = useState<Entry | null>(null);
+  const pollTimerRef = useRef<number | null>(null);
 
   // ── Toast ──
   const [message, setMessageText] = useState("");
@@ -162,6 +163,14 @@ export default function SourceDetailPage({
 
   useEffect(() => { loadAll(); }, [kbId]);
 
+  useEffect(() => {
+    return () => {
+      if (pollTimerRef.current != null) {
+        window.clearInterval(pollTimerRef.current);
+      }
+    };
+  }, []);
+
   // Close settings menu on outside click
   useEffect(() => {
     if (!settingsMenuOpen) return;
@@ -219,13 +228,17 @@ export default function SourceDetailPage({
   async function loadAllChunks(docs: DocRow[]) {
     if (docs.length === 0) { setDocChunks({}); return; }
     setChunksLoading(true);
-    const map: Record<number, ChunkRow[]> = {};
-    for (const doc of docs) {
-      try {
-        const res = await api<{ chunks: ChunkRow[] }>(`/api/knowledge-bases/${kbId}/documents/${doc.id}/chunks`);
-        map[doc.id] = res.chunks ?? [];
-      } catch { map[doc.id] = []; }
-    }
+    const pairs = await Promise.all(
+      docs.map(async (doc): Promise<[number, ChunkRow[]]> => {
+        try {
+          const res = await api<{ chunks: ChunkRow[] }>(`/api/knowledge-bases/${kbId}/documents/${doc.id}/chunks`);
+          return [doc.id, res.chunks ?? []];
+        } catch {
+          return [doc.id, []];
+        }
+      }),
+    );
+    const map: Record<number, ChunkRow[]> = Object.fromEntries(pairs);
     setDocChunks(map);
     setChunksLoading(false);
   }
@@ -329,8 +342,14 @@ export default function SourceDetailPage({
         || `已排队 ${res.queued ?? 0} 个条目重新索引${(res.skipped ?? 0) > 0 ? `（跳过 ${res.skipped}）` : ""}`;
       notifyUser(msg, "success");
       await loadDocuments();
-      const t = setInterval(() => { void loadDocuments(); }, 3000);
-      setTimeout(() => clearInterval(t), 30000);
+      if (pollTimerRef.current != null) window.clearInterval(pollTimerRef.current);
+      pollTimerRef.current = window.setInterval(() => { void loadDocuments(); }, 3000);
+      window.setTimeout(() => {
+        if (pollTimerRef.current != null) {
+          window.clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
+        }
+      }, 30000);
     } catch (e: unknown) {
       notifyUser(
         e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "重新索引失败",
@@ -382,10 +401,16 @@ export default function SourceDetailPage({
         || `已排队 ${res.queued ?? 0} 个条目重新索引${(res.skipped ?? 0) > 0 ? `（跳过 ${res.skipped}）` : ""}`;
       notifyUser(msg, "success");
       await loadDocuments();
-      const t = setInterval(() => {
+      if (pollTimerRef.current != null) window.clearInterval(pollTimerRef.current);
+      pollTimerRef.current = window.setInterval(() => {
         void loadDocuments();
       }, 3000);
-      setTimeout(() => clearInterval(t), 30000);
+      window.setTimeout(() => {
+        if (pollTimerRef.current != null) {
+          window.clearInterval(pollTimerRef.current);
+          pollTimerRef.current = null;
+        }
+      }, 30000);
     } catch (e: unknown) {
       notifyUser(
         e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "重新索引失败",

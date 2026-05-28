@@ -236,12 +236,8 @@ export default function OntologyWorkspace() {
         metricsRes,
         dimensionsRes,
         rulesRes,
-        graphRes,
         statsRes,
-        rdfLineageRes,
-        pgLineageRes,
         healthRes,
-        rdfRes,
       ] = await Promise.all([
         api<{ terms: OntologyTerm[] }>(`/api/ontology/knowledge-bases/${selectedKbId}/terms`, { signal: controller.signal }),
         api<{ metrics: OntologyMetric[] }>(`/api/ontology/knowledge-bases/${selectedKbId}/metrics`, { signal: controller.signal }),
@@ -249,43 +245,57 @@ export default function OntologyWorkspace() {
           `/api/ontology/knowledge-bases/${selectedKbId}/dimensions`,
           { signal: controller.signal },
         ), { dimensions: [] }),
-        withFallback(api<{ rules: OntologyRule[] }>(`/api/ontology/knowledge-bases/${selectedKbId}/rules`, { signal: controller.signal }),
-          { rules: [] }),
-        (async () => {
-          try {
-            return await api<{ nodes: GraphNode[]; edges: GraphEdge[]; store?: OntologyStoreInfo }>(
-              `/api/ontology/knowledge-bases/${selectedKbId}/views/graph`,
-              { signal: controller.signal },
-            );
-          } catch (error) {
-            if (error instanceof DOMException && error.name === "AbortError") {
-              throw error;
-            }
-            return api<{ nodes: GraphNode[]; edges: GraphEdge[]; store: OntologyStoreInfo }>(
-              `/api/ontology/knowledge-bases/${selectedKbId}/graph`,
-              { signal: controller.signal },
-            );
-          }
-        })(),
+        withFallback(api<{ rules: OntologyRule[] }>(
+          `/api/ontology/knowledge-bases/${selectedKbId}/rules`,
+          { signal: controller.signal },
+        ), { rules: [] }),
         api<PipelineStats>(`/api/knowledge-bases/${selectedKbId}/pipeline-stats`, { signal: controller.signal }),
-        withFallback(api<RdfLineageResponse>(`/api/ontology/knowledge-bases/${selectedKbId}/views/lineage`, { signal: controller.signal }), null),
-        withFallback(api<LineageData>(`/api/knowledge-bases/${selectedKbId}/lineage`, { signal: controller.signal }), null),
         api<{ ok: boolean } & OntologyStoreInfo>("/api/ontology/health", { signal: controller.signal }),
-        api<{ ok: boolean } & KbRdfView>(`/api/ontology/knowledge-bases/${selectedKbId}/rdf-view`, { signal: controller.signal }),
       ]);
-      const rdfLineage = mapRdfLineage(rdfLineageRes);
-      const preferredLineage = rdfLineage ?? (pgLineageRes ? { ...pgLineageRes, source: "postgres" as const } : null);
+
+      // 关系图/血缘仅在图谱或总览时拉取，避免每次切库都触发重查询。
+      if (tab === "graph" || tab === "overview") {
+        const [graphRes, rdfLineageRes, pgLineageRes] = await Promise.all([
+          (async () => {
+            try {
+              return await api<{ nodes: GraphNode[]; edges: GraphEdge[]; store?: OntologyStoreInfo }>(
+                `/api/ontology/knowledge-bases/${selectedKbId}/views/graph`,
+                { signal: controller.signal },
+              );
+            } catch (error) {
+              if (error instanceof DOMException && error.name === "AbortError") {
+                throw error;
+              }
+              return api<{ nodes: GraphNode[]; edges: GraphEdge[]; store: OntologyStoreInfo }>(
+                `/api/ontology/knowledge-bases/${selectedKbId}/graph`,
+                { signal: controller.signal },
+              );
+            }
+          })(),
+          withFallback(api<RdfLineageResponse>(`/api/ontology/knowledge-bases/${selectedKbId}/views/lineage`, { signal: controller.signal }), null),
+          withFallback(api<LineageData>(`/api/knowledge-bases/${selectedKbId}/lineage`, { signal: controller.signal }), null),
+        ]);
+        const rdfLineage = mapRdfLineage(rdfLineageRes);
+        const preferredLineage = rdfLineage ?? (pgLineageRes ? { ...pgLineageRes, source: "postgres" as const } : null);
+        setGraphNodes(graphRes.nodes || []);
+        setGraphEdges(graphRes.edges || []);
+        setStore(graphRes.store || healthRes);
+        setLineage(preferredLineage);
+      }
+
+      if (tab === "assets" || tab === "expert" || tab === "overview") {
+        const rdfRes = await api<{ ok: boolean } & KbRdfView>(`/api/ontology/knowledge-bases/${selectedKbId}/rdf-view`, {
+          signal: controller.signal,
+        });
+        setRdfView(rdfRes);
+      }
+
       setTerms(termsRes.terms || []);
       setMetrics(metricsRes.metrics || []);
       setDimensions(dimensionsRes.dimensions || []);
       setRules(rulesRes.rules || []);
-      setGraphNodes(graphRes.nodes || []);
-      setGraphEdges(graphRes.edges || []);
-      setStore(graphRes.store || healthRes);
       setPipelineStats(statsRes);
-      setLineage(preferredLineage);
       setGlobalStore(healthRes);
-      setRdfView(rdfRes);
       localStorage.setItem(ONTOLOGY_KB_STORAGE_KEY, String(selectedKbId));
     } catch (e: unknown) {
       if (e instanceof DOMException && e.name === "AbortError") return;
@@ -295,7 +305,7 @@ export default function OntologyWorkspace() {
         setLoading(false);
       }
     }
-  }, [selectedKbId, notify]);
+  }, [selectedKbId, notify, tab]);
 
   useEffect(() => {
     if (lockedKbId) setSelectedKbId(lockedKbId);

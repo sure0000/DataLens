@@ -1,11 +1,13 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import logging
 
 from config import get_settings
 from database import init_db
 from services.git_schedule import start_git_sync_scheduler, stop_git_sync_scheduler
 from services.ontology_loader import init_ontology
+from security import enforce_request_auth
 from routers.analyze import router as analyze_router
 from routers.business_domains import router as business_domains_router
 from routers.connect import router as connect_router
@@ -36,6 +38,15 @@ app.add_middleware(
     # 前端会携带业务域隔离头，需在 CORS 预检中显式放行。
     allow_headers=["Content-Type", "Authorization", "Accept", "X-Business-Domain-Id"],
 )
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    try:
+        enforce_request_auth(request)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    return await call_next(request)
 
 
 @app.on_event("startup")

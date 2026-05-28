@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import MagicMock, patch
 
 from services.routing_bundle import build_routing_search_bundle
@@ -18,7 +19,7 @@ def test_build_routing_bundle_dedupes_kb_search(mock_embed, mock_unified, mock_m
     db = MagicMock()
     with patch("services.context_builder.kb_ids_for_business_domain", return_value=[3, 4]):
         with patch("services.context_builder.tables_from_business_domain", return_value=[]):
-            bundle = build_routing_search_bundle(db, "GMV 趋势", business_domain_id=1, table_id=None)
+            bundle = asyncio.run(build_routing_search_bundle(db, "GMV 趋势", business_domain_id=1, table_id=None))
 
     assert bundle.embed_calls == 1
     assert bundle.kb_search_calls == 2

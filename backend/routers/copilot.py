@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
-from database import get_db
+from database import SessionLocal, get_db
 from models import BusinessDomain
 from services.business_domain_scope import resolve_scope_domain
 from services.rag_service import answer
@@ -21,6 +21,28 @@ class AskBody(BaseModel):
     business_domain_id: int | None = None
     """auto / 空 表示自动选模型；否则为 catalog 中的 id，如 deepseek:deepseek-chat"""
     chat_model: str | None = None
+
+
+async def _answer_with_new_session(
+    body: AskBody,
+    domain_id: int,
+    *,
+    stage_callback=None,
+    trace_callback=None,
+) -> dict[str, Any]:
+    db = SessionLocal()
+    try:
+        return await answer(
+            db,
+            body.question,
+            body.table_id,
+            domain_id,
+            stage_callback=stage_callback,
+            trace_callback=trace_callback,
+            chat_model=body.chat_model,
+        )
+    finally:
+        db.close()
 
 
 @router.post("/ask")
@@ -64,7 +86,6 @@ async def ask_ontology_trace(
 @router.post("/ask/stream")
 async def ask_stream(
     body: AskBody,
-    db: Session = Depends(get_db),
     scope_domain: BusinessDomain = Depends(resolve_scope_domain),
 ) -> StreamingResponse:
     domain_id = body.business_domain_id if body.business_domain_id is not None else scope_domain.id
@@ -79,14 +100,11 @@ async def ask_stream(
             await event_queue.put({"kind": "trace", "trace": row})
 
         answer_task = asyncio.create_task(
-            answer(
-                db,
-                body.question,
-                body.table_id,
+            _answer_with_new_session(
+                body,
                 domain_id,
                 stage_callback=emit_status,
                 trace_callback=emit_trace,
-                chat_model=body.chat_model,
             )
         )
 

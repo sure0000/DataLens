@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from database import SessionLocal
 from models import KnowledgeGitSource
+from services.background import schedule_sync
 
 if TYPE_CHECKING:
     pass
@@ -22,6 +23,10 @@ _scheduler = BackgroundScheduler(timezone="UTC")
 
 
 def _run_git_sync_job(source_id: int) -> None:
+    schedule_sync(_run_git_sync_job_sync, source_id)
+
+
+def _run_git_sync_job_sync(source_id: int) -> None:
     db = SessionLocal()
     try:
         from services.git_knowledge_sync import run_git_source_sync

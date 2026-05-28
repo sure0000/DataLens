@@ -36,11 +36,15 @@ cp .env.example .env
 关键变量说明：
 
 - `DATABASE_URL`：后端连接的 PostgreSQL 地址
+- `DB_SCHEMA_MANAGEMENT_MODE`：`legacy`（默认，启动时自动补丁）或 `alembic`（仅依赖 Alembic 迁移）
 - `DEEPSEEK_API_KEY`：DeepSeek Key（主）
 - `OPENAI_API_KEY`：OpenAI Key（备）
 - `BACKEND_PORT`：后端端口，默认 `8000`
 - `FRONTEND_PORT`：前端端口，默认 `3000`
 - `NEXT_PUBLIC_API_URL`：前端调用后端地址（本地建议 `http://localhost:8000`）
+- `API_AUTH_ENABLED`：后端 API 鉴权开关（默认 `true`）
+- `API_AUTH_TOKEN`：后端 Bearer Token（默认 `datalens-dev-token`）
+- `NEXT_PUBLIC_API_TOKEN`：前端调用 API 时携带的 Bearer Token（需与后端一致）
 - `FUSEKI_IMAGE`：Fuseki Docker 镜像地址（默认 `stain/jena-fuseki:4.10.0`，网络受限时可替换为镜像代理地址）
 - `COPILOT_MAX_TABLES_WITHOUT_DOMAIN`：未选业务域时语义 top_k 表上限（默认 `20`）
 - `SEMANTIC_AUTO_APPROVE_CONFIDENCE`：术语/指标提取置信度 ≥ 此值自动 `approved`（默认 `80`）
@@ -77,6 +81,12 @@ curl http://localhost:8000/health
 
 ```json
 {"ok": true}
+```
+
+鉴权验证（除 `/health` 外接口默认要求 Bearer Token）：
+
+```bash
+curl -H "Authorization: Bearer ${API_AUTH_TOKEN}" http://localhost:8000/api/knowledge-bases
 ```
 
 ## 4. 本地启动前端（Next.js）
@@ -121,6 +131,12 @@ npm run dev
 - 知识库建模：在详情页**导入源卡片**点击「语义清洗」；**建模与质量**（`#modeling`）含 **流水线**、**五层结果**（实体概念层支持列表/树形）、**质量与隔离**（KPI + 待办隔离区 / 指标 SHACL·置信度）。详见 [`docs/ONTOLOGY_LAYER_UI_OPTIMIZATION.md`](docs/ONTOLOGY_LAYER_UI_OPTIMIZATION.md) §5.3.1。
 - 后端启动时报数据库错误：确认 PostgreSQL 已启动、`DATABASE_URL` 正确、并已启用 `pgvector`。
 - SQL Copilot 空结果：检查 `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` 是否有效。
+
+## 运行目录约定
+
+- `.run/`：运行时状态目录（日志、PID、Fuseki 数据），默认不入库。
+- `run/`：本地临时安装产物目录（例如 Fuseki 解压模板），默认不入库。
+- `scripts/`：可复用脚本入口（建议把可执行流程固定在这里）。
 
 ## 7. 开发约定（重启服务）
 

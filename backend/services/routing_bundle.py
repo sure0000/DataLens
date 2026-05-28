@@ -1,6 +1,7 @@
 """Copilot 路由检索 bundle：单次 embed + 每 KB 一次 hybrid 查询（P1-4）。"""
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -17,7 +18,7 @@ def _merge_hit_key(hit: dict[str, Any]) -> str:
     return f"chunk:{int(hit['chunk_id'])}"
 
 
-def build_routing_search_bundle(
+async def build_routing_search_bundle(
     db: Session,
     question: str,
     business_domain_id: int | None,
@@ -40,7 +41,7 @@ def build_routing_search_bundle(
     bundle.kb_ids = kb_ids
 
     if q:
-        bundle.query_vector = _embed([q])[0]
+        bundle.query_vector = (await asyncio.to_thread(_embed, [q]))[0]
         bundle.embed_calls = 1
 
     top_k = max(kb_top_k_table_route, kb_top_k_knowledge)

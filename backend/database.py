@@ -50,6 +50,9 @@ def init_db() -> None:
     with engine.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
 
+    if settings.db_schema_management_mode.strip().lower() == "alembic":
+        return
+
     Base.metadata.create_all(bind=engine)
 
     # 分步提交：约束失败（如重复知识库名）不应回滚列/索引补丁

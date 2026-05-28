@@ -87,15 +87,11 @@ def create_api_source(body: ApiSourceCreate, db: Session = Depends(get_db)) -> d
 def get_api_source(
     source_id: int,
     db: Session = Depends(get_db),
-    reveal_secret: bool = Query(default=False, description="为 true 时在响应中返回 api_key 明文"),
 ) -> dict:
     src = db.get(KnowledgeApiSource, source_id)
     if not src or src.knowledge_base_id is not None:
         raise HTTPException(status_code=404, detail="API 源不存在")
-    out = _source_row(src)
-    if reveal_secret:
-        out["api_key"] = src.api_key or ""
-    return {"api_source": out}
+    return {"api_source": _source_row(src)}
 
 
 @router.put("/{source_id}")

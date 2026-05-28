@@ -172,7 +172,7 @@ async def answer(
     await trace_row("sql_decision", "3. 是否需要执行 SQL", "\n".join(sql_decision_lines))
 
     # -------- 阶段 4：按意图分支组装上下文 --------
-    routing_bundle = build_routing_search_bundle(
+    routing_bundle = await build_routing_search_bundle(
         db, question, active_domain_id, table_id, load_metric_terms=(intent == "sql_query")
     )
     routing_trace.embed_calls = routing_bundle.embed_calls

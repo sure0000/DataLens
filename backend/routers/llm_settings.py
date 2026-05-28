@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -64,7 +64,6 @@ def llm_connections_create(body: LlmConnectionCreateBody, db: Session = Depends(
 def llm_connections_get(
     conn_id: str,
     db: Session = Depends(get_db),
-    reveal_secret: bool = Query(default=False, description="为 true 时在响应中返回 api_key 明文（仅用于受信任环境下的详情查看）"),
 ) -> dict:
     row = get_connection(db, conn_id)
     if not row:
@@ -73,8 +72,6 @@ def llm_connections_get(
         **connection_to_public_dict(row),
         "api_key_configured": bool((row.api_key or "").strip()),
     }
-    if reveal_secret:
-        out["api_key"] = row.api_key or ""
     return out
 
 

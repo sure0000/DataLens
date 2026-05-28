@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # 可选；兼容 OpenAI 代理或自建网关（偏好设置中的 URL 优先生效）
     openai_base_url: str | None = Field(default=None, alias="OPENAI_BASE_URL")
     backend_port: int = Field(default=8000, alias="BACKEND_PORT")
+    # Backend API 鉴权：默认开启，前端需携带 Bearer Token。
+    api_auth_enabled: bool = Field(default=True, alias="API_AUTH_ENABLED")
+    api_auth_token: str = Field(default="datalens-dev-token", alias="API_AUTH_TOKEN")
     cors_origins: str = Field(
         default="http://localhost:3000,http://127.0.0.1:3000",
         alias="CORS_ORIGINS",
@@ -29,6 +32,8 @@ class Settings(BaseSettings):
     db_pool_size: int = Field(default=20, ge=1, le=50, alias="DB_POOL_SIZE")
     db_max_overflow: int = Field(default=30, ge=0, le=100, alias="DB_MAX_OVERFLOW")
     db_pool_recycle: int = Field(default=600, ge=60, alias="DB_POOL_RECYCLE")
+    # schema 管理模式：legacy=启动时补丁；alembic=仅依赖迁移脚本
+    db_schema_management_mode: str = Field(default="legacy", alias="DB_SCHEMA_MANAGEMENT_MODE")
     # Copilot 未指定业务域时，语义 top_k 硬上限（无域时按表向量筛表，而非按 created_at 全量加载）
     copilot_max_tables_without_domain: int = Field(default=20, ge=1, le=50000, alias="COPILOT_MAX_TABLES_WITHOUT_DOMAIN")
     # 域内语义路由（知识 + 表向量 RRF 融合）后进入 schema 的候选表上限

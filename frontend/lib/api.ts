@@ -1,6 +1,7 @@
 import { getActiveBusinessDomainId } from "./businessDomain";
 
 const RAW_API = (process.env.NEXT_PUBLIC_API_URL || "").trim();
+const API_TOKEN = (process.env.NEXT_PUBLIC_API_TOKEN || "datalens-dev-token").trim();
 const DEFAULT_API = "http://127.0.0.1:8000";
 const FALLBACK_LOCAL_APIS = ["http://localhost:8000", "http://127.0.0.1:8000"];
 
@@ -129,13 +130,17 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   let resp: Response;
   const domainId = getActiveBusinessDomainId();
   const domainHeader: Record<string, string> = {};
+  const authHeader: Record<string, string> = {};
   if (typeof domainId === "number" && Number.isFinite(domainId)) {
     domainHeader["X-Business-Domain-Id"] = String(domainId);
+  }
+  if (API_TOKEN) {
+    authHeader.Authorization = `Bearer ${API_TOKEN}`;
   }
   try {
     ({ resp } = await fetchWithFallback(path, {
       ...init,
-      headers: { "Content-Type": "application/json", ...domainHeader, ...(init?.headers ?? {}) }
+      headers: { "Content-Type": "application/json", ...authHeader, ...domainHeader, ...(init?.headers ?? {}) }
     }));
   } catch (e: unknown) {
     if (e instanceof ApiError) throw e;
@@ -155,11 +160,15 @@ export async function apiForm<T>(path: string, form: FormData): Promise<T> {
   let resp: Response;
   const domainId = getActiveBusinessDomainId();
   const domainHeader: Record<string, string> = {};
+  const authHeader: Record<string, string> = {};
   if (typeof domainId === "number" && Number.isFinite(domainId)) {
     domainHeader["X-Business-Domain-Id"] = String(domainId);
   }
+  if (API_TOKEN) {
+    authHeader.Authorization = `Bearer ${API_TOKEN}`;
+  }
   try {
-    ({ resp } = await fetchWithFallback(path, { method: "POST", body: form, headers: domainHeader }));
+    ({ resp } = await fetchWithFallback(path, { method: "POST", body: form, headers: { ...authHeader, ...domainHeader } }));
   } catch (e: unknown) {
     if (e instanceof ApiError) throw e;
     const hint = e instanceof Error ? e.message : String(e);

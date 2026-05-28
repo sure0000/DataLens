@@ -247,7 +247,7 @@ function CopilotPageContent() {
         method: "POST",
         body: JSON.stringify(ask.payload)
       });
-      handleSettled(res, []);
+      handleSettled(res);
     } catch (e: unknown) {
       const detail =
         e instanceof ApiError

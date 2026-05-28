@@ -15,10 +15,15 @@ export type ActiveAsk = {
 type Ctx = {
   busy: boolean;
   streamStage: StreamStage;
+};
+
+type PreviewCtx = {
+  busy: boolean;
   streamPreview: { answer: string; explanation: string };
 };
 
-const GenerationContext = createContext<Ctx | null>(null);
+const GenerationStatusContext = createContext<Ctx | null>(null);
+const GenerationPreviewContext = createContext<PreviewCtx | null>(null);
 
 const stageLabelMap: Record<StreamStage, string> = {
   intent_recognizing: "意图识别中",
@@ -27,25 +32,25 @@ const stageLabelMap: Record<StreamStage, string> = {
 };
 
 export const CopilotStreamBubble = memo(function CopilotStreamBubble() {
-  const ctx = useContext(GenerationContext);
+  const previewCtx = useContext(GenerationPreviewContext);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (!ctx?.busy) return;
+    if (!previewCtx?.busy) return;
     const scrollEl = rootRef.current?.closest("[data-copilot-scroll]");
     if (!scrollEl) return;
     const id = window.setTimeout(() => {
       scrollEl.scrollTo({ top: scrollEl.scrollHeight, behavior: "auto" });
     }, 48);
     return () => clearTimeout(id);
-  }, [ctx?.busy, ctx?.streamPreview.answer, ctx?.streamPreview.explanation]);
+  }, [previewCtx?.busy, previewCtx?.streamPreview.answer, previewCtx?.streamPreview.explanation]);
 
-  if (!ctx?.busy) return null;
+  if (!previewCtx?.busy) return null;
 
   const combinedRaw =
-    ctx.streamPreview.answer.trim() && ctx.streamPreview.explanation.trim()
-      ? `${ctx.streamPreview.answer.trim()}\n\n${ctx.streamPreview.explanation.trim()}`
-      : ctx.streamPreview.answer.trim() || ctx.streamPreview.explanation.trim();
+    previewCtx.streamPreview.answer.trim() && previewCtx.streamPreview.explanation.trim()
+      ? `${previewCtx.streamPreview.answer.trim()}\n\n${previewCtx.streamPreview.explanation.trim()}`
+      : previewCtx.streamPreview.answer.trim() || previewCtx.streamPreview.explanation.trim();
   const combined = stripAutoRepairExplanationNote(combinedRaw.trim());
 
   const hasNarrative = combined.trim().length > 0;
@@ -73,7 +78,7 @@ export const CopilotStreamBubble = memo(function CopilotStreamBubble() {
 
 /** 底栏一行状态提示 */
 export const CopilotGenerationDockStatus = memo(function CopilotGenerationDockStatus() {
-  const ctx = useContext(GenerationContext);
+  const ctx = useContext(GenerationStatusContext);
   if (!ctx?.busy) return null;
 
   return (
@@ -101,13 +106,19 @@ export function CopilotGenerationProvider({ activeAsk, children, onSettled, onSt
 
   const busy = !!activeAsk;
 
-  const ctxValue = useMemo<Ctx>(
+  const statusCtxValue = useMemo<Ctx>(
     () => ({
       busy,
       streamStage,
-      streamPreview
     }),
-    [busy, streamStage, streamPreview]
+    [busy, streamStage]
+  );
+  const previewCtxValue = useMemo<PreviewCtx>(
+    () => ({
+      busy,
+      streamPreview,
+    }),
+    [busy, streamPreview]
   );
 
   useEffect(() => {
@@ -147,5 +158,9 @@ export function CopilotGenerationProvider({ activeAsk, children, onSettled, onSt
     };
   }, [activeAsk?.key, activeAsk?.sessionId]);
 
-  return <GenerationContext.Provider value={ctxValue}>{children}</GenerationContext.Provider>;
+  return (
+    <GenerationStatusContext.Provider value={statusCtxValue}>
+      <GenerationPreviewContext.Provider value={previewCtxValue}>{children}</GenerationPreviewContext.Provider>
+    </GenerationStatusContext.Provider>
+  );
 }

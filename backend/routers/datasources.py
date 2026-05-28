@@ -89,7 +89,7 @@ def _datasource_to_dict(r: DataSource) -> dict:
         "port": r.port,
         "database": r.database,
         "username": r.username,
-        "connection_password": r.password or "",
+        "connection_password_configured": bool((r.password or "").strip()),
     }
 
 
