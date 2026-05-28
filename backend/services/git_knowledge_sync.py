@@ -12,6 +12,8 @@ from typing import Any
 from urllib.parse import quote
 
 import httpx
+
+from services.httpx_env import format_http_request_error, sync_client as httpx_sync_client
 from sqlalchemy import cast, delete, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
@@ -94,7 +96,7 @@ def _format_sync_exception(exc: BaseException) -> str:
             return f"{head}：{body[:1200]}"[:2000]
         return f"{head}（响应体为空）"
     if isinstance(exc, httpx.RequestError):
-        return f"网络请求失败：{exc!s}"[:2000]
+        return format_http_request_error(exc)[:2000]
     return (str(exc) or type(exc).__name__)[:2000]
 
 
@@ -343,7 +345,7 @@ def _collect_files(src: KnowledgeGitSource) -> tuple[list[tuple[str, str]], str]
     if not owner or not repo:
         raise ValueError("owner / repo 不能为空")
 
-    with httpx.Client(timeout=_HTTP_TIMEOUT, follow_redirects=True) as client:
+    with httpx_sync_client(timeout=_HTTP_TIMEOUT, follow_redirects=True) as client:
         if src.provider == "github":
             commit_sha, used_branch = _github_resolve_branch_sha(
                 client, src.api_base or "", owner, repo, (src.branch or "").strip(), src.token

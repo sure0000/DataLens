@@ -210,14 +210,38 @@ def create_entry(kb_id: int, body: EntryCreate, db: Session = Depends(get_db)) -
     kb = db.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
+    body_text = body.body or ""
     entry = create_entry_svc(
-        db, kb_id, body.title, body.body or "",
+        db, kb_id, body.title, body_text,
         summary=body.summary,
         source_meta={"kind": "manual"},
     )
+    db.flush()
+    doc = create_document(
+        db,
+        kb_id,
+        body.title,
+        source_type="manual",
+        source_meta={"kind": "manual"},
+        knowledge_entry_id=entry.id,
+    )
     db.commit()
     db.refresh(entry)
-    return {"entry": _entry_row(entry)}
+    if body_text.strip():
+        doc_id = doc.id
+        raw_text = body_text
+
+        def _bg() -> None:
+            bg_db = SessionLocal()
+            try:
+                bg_doc = bg_db.get(Document, doc_id)
+                if bg_doc:
+                    run_pipeline(bg_db, bg_doc, raw_text)
+            finally:
+                bg_db.close()
+
+        threading.Thread(target=_bg, daemon=True).start()
+    return {"entry": _entry_row(entry), "document_id": doc.id}
 
 
 @router.post("/{kb_id}/entries/import-file")

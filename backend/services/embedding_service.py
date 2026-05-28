@@ -4,6 +4,8 @@ from typing import Any
 
 from openai import OpenAI
 from pgvector.sqlalchemy import Vector
+
+from services.httpx_env import sync_client as httpx_sync_client
 from sqlalchemy import cast, delete, select
 from sqlalchemy.orm import Session
 
@@ -24,7 +26,7 @@ def _embedding_client() -> OpenAI:
     api_key = settings.openai_api_key
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is required for remote embeddings")
-    return OpenAI(api_key=api_key)
+    return OpenAI(api_key=api_key, http_client=httpx_sync_client(timeout=60.0))
 
 
 def _local_embed(texts: list[str]) -> list[list[float]]:

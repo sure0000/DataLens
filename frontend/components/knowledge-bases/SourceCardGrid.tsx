@@ -1,11 +1,13 @@
 "use client";
 
-import type { DatabaseImport, DocRow, Entry, GitSource, OntologyCounts, SourceCleaningStat } from "./types";
+import type { ApiSource, DatabaseImport, DocRow, Entry, GitSource, OntologyCounts, SourceCleaningStat } from "./types";
 import SourceCard, { type SourceItem } from "./SourceCard";
+import { docsForApiSource, docsForGitSource } from "./sourceIndexPolicy";
 import { importSourceCleaningKey } from "./sourceCleaningKey";
 
 interface SourceCardGridProps {
   gitSources: GitSource[];
+  apiSources?: ApiSource[];
   entries: Entry[];
   documents: DocRow[];
   databaseImports: DatabaseImport[];
@@ -19,13 +21,14 @@ interface SourceCardGridProps {
   onRemoveTag?: (source: SourceItem, tag: string) => void;
   tagLoading?: boolean;
   onSemanticClean?: (source: SourceItem) => void;
-  cleaningSourceId?: number | null;
+  cleaningSourceKey?: string | null;
   cleaningStats?: Record<string, SourceCleaningStat> | null;
   ontologyCounts?: OntologyCounts;
 }
 
 export default function SourceCardGrid({
   gitSources,
+  apiSources = [],
   entries,
   documents,
   databaseImports,
@@ -39,7 +42,7 @@ export default function SourceCardGrid({
   onRemoveTag,
   tagLoading,
   onSemanticClean,
-  cleaningSourceId,
+  cleaningSourceKey,
   cleaningStats,
   ontologyCounts,
 }: SourceCardGridProps) {
@@ -47,7 +50,22 @@ export default function SourceCardGrid({
   const items: SourceItem[] = [];
 
   for (const gs of gitSources) {
-    items.push({ kind: "git", data: gs });
+    const gitEntries = entries.filter(
+      (e) =>
+        e.source_meta?.kind === "git_file" &&
+        String(e.source_meta?.git_source_id) === String(gs.id),
+    );
+    items.push({
+      kind: "git",
+      data: gs,
+      relatedDocs: docsForGitSource(gs, entries, documents),
+      entryCount: gitEntries.length,
+    });
+  }
+
+  for (const as of apiSources) {
+    const { entries: relatedEntries, docs: relatedDocs } = docsForApiSource(as, entries, documents);
+    items.push({ kind: "api", data: as, relatedEntries, relatedDocs });
   }
 
   // Document lookup by entry id
@@ -77,7 +95,7 @@ export default function SourceCardGrid({
 
   const manualEntries = entries.filter((e) => e.source_meta?.kind === "manual");
   for (const entry of manualEntries) {
-    items.push({ kind: "manual", entry });
+    items.push({ kind: "manual", entry, doc: docByEntryId[entry.id] });
   }
 
   // Database imports
@@ -142,7 +160,8 @@ export default function SourceCardGrid({
               onRemoveTag={onRemoveTag}
               tagLoading={tagLoading}
               onSemanticClean={onSemanticClean}
-              cleaningSourceId={cleaningSourceId}
+              cleaningSourceKey={cleaningSourceKey}
+              itemCleaningKey={cleaningKey}
               cleaningStat={cleaningStat}
               ontologyCounts={ontologyCounts}
             />

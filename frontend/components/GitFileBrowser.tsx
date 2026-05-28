@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { buildGitFileTree, getGitTreeMatchingPaths, type GitFileTreeNode } from "./knowledge-bases/gitFileTree";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 
 type Entry = {
@@ -27,79 +28,7 @@ type GitSource = {
   uses_default_branch?: boolean;
 };
 
-type TreeNode = {
-  name: string;
-  path: string; // full path from root
-  isDir: boolean;
-  children: TreeNode[];
-  entry?: Entry; // only for files
-  fileCount: number; // total files under this node
-};
-
-function buildTree(entries: Entry[], sourceId: number): TreeNode {
-  const root: TreeNode = { name: "", path: "", isDir: true, children: [], fileCount: 0 };
-
-  for (const entry of entries) {
-    const ref = entry.source_meta?.ref;
-    if (!ref) continue;
-    const parts = ref.split("/").filter(Boolean);
-    let node = root;
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      const isLast = i === parts.length - 1;
-      const fullPath = parts.slice(0, i + 1).join("/");
-      let child = node.children.find((c) => c.name === part);
-      if (!child) {
-        child = {
-          name: part,
-          path: fullPath,
-          isDir: !isLast,
-          children: [],
-          entry: isLast ? entry : undefined,
-          fileCount: 0,
-        };
-        node.children.push(child);
-      }
-      node = child;
-    }
-  }
-
-  // Sort: dirs first, then files, both alphabetically
-  function sortNode(n: TreeNode) {
-    n.children.sort((a, b) => {
-      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-      return a.name.localeCompare(b.name);
-    });
-    for (const c of n.children) sortNode(c);
-  }
-  sortNode(root);
-
-  // Count files
-  function countFiles(n: TreeNode): number {
-    if (!n.isDir) return 1;
-    n.fileCount = n.children.reduce((s, c) => s + countFiles(c), 0);
-    return n.fileCount;
-  }
-  countFiles(root);
-
-  return root;
-}
-
-function getMatchingPaths(node: TreeNode, q: string): Set<string> {
-  const matched = new Set<string>();
-  function walk(n: TreeNode) {
-    if (!n.isDir && n.name.toLowerCase().includes(q)) {
-      // mark all ancestor paths
-      const parts = n.path.split("/");
-      for (let i = 1; i <= parts.length; i++) {
-        matched.add(parts.slice(0, i).join("/"));
-      }
-    }
-    for (const c of n.children) walk(c);
-  }
-  walk(node);
-  return matched;
-}
+type TreeNode = GitFileTreeNode;
 
 function highlightMatch(text: string, q: string): React.ReactNode {
   if (!q) return text;
@@ -260,11 +189,11 @@ export default function GitFileBrowser({ source, entries, onClose, onViewEntry }
     [entries, source.id]
   );
 
-  const tree = useMemo(() => buildTree(sourceEntries, source.id), [sourceEntries, source.id]);
+  const tree = useMemo(() => buildGitFileTree(sourceEntries), [sourceEntries]);
 
   const searchQ = search.trim().toLowerCase();
   const matchingPaths = useMemo(
-    () => (searchQ ? getMatchingPaths(tree, searchQ) : new Set<string>()),
+    () => (searchQ ? getGitTreeMatchingPaths(tree, searchQ) : new Set<string>()),
     [tree, searchQ]
   );
 

@@ -157,6 +157,17 @@ def _get_eligible_chunks(db: Session, kb_id: int, limit: int | None = None, sour
                 KnowledgeEntry.source_meta["kind"].astext == "git_file",
                 KnowledgeEntry.source_meta["git_source_id"].astext == str(source_id),
             )
+        elif src == "api":
+            from sqlalchemy import or_
+            from sqlalchemy import cast as sa_cast
+            from sqlalchemy.dialects.postgresql import JSONB
+
+            q = q.join(KnowledgeEntry, KnowledgeEntry.id == Document.knowledge_entry_id).where(
+                or_(
+                    sa_cast(KnowledgeEntry.source_meta, JSONB)["api_source_id"].astext == str(source_id),
+                    sa_cast(Document.source_meta, JSONB)["api_source_id"].astext == str(source_id),
+                )
+            )
         elif src in ("database",):
             q = q.where(Document.source_meta["import_id"].astext == str(source_id))
         else:

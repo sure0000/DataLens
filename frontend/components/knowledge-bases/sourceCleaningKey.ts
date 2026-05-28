@@ -65,3 +65,23 @@ export function importSourceCleaningKey(
   const type = kind === "api_entry" ? "api" : kind;
   return sourceCleaningKey(sourceId, type);
 }
+
+/** 与 PipelineRun.source_type + source_id 及 source-cleaning-stats 的键一致。 */
+export function pipelineRunCleaningKey(
+  sourceType: string | null | undefined,
+  sourceId: number | null | undefined,
+): string | null {
+  if (!sourceType || sourceId == null) return null;
+  const t = sourceType.startsWith("source:") ? sourceType : `source:${sourceType}`;
+  return `${t}:${sourceId}`;
+}
+
+/** 导入源卡片是否处于「清洗中」（本地触发 + 后端 running 状态）。 */
+export function isSourceActivelyCleaning(
+  itemCleaningKey: string,
+  activeCleaningKey: string | null | undefined,
+  cleaningStat?: { status?: string } | null,
+): boolean {
+  if (activeCleaningKey === itemCleaningKey) return true;
+  return cleaningStat?.status === "running";
+}

@@ -38,6 +38,10 @@ import {
 import SemanticCleanChoiceDialog, {
   type SemanticCleanResumeOptions,
 } from "../../../components/knowledge-bases/SemanticCleanChoiceDialog";
+import {
+  importSourceCleaningKey,
+  pipelineRunCleaningKey,
+} from "../../../components/knowledge-bases/sourceCleaningKey";
 
 type GitHubDiagProbe = {
   reachable?: boolean;
@@ -121,7 +125,8 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   const [databaseImports, setDatabaseImports] = useState<DatabaseImport[]>([]);
 
   // ── Semantic cleaning ──
-  const [cleaningSourceId, setCleaningSourceId] = useState<number | null>(null);
+  /** 当前清洗中的导入源键，形如 source:database:3（勿仅用数字 id，会与 git 等源冲突）。 */
+  const [cleaningSourceKey, setCleaningSourceKey] = useState<string | null>(null);
   const cleaningPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const [cleanChoiceOpen, setCleanChoiceOpen] = useState(false);
   const [cleanChoiceOptions, setCleanChoiceOptions] = useState<SemanticCleanResumeOptions | null>(null);
@@ -160,15 +165,21 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     if (!Number.isFinite(kbId)) return;
     setLoading(true);
     try {
-      const [res, gitRes, apiRes] = await Promise.all([
+      const [res, gitRes, kbApiRes, globalApiRes] = await Promise.all([
         api<{ knowledge_base: KB; entries: Entry[] }>(`/api/knowledge-bases/${kbId}`),
         api<{ git_sources: GitSource[] }>(`/api/knowledge-bases/${kbId}/git-sources`).catch(() => ({ git_sources: [] })),
+        api<{ api_sources: ApiSource[] }>(`/api/knowledge-bases/${kbId}/api-sources`).catch(() => ({ api_sources: [] })),
         api<{ api_sources: ApiSource[] }>(`/api/api-sources`).catch(() => ({ api_sources: [] })),
       ]);
       setKb(res.knowledge_base);
       setEntries(res.entries);
       setGitSources(gitRes.git_sources ?? []);
-      setApiSources(apiRes.api_sources ?? []);
+      const mergedApi = [...(kbApiRes.api_sources ?? [])];
+      const seen = new Set(mergedApi.map((s) => s.id));
+      for (const s of globalApiRes.api_sources ?? []) {
+        if (!seen.has(s.id)) mergedApi.push(s);
+      }
+      setApiSources(mergedApi);
       const dbRes = await api<{ imports: DatabaseImport[] }>(`/api/knowledge-bases/${kbId}/database-imports`).catch(() => ({ imports: [] }));
       setDatabaseImports(dbRes.imports ?? []);
       loadDocuments();
@@ -193,13 +204,18 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   function checkRunningPipeline() {
     if (cleaningPollRef.current) return;
 
-    api<{ last_pipeline_run: { id: number; status: string; source_id: number | null } | null }>(
-      `/api/knowledge-bases/${kbId}/pipeline-stats`
-    ).then(stats => {
+    api<{
+      last_pipeline_run: {
+        id: number;
+        status: string;
+        source_type: string | null;
+        source_id: number | null;
+      } | null;
+    }>(`/api/knowledge-bases/${kbId}/pipeline-stats`).then(stats => {
       const run = stats.last_pipeline_run;
       if (run && run.status === "running") {
-        // Restore cleaning source ID from the pipeline record (persisted in DB)
-        if (run.source_id != null) setCleaningSourceId(run.source_id);
+        const key = pipelineRunCleaningKey(run.source_type, run.source_id);
+        if (key) setCleaningSourceKey(key);
         startCleaningPoll(run.id);
       }
     }).catch(() => { /* ignore */ });
@@ -291,7 +307,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   function clearCleaningState() {
     if (cleaningPollRef.current) clearInterval(cleaningPollRef.current);
     cleaningPollRef.current = null;
-    setCleaningSourceId(null);
+    setCleaningSourceKey(null);
   }
 
   function startCleaningPoll(previousRunId: number | null) {
@@ -370,8 +386,18 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     if (source.kind === "manual") {
       return { sourceId: source.entry.id, sourceType: "manual", label: source.entry.title };
     }
-    const sourceType = source.kind === "api_entry" ? "api" : "file";
-    return { sourceId: source.entry.id, sourceType, label: source.entry.title };
+    if (source.kind === "api_entry") {
+      return { sourceId: source.entry.id, sourceType: "api_entry", label: source.entry.title };
+    }
+    return { sourceId: source.entry.id, sourceType: "file", label: source.entry.title };
+  }
+
+  function cleaningKeyForSourceType(sourceType: string, sourceId: number): string {
+    const kind =
+      sourceType === "api_entry"
+        ? "api_entry"
+        : (sourceType as "git" | "api" | "database" | "file" | "manual");
+    return importSourceCleaningKey(kind, sourceId);
   }
 
   async function startSemanticClean(
@@ -379,7 +405,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     sourceType: string,
     opts: { resume: boolean; resumeFromRunId?: number },
   ) {
-    setCleaningSourceId(sourceId);
+    setCleaningSourceKey(cleaningKeyForSourceType(sourceType, sourceId));
     notifyUser(opts.resume ? "正在从上次失败处续跑…" : "正在触发语义清洗（完整重跑）…", "info");
     try {
       let previousRunId: number | null = null;
@@ -410,7 +436,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
         e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "清洗启动失败",
         "error",
       );
-      setCleaningSourceId(null);
+      setCleaningSourceKey(null);
     }
   }
 
@@ -728,6 +754,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
               <div className="mt-6">
                 <SourceCardGrid
                   gitSources={gitSources}
+                  apiSources={apiSources}
                   entries={entries}
                   documents={documents}
                   databaseImports={databaseImports}
@@ -741,7 +768,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                   onRemoveTag={handleRemoveTag}
                   tagLoading={tagLoading}
                   onSemanticClean={handleSemanticClean}
-                  cleaningSourceId={cleaningSourceId}
+                  cleaningSourceKey={cleaningSourceKey}
                   cleaningStats={cleaningStats}
                   ontologyCounts={ontologyCounts}
                 />

@@ -201,3 +201,33 @@ def test_list_quarantine_pagination():
     assert len(page1["items"]) == 5
     assert page1["has_more"] is False
     assert page1["items"][0]["item_idx"] == 20
+
+
+def test_insert_graph_fuseki_update_no_double_dots(monkeypatch):
+    """Fuseki INSERT DATA: N-Triples lines already end with '.' — no extra join dots."""
+    from rdflib import Graph, Literal, URIRef
+
+    from services.triple_store.store import TripleStore
+
+    captured: list[str] = []
+
+    def _capture_update(query: str) -> None:
+        captured.append(query)
+
+    monkeypatch.setenv("FUSEKI_URL", "http://localhost:3030")
+    monkeypatch.setenv("FUSEKI_DATASET", "datalens")
+    get_settings.cache_clear()
+
+    store = TripleStore(get_settings())
+    store._fuseki_live = True  # noqa: SLF001
+    monkeypatch.setattr(store, "_sparql_update", _capture_update)
+
+    g = Graph()
+    g.add((URIRef("http://ex/s1"), URIRef("http://ex/p"), Literal("a")))
+    g.add((URIRef("http://ex/s2"), URIRef("http://ex/p"), URIRef("http://ex/o2")))
+    store.insert_graph("http://datalens.local/kb/1", g.serialize(format="turtle"))
+
+    assert len(captured) == 1
+    assert " . ." not in captured[0]
+    assert captured[0].startswith("INSERT DATA { GRAPH <http://datalens.local/kb/1> {")
+    get_settings.cache_clear()

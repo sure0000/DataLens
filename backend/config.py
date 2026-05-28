@@ -85,6 +85,8 @@ class Settings(BaseSettings):
     ontology_merge_bidirectional_join: bool = Field(default=True, alias="ONTOLOGY_MERGE_BIDIRECTIONAL_JOIN")
     ontology_inferred_max_hops: int = Field(default=3, ge=1, le=10, alias="ONTOLOGY_INFERRED_MAX_HOPS")
     ontology_reconcile_cron_hours: int = Field(default=24, ge=1, alias="ONTOLOGY_RECONCILE_CRON_HOURS")
+    # 出站 HTTP 是否读取 HTTP(S)_PROXY / ALL_PROXY；遇 SSL EOF 可设为 false 或关闭失效代理
+    http_trust_env: bool = Field(default=True, alias="DATALENS_HTTP_TRUST_ENV")
 
 
 @lru_cache

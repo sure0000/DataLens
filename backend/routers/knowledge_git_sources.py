@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+import threading
 from datetime import datetime
+from typing import Any
 
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Depends, HTTPException
@@ -12,12 +15,13 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import KnowledgeBase, KnowledgeEntry, KnowledgeGitSource
+from models import Document, KnowledgeBase, KnowledgeEntry, KnowledgeGitSource
 from services.embedding_service import delete_embeddings_for_knowledge_entries
 from services.git_knowledge_sync import run_git_source_sync
 from services.git_schedule import refresh_git_sync_schedules
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["knowledge-git-sources"])
+_logger = logging.getLogger(__name__)
 
 
 def _validate_cron(expr: str | None) -> None:
@@ -284,6 +288,111 @@ def delete_git_source(kb_id: int, source_id: int, db: Session = Depends(get_db))
     except Exception:  # noqa: BLE001
         pass
     return {"ok": True}
+
+
+def _entries_for_git_source(db: Session, kb_id: int, source_id: int) -> list[KnowledgeEntry]:
+    return list(
+        db.scalars(
+            select(KnowledgeEntry).where(
+                KnowledgeEntry.knowledge_base_id == kb_id,
+                cast(KnowledgeEntry.source_meta, JSONB)["kind"].astext == "git_file",
+                cast(KnowledgeEntry.source_meta, JSONB)["git_source_id"].astext == str(source_id),
+            )
+        ).all()
+    )
+
+
+def _document_meta_for_git_entry(src: KnowledgeGitSource, entry: KnowledgeEntry) -> dict[str, Any]:
+    meta = entry.source_meta if isinstance(entry.source_meta, dict) else {}
+    ref = str(meta.get("ref") or "").strip()
+    label = str(meta.get("label") or "").strip() or f"{src.owner}/{src.repo}"
+    return {
+        "kind": "git_file",
+        "git_source_id": str(src.id),
+        "ref": ref,
+        "label": label,
+    }
+
+
+def _spawn_git_document_pipelines(
+    kb_id: int,
+    src: KnowledgeGitSource,
+    items: list[dict[str, Any]],
+) -> None:
+    if not items:
+        return
+
+    def _bg() -> None:
+        from database import SessionLocal
+        from services.knowledge_pipeline_service import create_document, run_pipeline
+
+        bg_db = SessionLocal()
+        try:
+            for item in items:
+                entry = bg_db.get(KnowledgeEntry, item["entry_id"])
+                if not entry:
+                    continue
+                doc = create_document(
+                    bg_db,
+                    kb_id,
+                    item["title"],
+                    source_type="git",
+                    source_meta=_document_meta_for_git_entry(src, entry),
+                    knowledge_entry_id=item["entry_id"],
+                )
+                bg_db.commit()
+                bg_doc = bg_db.get(Document, doc.id)
+                if bg_doc:
+                    run_pipeline(bg_db, bg_doc, item["text"])
+        except Exception:
+            _logger.exception("Background git reindex pipeline failed for kb=%d source=%d", kb_id, src.id)
+        finally:
+            bg_db.close()
+
+    threading.Thread(target=_bg, daemon=True).start()
+
+
+@router.post("/{kb_id}/git-sources/{source_id}/reindex-entries")
+def reindex_git_source_entries(kb_id: int, source_id: int, db: Session = Depends(get_db)) -> dict:
+    """为已同步但缺少 Document/分块的 Git 文件条目重建文档索引（不重新拉取仓库）。"""
+    _get_kb(db, kb_id)
+    src = db.get(KnowledgeGitSource, source_id)
+    if not src or src.knowledge_base_id != kb_id:
+        raise HTTPException(status_code=404, detail="Git 源不存在")
+
+    entries = _entries_for_git_source(db, kb_id, source_id)
+    if not entries:
+        raise HTTPException(status_code=404, detail="未找到与该 Git 源关联的知识条目")
+
+    items: list[dict[str, Any]] = []
+    skipped = 0
+    for entry in entries:
+        body = (entry.body or "").strip()
+        if not body:
+            skipped += 1
+            continue
+        existing = db.execute(
+            select(Document).where(
+                Document.knowledge_base_id == kb_id,
+                Document.knowledge_entry_id == entry.id,
+                Document.status.in_(("pending", "extracting", "cleaning", "chunking", "embedding", "ontology_assertion", "indexed")),
+            )
+        ).scalars().first()
+        if existing:
+            skipped += 1
+            continue
+        items.append({"entry_id": entry.id, "title": entry.title or "Git 文件", "text": body})
+
+    if not items:
+        return {
+            "ok": True,
+            "queued": 0,
+            "skipped": skipped,
+            "message": "关联条目均已存在进行中的文档，或正文为空",
+        }
+
+    _spawn_git_document_pipelines(kb_id, src, items)
+    return {"ok": True, "queued": len(items), "skipped": skipped}
 
 
 @router.post("/{kb_id}/git-sources/{source_id}/sync")

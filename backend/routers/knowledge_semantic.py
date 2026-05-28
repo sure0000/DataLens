@@ -309,6 +309,7 @@ def get_pipeline_stats(kb_id: int, db: Session = Depends(get_db)):
             "id": last_run.id,
             "status": last_run.status,
             "steps": last_run.steps,
+            "source_type": last_run.source_type,
             "source_id": last_run.source_id,
             "started_at": last_run.started_at.isoformat() if last_run and last_run.started_at else None,
             "completed_at": last_run.completed_at.isoformat() if last_run and last_run.completed_at else None,

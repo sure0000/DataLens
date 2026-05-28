@@ -335,7 +335,8 @@ class TripleStore:
             lines = [ln.strip() for ln in nt.splitlines() if ln.strip() and not ln.startswith("#")]
             if not lines:
                 return
-            body = " .\n".join(lines) + " ."
+            # N-Triples lines already end with '.'; do not join with extra '.' (Fuseki parse error).
+            body = "\n".join(lines)
             self._sparql_update(f"INSERT DATA {{ GRAPH <{graph_iri}> {{ {body} }} }}")
             return
 
@@ -360,7 +361,7 @@ class TripleStore:
             lines = [ln.strip() for ln in nt.splitlines() if ln.strip() and not ln.startswith("#")]
             if not lines:
                 return
-            body = " .\n".join(lines) + " ."
+            body = "\n".join(lines)
             await self._sparql_update_async(f"INSERT DATA {{ GRAPH <{graph_iri}> {{ {body} }} }}")
             return
 

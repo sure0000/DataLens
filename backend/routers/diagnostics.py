@@ -7,6 +7,8 @@ from typing import Any
 import httpx
 from fastapi import APIRouter
 
+from services.httpx_env import sync_client as httpx_sync_client
+
 router = APIRouter(prefix="/api/diagnostics", tags=["diagnostics"])
 
 _UA = {"User-Agent": "DataLens-NetworkCheck/1.0"}
@@ -14,7 +16,7 @@ _UA = {"User-Agent": "DataLens-NetworkCheck/1.0"}
 
 def _probe_get(url: str) -> dict[str, Any]:
     try:
-        with httpx.Client(timeout=12.0, follow_redirects=True) as client:
+        with httpx_sync_client(timeout=12.0, follow_redirects=True) as client:
             r = client.get(url, headers=_UA)
         reachable = r.status_code < 500
         return {
@@ -34,7 +36,7 @@ def _probe_get(url: str) -> dict[str, Any]:
 
 def _probe_head(url: str) -> dict[str, Any]:
     try:
-        with httpx.Client(timeout=12.0, follow_redirects=True) as client:
+        with httpx_sync_client(timeout=12.0, follow_redirects=True) as client:
             r = client.head(url, headers=_UA)
         return {
             "url": url,

@@ -13,6 +13,8 @@ from pathlib import PurePosixPath
 
 import httpx
 
+from services.httpx_env import sync_client as httpx_sync_client
+
 MAX_INGEST_BYTES = 12 * 1024 * 1024
 
 
@@ -58,6 +60,7 @@ def _resolve_notion_dns() -> list[str]:
                 headers={"Host": "dns.google"},
                 timeout=10,
                 proxy={},
+                trust_env=False,
             )
             r.raise_for_status()
             data = r.json()
@@ -697,7 +700,7 @@ def fetch_official_notion_page(api_key: str, page_id: str) -> tuple[str, str]:
     # Notion API pages 端点要求带横线的 UUID
     dashed_id = f"{clean_id[:8]}-{clean_id[8:12]}-{clean_id[12:16]}-{clean_id[16:20]}-{clean_id[20:32]}"
 
-    with _use_notion_real_ip(), httpx.Client(proxy={}, timeout=90.0, follow_redirects=True) as client:
+    with _use_notion_real_ip(), httpx_sync_client(timeout=90.0, for_local=True, follow_redirects=True) as client:
         # 获取页面属性
         r = _request_with_retry(client, "GET", f"{NOTION_BASE}/pages/{dashed_id}", headers=headers)
         page = r.json()
@@ -793,7 +796,7 @@ def fetch_official_notion_database(
     dashed_id = f"{clean_id[:8]}-{clean_id[8:12]}-{clean_id[12:16]}-{clean_id[16:20]}-{clean_id[20:32]}"
     results: list[tuple[str, str]] = []
 
-    with _use_notion_real_ip(), httpx.Client(proxy={}, timeout=120.0) as client:
+    with _use_notion_real_ip(), httpx_sync_client(timeout=120.0, for_local=True) as client:
         cursor = None
         fetched = 0
         while fetched < max_pages:
@@ -848,7 +851,7 @@ def fetch_official_confluence_page(domain: str, email: str, api_token: str, page
         raise ValueError("Confluence 页面 ID 须为数字（在页面 URL 的 /pages/123456789/... 中）")
 
     base = f"https://{dom}/wiki/rest/api/content/{pid}"
-    with httpx.Client(timeout=90.0, follow_redirects=True) as client:
+    with httpx_sync_client(timeout=90.0, follow_redirects=True) as client:
         r = client.get(
             base,
             params={"expand": "body.storage,title,version"},
@@ -880,7 +883,7 @@ def _feishu_tenant_access_token(app_id: str, app_secret: str) -> str:
     sec = (app_secret or "").strip()
     if not aid or not sec:
         raise ValueError("飞书需要 app_id 与 app_secret（app_secret 可填在「API Key」栏）")
-    with httpx.Client(timeout=45.0) as client:
+    with httpx_sync_client(timeout=45.0) as client:
         r = client.post(
             FEISHU_TOKEN_URL,
             json={"app_id": aid, "app_secret": sec},
@@ -919,7 +922,7 @@ def fetch_official_feishu_doc(app_id: str, app_secret: str, document_id: str) ->
     token = _feishu_tenant_access_token(app_id, app_secret)
     raw_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}/raw_content"
     meta_url = f"https://open.feishu.cn/open-apis/docx/v1/documents/{doc_id}"
-    with httpx.Client(timeout=90.0) as client:
+    with httpx_sync_client(timeout=90.0) as client:
         hdr = {"Authorization": f"Bearer {token}"}
         r = client.get(raw_url, headers=hdr)
         r.raise_for_status()
@@ -930,7 +933,7 @@ def fetch_official_feishu_doc(app_id: str, app_secret: str, document_id: str) ->
     content = (inner.get("content") or "").strip()
     title = (inner.get("title") or "").strip()
     if not title:
-        with httpx.Client(timeout=45.0) as client:
+        with httpx_sync_client(timeout=45.0) as client:
             r2 = client.get(meta_url, headers={"Authorization": f"Bearer {token}"})
             r2.raise_for_status()
             d2 = r2.json()

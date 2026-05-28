@@ -1477,6 +1477,72 @@ canvas {
 .app-quality-medium { color: var(--app-text-warning); }
 .app-quality-low { color: var(--app-text-success); }
 
+/* GitHub 风格代码编辑器预览（highlight.js github-dark 色系） */
+.app-code-editor .hljs {
+  background: transparent;
+  color: #e6edf3;
+  padding: 0;
+}
+
+.app-code-editor-pre {
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+}
+
+.app-code-editor-body {
+  overscroll-behavior: contain;
+}
+
+.app-code-editor .hljs-comment,
+.app-code-editor .hljs-quote {
+  color: #8b949e;
+  font-style: italic;
+}
+
+.app-code-editor .hljs-keyword,
+.app-code-editor .hljs-selector-tag,
+.app-code-editor .hljs-subst {
+  color: #ff7b72;
+}
+
+.app-code-editor .hljs-string,
+.app-code-editor .hljs-meta .hljs-string,
+.app-code-editor .hljs-regexp {
+  color: #a5d6ff;
+}
+
+.app-code-editor .hljs-number,
+.app-code-editor .hljs-literal {
+  color: #79c0ff;
+}
+
+.app-code-editor .hljs-title,
+.app-code-editor .hljs-title.class_,
+.app-code-editor .hljs-function .hljs-title,
+.app-code-editor .hljs-built_in {
+  color: #d2a8ff;
+}
+
+.app-code-editor .hljs-attr,
+.app-code-editor .hljs-attribute,
+.app-code-editor .hljs-variable,
+.app-code-editor .hljs-template-variable,
+.app-code-editor .hljs-type {
+  color: #ffa657;
+}
+
+.app-code-editor .hljs-tag,
+.app-code-editor .hljs-name {
+  color: #7ee787;
+}
+
+.app-code-editor .hljs-symbol,
+.app-code-editor .hljs-bullet,
+.app-code-editor .hljs-link {
+  color: #a5d6ff;
+}
+
 /* SQL syntax highlighting */
 .sql-block {
   background: #1a1a2e;
