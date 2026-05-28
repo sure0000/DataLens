@@ -7,7 +7,11 @@ import ConfirmDialog from "../../../../../components/ConfirmDialog";
 import PageHeader from "../../../../../components/PageHeader";
 import Toast from "../../../../../components/Toast";
 import { api, ApiError, formatApiError } from "../../../../../lib/api";
-import { entryMatchesApiSource, docMatchesApiSource } from "../../../../../components/knowledge-bases/apiSourceMatching";
+import {
+  docMatchesApiSource,
+  entryMatchesApiSource,
+  shouldShowApiSourceInKb,
+} from "../../../../../components/knowledge-bases/apiSourceMatching";
 
 import type {
   ApiSource,
@@ -126,17 +130,26 @@ export default function SourceDetailPage({
     if (!Number.isFinite(kbId)) return;
     setLoading(true);
     try {
-      const [res, gitRes, kbApiRes, globalApiRes] = await Promise.all([
+      const [res, gitRes, kbApiRes, globalApiRes, docsRes] = await Promise.all([
         api<{ knowledge_base: KB; entries: Entry[] }>(`/api/knowledge-bases/${kbId}`),
         api<{ git_sources: GitSource[] }>(`/api/knowledge-bases/${kbId}/git-sources`).catch(() => ({ git_sources: [] })),
         api<{ api_sources: ApiSource[] }>(`/api/knowledge-bases/${kbId}/api-sources`).catch(() => ({ api_sources: [] })),
         api<{ api_sources: ApiSource[] }>(`/api/api-sources`).catch(() => ({ api_sources: [] })),
+        api<{ documents: DocRow[] }>(`/api/knowledge-bases/${kbId}/documents`).catch(() => ({ documents: [] })),
       ]);
       setKb(res.knowledge_base);
       setEntries(res.entries);
       setGitSources(gitRes.git_sources ?? []);
-      setApiSources([...(kbApiRes.api_sources ?? []), ...(globalApiRes.api_sources ?? [])]);
-      loadDocuments();
+      const docs = docsRes.documents ?? [];
+      setDocuments(docs);
+      const mergedApi = [...(kbApiRes.api_sources ?? [])];
+      const seen = new Set(mergedApi.map((s) => s.id));
+      for (const s of globalApiRes.api_sources ?? []) {
+        if (seen.has(s.id)) continue;
+        if (!shouldShowApiSourceInKb(s, res.entries ?? [], docs)) continue;
+        mergedApi.push(s);
+      }
+      setApiSources(mergedApi);
       if (sourceType === "database") {
         loadDatabaseDetail();
       }
@@ -411,6 +424,7 @@ export default function SourceDetailPage({
 
   // Source config
   const gitSource = sourceType === "git" ? gitSources.find((s) => s.id === sourceId) : null;
+  const gitIndexingEnabled = !!gitSource?.enable_document_indexing;
 
   // Compute title and subtitle
   let sourceTitle: string;
@@ -524,8 +538,14 @@ export default function SourceDetailPage({
                       <button
                         className="block w-full px-4 py-2 text-left text-sm hover:bg-[var(--app-bg-hover)] disabled:opacity-50"
                         type="button"
-                        disabled={settingsActionLoading || gitSyncing || sourceEntries.length === 0}
-                        title={sourceEntries.length === 0 ? "暂无已同步文件" : "从已有文件条目正文生成分块，不重新拉取仓库"}
+                        disabled={settingsActionLoading || gitSyncing || sourceEntries.length === 0 || !gitIndexingEnabled}
+                        title={
+                          !gitIndexingEnabled
+                            ? "当前代码源未启用文档索引"
+                            : sourceEntries.length === 0
+                              ? "暂无已同步文件"
+                              : "从已有文件条目正文生成分块，不重新拉取仓库"
+                        }
                         onClick={() => void reindexGitSourceEntries()}
                       >
                         重新索引
@@ -554,6 +574,7 @@ export default function SourceDetailPage({
                     </>
                   )}
                   {(() => {
+                    if (sourceType === "git") return null;
                     const docForIndex = sourceType === "git" ? gitSelectedDoc : primaryDoc;
                     if (!docForIndex) return null;
                     return (
@@ -628,6 +649,7 @@ export default function SourceDetailPage({
               <span>分支：{gitSource.uses_default_branch || !gitSource.branch ? "默认分支" : gitSource.branch}</span>
               {gitSource.path_prefix && <span>路径：{gitSource.path_prefix}</span>}
               <span>限制：{gitSource.max_files} 文件 / {gitSource.max_file_kb} KB</span>
+              <span>文档索引：{gitIndexingEnabled ? "已启用" : "未启用（仅解析）"}</span>
               {gitSource.cron_expression && <span>定时：{gitSource.cron_expression}</span>}
               {gitSource.last_sync_at && <span>上次同步：{new Date(gitSource.last_sync_at).toLocaleString()}</span>}
               {gitSource.last_error && (
@@ -737,7 +759,9 @@ export default function SourceDetailPage({
                       </div>
                       {!gitSelectedDoc && (
                         <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 shrink-0">
-                          文件已同步，尚未生成文档分块。请打开「设置 → 重新索引」。
+                          {gitIndexingEnabled
+                            ? "文件已同步，尚未生成文档分块。请打开「设置 → 重新索引」。"
+                            : "文件已同步，当前代码源处于“仅解析”模式，未启用文档索引。"}
                         </p>
                       )}
                       {gitSelectedDoc && chunksLoading && (

@@ -23,16 +23,14 @@ import {
   moveSessionToProject,
   readProjects,
   readSessionState,
-  setActiveSession,
   setSessionBusinessDomain,
+  setActiveSession,
   type ChatProject,
   type ChatMessage,
-  type ChatSession,
-  filterCopilotTraceSteps,
-  stripStreamEphemeralTraceSteps,
-  type PipelineTraceStep
+  type ChatSession
 } from "../../lib/chatSessions";
 import type { AskPayload, AskResponse } from "../../lib/copilotStream";
+import { getActiveBusinessDomainId, setActiveBusinessDomainId } from "../../lib/businessDomain";
 
 type LlmCatalog = {
   auto_id: string;
@@ -92,7 +90,6 @@ function CopilotPageContent() {
   } | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
   const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
-  const [businessDomains, setBusinessDomains] = useState<{ id: number; name: string }[]>([]);
   const [llmCatalog, setLlmCatalog] = useState<LlmCatalog | null>(null);
   const [chatModelSelect, setChatModelSelect] = useState("auto");
   const projectIdFromUrl = searchParams.get("project") || "";
@@ -164,12 +161,6 @@ function CopilotPageContent() {
     );
   }, [tableIdFromUrl, sessionIdFromUrl, router]);
 
-  useEffect(() => {
-    api<{ domains: { id: number; name: string }[] }>("/api/business-domains")
-      .then((r) => setBusinessDomains(r.domains || []))
-      .catch(() => setBusinessDomains([]));
-  }, []);
-
   /** 与偏好设置「可选模型」一致：仅用户新增的接入，不含环境变量内置的 DeepSeek/OpenAI 条目 */
   const preferenceChatModels = useMemo(() => {
     if (!llmCatalog?.has_llm) return [];
@@ -215,24 +206,13 @@ function CopilotPageContent() {
     syncState(state);
   }, [sessionIdFromUrl]);
 
-  const handleSettled = useCallback((res: AskResponse, traceAcc: PipelineTraceStep[]) => {
+  const handleSettled = useCallback((res: AskResponse) => {
     const sid = settlingSessionRef.current;
     const retryQuestion = activeAskRef.current?.payload.question?.trim();
     if (!sid) {
       setActiveAsk(null);
       return;
     }
-    const mergedPipeline: PipelineTraceStep[] | undefined = (() => {
-      const fromApi = res.pipeline_trace;
-      if (Array.isArray(fromApi) && fromApi.length) {
-        const cleaned = fromApi.filter(
-          (x): x is PipelineTraceStep =>
-            !!x && typeof x === "object" && typeof x.id === "string" && typeof x.label === "string"
-        );
-        if (cleaned.length) return filterCopilotTraceSteps(cleaned);
-      }
-      return traceAcc.length ? filterCopilotTraceSteps(stripStreamEphemeralTraceSteps(traceAcc)) : undefined;
-    })();
     const domainSuggestion = res.routing_trace?.domain_suggestion;
     const needsDomainConfirm =
       !!domainSuggestion?.requires_confirmation && typeof domainSuggestion.domain_id === "number";
@@ -244,7 +224,6 @@ function CopilotPageContent() {
       sql: res.sql || "",
       explanation: res.explanation || "",
       query_result: res.query_result || { ok: false, columns: [], rows: [], error: "没有返回查询结果" },
-      pipeline_trace: mergedPipeline?.length ? mergedPipeline : undefined,
       routing_trace: res.routing_trace,
       sql_review: res.sql_review,
       ontology_mapping: res.ontology_mapping,
@@ -295,8 +274,7 @@ function CopilotPageContent() {
     (domainId: number, question: string) => {
       const sid = activeSessionId;
       if (!sid || !question.trim() || activeAsk) return;
-      const state = setSessionBusinessDomain(sid, domainId);
-      syncState(state);
+      setActiveBusinessDomainId(domainId);
       submit(question.trim(), { activeSessionId: sid });
     },
     [activeAsk, activeSessionId]
@@ -305,9 +283,24 @@ function CopilotPageContent() {
   function submit(rawContent?: string, options?: { fromMessageId?: string; activeSessionId?: string }) {
     const content = (rawContent ?? question).trim();
     if (!content || activeAsk) return;
-    const currentSession =
+    let currentSession =
       (options?.activeSessionId ? readSessionState().sessions.find((s) => s.id === options.activeSessionId) || null : null) || ensureActiveSession();
     if (!currentSession) return;
+    const activeDomainId = getActiveBusinessDomainId();
+    const sessionDomainId =
+      typeof currentSession.business_domain_id === "number" && Number.isFinite(currentSession.business_domain_id)
+        ? currentSession.business_domain_id
+        : (typeof activeDomainId === "number" && Number.isFinite(activeDomainId) ? activeDomainId : null);
+    if (
+      currentSession.business_domain_id == null &&
+      typeof sessionDomainId === "number" &&
+      Number.isFinite(sessionDomainId)
+    ) {
+      const currentSessionId = currentSession.id;
+      const nextState = setSessionBusinessDomain(currentSession.id, sessionDomainId);
+      syncState(nextState);
+      currentSession = nextState.sessions.find((s) => s.id === currentSessionId) || currentSession;
+    }
     const userMessageResult = appendUserMessage(content, {
       activeSessionId: currentSession.id,
       fromMessageId: options?.fromMessageId
@@ -321,7 +314,7 @@ function CopilotPageContent() {
     const askPayload: AskPayload = {
       question: content,
       table_id: Number.isFinite(tableParamNum) ? tableParamNum : null,
-      business_domain_id: typeof sessionAfterUser.business_domain_id === "number" ? sessionAfterUser.business_domain_id : null,
+      business_domain_id: sessionDomainId,
       chat_model: chatModelSelect === "auto" ? null : chatModelSelect
     };
     settlingSessionRef.current = sessionAfterUser.id;
@@ -605,31 +598,6 @@ function CopilotPageContent() {
                         {preferenceChatModels.map((m) => (
                           <option key={m.id} value={m.id}>
                             {formatPreferenceModelDisplay(m)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
-                  {activeSession ? (
-                    <label className="flex items-center gap-1">
-                      <span className="shrink-0">业务域</span>
-                      <select
-                        className="app-input max-w-[10rem] py-1 text-xs"
-                        disabled={!!activeAsk}
-                        value={activeSession.business_domain_id ?? ""}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          setSessionBusinessDomain(
-                            activeSession.id,
-                            v === "" ? undefined : Number(v)
-                          );
-                          loadSessionsFromStorage();
-                        }}
-                      >
-                        <option value="">不关联</option>
-                        {businessDomains.map((d) => (
-                          <option key={d.id} value={d.id}>
-                            {d.name}
                           </option>
                         ))}
                       </select>

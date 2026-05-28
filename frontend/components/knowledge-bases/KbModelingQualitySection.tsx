@@ -51,13 +51,14 @@ export default function KbModelingQualitySection({
     setMetricsLoaded(false);
     setConfidenceItems([]);
     setQuarantineTotal(0);
+    setSelectedLayer(null);
   }, [kbId]);
 
   const syncHashToState = useCallback(() => {
     if (typeof window === "undefined") return;
     const parsed = parseModelingHash(window.location.hash);
     setModelingTab(parsed.tab);
-    if (parsed.layer) setSelectedLayer(parsed.layer);
+    setSelectedLayer(parsed.layer ?? null);
   }, []);
 
   useEffect(() => {

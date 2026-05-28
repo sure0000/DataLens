@@ -8,6 +8,8 @@ from sqlalchemy.orm import Session
 from starlette.responses import StreamingResponse
 
 from database import get_db
+from models import BusinessDomain
+from services.business_domain_scope import resolve_scope_domain
 from services.rag_service import answer
 
 router = APIRouter(prefix="/api", tags=["copilot"])
@@ -22,12 +24,17 @@ class AskBody(BaseModel):
 
 
 @router.post("/ask")
-async def ask(body: AskBody, db: Session = Depends(get_db)) -> dict:
+async def ask(
+    body: AskBody,
+    db: Session = Depends(get_db),
+    scope_domain: BusinessDomain = Depends(resolve_scope_domain),
+) -> dict:
+    domain_id = body.business_domain_id if body.business_domain_id is not None else scope_domain.id
     return await answer(
         db,
         body.question,
         body.table_id,
-        body.business_domain_id,
+        domain_id,
         chat_model=body.chat_model,
     )
 
@@ -37,6 +44,7 @@ async def ask_ontology_trace(
     question: str = Query(..., description="User question for ontology routing"),
     domain_id: int | None = Query(None, description="Business domain ID"),
     db: Session = Depends(get_db),
+    scope_domain: BusinessDomain = Depends(resolve_scope_domain),
 ) -> dict[str, Any]:
     """Return the ontology routing trace for a question.
 
@@ -46,14 +54,21 @@ async def ask_ontology_trace(
     from services.copilot.pipeline import route_question
 
     try:
-        result = route_question(db, question, domain_id=domain_id)
+        resolved_domain_id = domain_id if domain_id is not None else scope_domain.id
+        result = route_question(db, question, domain_id=resolved_domain_id)
         return {"status": "ok", **result}
     except Exception as exc:
         return {"status": "error", "message": str(exc)}
 
 
 @router.post("/ask/stream")
-async def ask_stream(body: AskBody, db: Session = Depends(get_db)) -> StreamingResponse:
+async def ask_stream(
+    body: AskBody,
+    db: Session = Depends(get_db),
+    scope_domain: BusinessDomain = Depends(resolve_scope_domain),
+) -> StreamingResponse:
+    domain_id = body.business_domain_id if body.business_domain_id is not None else scope_domain.id
+
     async def event_stream():
         event_queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
 
@@ -68,7 +83,7 @@ async def ask_stream(body: AskBody, db: Session = Depends(get_db)) -> StreamingR
                 db,
                 body.question,
                 body.table_id,
-                body.business_domain_id,
+                domain_id,
                 stage_callback=emit_status,
                 trace_callback=emit_trace,
                 chat_model=body.chat_model,

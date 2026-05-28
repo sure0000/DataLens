@@ -27,14 +27,13 @@ import GitSourceForm, {
 } from "../../../components/knowledge-bases/GitSourceForm";
 import ImportPickerModal from "../../../components/knowledge-bases/ImportPickerModal";
 import EvidencePackageList from "../../../components/knowledge-bases/EvidencePackageList";
-import { kbModelingSectionUrl, ontologyUrl } from "../../../lib/ontologyRoutes";
+import { kbModelingSectionUrl } from "../../../lib/ontologyRoutes";
 import type { SourceItem } from "../../../components/knowledge-bases/SourceCard";
 import SourceCardGrid from "../../../components/knowledge-bases/SourceCardGrid";
 import {
-  canSemanticCleanSource,
   isDocumentIndexingInProgress,
-  semanticCleanDisabledReason,
 } from "../../../components/knowledge-bases/documentIndexPolicy";
+import { shouldShowApiSourceInKb } from "../../../components/knowledge-bases/apiSourceMatching";
 import SemanticCleanChoiceDialog, {
   type SemanticCleanResumeOptions,
 } from "../../../components/knowledge-bases/SemanticCleanChoiceDialog";
@@ -99,10 +98,6 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   const [gitFormData, setGitFormData] = useState<GitSourceFormData>(defaultGitFormData());
   const [gitSaving, setGitSaving] = useState(false);
 
-  // ── Git sync ──
-  const [gitSyncingId, setGitSyncingId] = useState<number | null>(null);
-  const gitSyncLockRef = useRef(false);
-
   // ── Confirm dialog ──
   const [confirmState, setConfirmState] = useState<{
     title: string;
@@ -117,9 +112,6 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   // ── Settings menu ──
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
-
-  // ── Tag loading ──
-  const [tagLoading, setTagLoading] = useState(false);
 
   // ── Database imports ──
   const [databaseImports, setDatabaseImports] = useState<DatabaseImport[]>([]);
@@ -165,24 +157,28 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     if (!Number.isFinite(kbId)) return;
     setLoading(true);
     try {
-      const [res, gitRes, kbApiRes, globalApiRes] = await Promise.all([
+      const [res, gitRes, kbApiRes, globalApiRes, docsRes] = await Promise.all([
         api<{ knowledge_base: KB; entries: Entry[] }>(`/api/knowledge-bases/${kbId}`),
         api<{ git_sources: GitSource[] }>(`/api/knowledge-bases/${kbId}/git-sources`).catch(() => ({ git_sources: [] })),
         api<{ api_sources: ApiSource[] }>(`/api/knowledge-bases/${kbId}/api-sources`).catch(() => ({ api_sources: [] })),
         api<{ api_sources: ApiSource[] }>(`/api/api-sources`).catch(() => ({ api_sources: [] })),
+        api<{ documents: DocRow[] }>(`/api/knowledge-bases/${kbId}/documents`).catch(() => ({ documents: [] })),
       ]);
       setKb(res.knowledge_base);
       setEntries(res.entries);
       setGitSources(gitRes.git_sources ?? []);
+      const docs = docsRes.documents ?? [];
+      setDocuments(docs);
       const mergedApi = [...(kbApiRes.api_sources ?? [])];
       const seen = new Set(mergedApi.map((s) => s.id));
       for (const s of globalApiRes.api_sources ?? []) {
-        if (!seen.has(s.id)) mergedApi.push(s);
+        if (seen.has(s.id)) continue;
+        if (!shouldShowApiSourceInKb(s, res.entries ?? [], docs)) continue;
+        mergedApi.push(s);
       }
       setApiSources(mergedApi);
       const dbRes = await api<{ imports: DatabaseImport[] }>(`/api/knowledge-bases/${kbId}/database-imports`).catch(() => ({ imports: [] }));
       setDatabaseImports(dbRes.imports ?? []);
-      loadDocuments();
       loadCleaningResults();
       loadSourceCleaningStats();
       checkRunningPipeline();
@@ -273,34 +269,6 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [settingsMenuOpen]);
-
-  // ── Document retry ──
-
-  async function retryDocument(docId: number) {
-    try {
-      await api(`/api/knowledge-bases/${kbId}/documents/${docId}/retry`, { method: "POST" });
-      notifyUser("已重新提交处理", "success");
-      loadDocuments();
-    } catch (e: unknown) {
-      notifyUser(
-        e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "重试失败",
-        "error",
-      );
-    }
-  }
-
-  async function manualIndexDocument(docId: number) {
-    try {
-      await api(`/api/knowledge-bases/${kbId}/documents/${docId}/manual-index`, { method: "POST" });
-      notifyUser("已提交手动索引，正在后台处理", "success");
-      loadDocuments();
-    } catch (e: unknown) {
-      notifyUser(
-        e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "手动索引失败",
-        "error",
-      );
-    }
-  }
 
   // ── Semantic clean ──
 
@@ -441,11 +409,6 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   }
 
   async function handleSemanticClean(source: SourceItem) {
-    if (!canSemanticCleanSource(source)) {
-      notifyUser(semanticCleanDisabledReason(source) ?? "文档尚未完成索引", "error");
-      return;
-    }
-
     const { sourceId, sourceType, label } = resolveSemanticCleanTarget(source);
 
     try {
@@ -513,30 +476,6 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   }
 
   // ═══════════════════════════════════════════════════
-  // Git actions
-  // ═══════════════════════════════════════════════════
-
-  async function syncGitSourceNow(id: number) {
-    if (gitSyncLockRef.current) return;
-    gitSyncLockRef.current = true;
-    setGitSyncingId(id);
-    notifyUser("正在从 GitHub/GitLab 拉取文件并写入向量索引，可能需要几十秒至数分钟，请稍候…", "info");
-    try {
-      const res = await api<{ ok?: boolean; files?: number; message?: string }>(
-        `/api/knowledge-bases/${kbId}/git-sources/${id}/sync`,
-        { method: "POST" },
-      );
-      notifyUser(res.message || `已同步 ${res.files ?? 0} 个文件`, "success", { persist: true });
-      await loadAll();
-    } catch (e: unknown) {
-      let detail = e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "同步失败";
-      detail = (detail || "").trim() || "同步失败（未收到具体错误信息，请打开浏览器开发者工具 → Network 查看该请求响应）";
-      notifyUser(detail, "error", { persist: true });
-      await loadAll();
-    } finally { setGitSyncingId(null); gitSyncLockRef.current = false; }
-  }
-
-  // ═══════════════════════════════════════════════════
   // Git edit modal helpers
   // ═══════════════════════════════════════════════════
 
@@ -554,6 +493,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       includeGlobs: s.include_globs,
       maxFileKb: s.max_file_kb,
       maxFiles: s.max_files,
+      enableDocumentIndexing: !!s.enable_document_indexing,
       cron: s.cron_expression ?? "",
       enabled: s.enabled,
     });
@@ -578,6 +518,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
         include_globs: gitFormData.includeGlobs.trim(),
         max_file_kb: gitFormData.maxFileKb,
         max_files: gitFormData.maxFiles,
+        enable_document_indexing: gitFormData.enableDocumentIndexing,
         cron_expression: gitFormData.cron.trim() || null,
         enabled: gitFormData.enabled,
       };
@@ -606,56 +547,6 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     notifyUser("知识库信息已更新");
     setEditKbOpen(false);
     loadAll();
-  }
-
-  // ── Tag mutations ──
-
-  async function handleAddTag(source: SourceItem, tag: string) {
-    const currentTags = getSourceTags(source);
-    if (currentTags.includes(tag)) return;
-    const newTags = [...currentTags, tag];
-    await updateSourceTags(source, newTags);
-  }
-
-  async function handleRemoveTag(source: SourceItem, tag: string) {
-    const currentTags = getSourceTags(source);
-    const newTags = currentTags.filter((t) => t !== tag);
-    await updateSourceTags(source, newTags);
-  }
-
-  function getSourceTags(source: SourceItem): string[] {
-    if (source.kind === "git") return source.data.tags ?? [];
-    if (source.kind === "api") return source.data.tags ?? [];
-    if (source.kind === "database") return [];
-    return source.entry.tags ?? [];
-  }
-
-  async function updateSourceTags(source: SourceItem, tags: string[]) {
-    setTagLoading(true);
-    try {
-      if (source.kind === "git") {
-        await api(`/api/knowledge-bases/${kbId}/git-sources/${source.data.id}`, {
-          method: "PUT",
-          body: JSON.stringify({ tags }),
-        });
-      } else if (source.kind === "api") {
-        await api(`/api/knowledge-bases/${kbId}/api-sources/${source.data.id}`, {
-          method: "PUT",
-          body: JSON.stringify({ tags }),
-        });
-      } else if (source.kind === "database") {
-        // Database imports don't support tags yet
-        return;
-      } else {
-        await api(`/api/knowledge-bases/${kbId}/entries/${source.entry.id}`, {
-          method: "PUT",
-          body: JSON.stringify({ tags }),
-        });
-      }
-      loadAll();
-    } catch (e: unknown) {
-      notifyUser(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "标签更新失败", "error");
-    } finally { setTagLoading(false); }
   }
 
   // ═══════════════════════════════════════════════════
@@ -695,12 +586,6 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
               className="app-button-secondary app-toolbar-action no-underline"
             >
               建模与质量
-            </Link>
-            <Link
-              href={ontologyUrl({ kbId })}
-              className="app-button-secondary app-toolbar-action no-underline"
-            >
-              本体浏览
             </Link>
             <div className="relative" ref={settingsMenuRef}>
               <button
@@ -759,14 +644,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                   documents={documents}
                   databaseImports={databaseImports}
                   kbId={kbId}
-                  gitSyncingId={gitSyncingId}
-                  onSyncGit={syncGitSourceNow}
-                  onRetryDoc={retryDocument}
-                  onManualIndexDoc={manualIndexDocument}
                   onRefresh={loadAll}
-                  onAddTag={handleAddTag}
-                  onRemoveTag={handleRemoveTag}
-                  tagLoading={tagLoading}
                   onSemanticClean={handleSemanticClean}
                   cleaningSourceKey={cleaningSourceKey}
                   cleaningStats={cleaningStats}

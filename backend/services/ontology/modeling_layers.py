@@ -124,7 +124,7 @@ def _graph_context(kb_id: int) -> tuple[str, str, str, str, str]:
 def _count_queries(kb_id: int) -> dict[str, int]:
     graph, ns, skos, rdf_ns, rdf_type = _graph_context(kb_id)
     relation_predicates = relation_predicate_in_clause()
-    entity_types = " ".join(
+    entity_types = ", ".join(
         [
             f"<{ns}BusinessTerm>",
             f"<{ns}Metric>",
@@ -132,7 +132,7 @@ def _count_queries(kb_id: int) -> dict[str, int]:
             f"<{ns}BusinessConcept>",
         ]
     )
-    attr_exclude = " ".join([f"<{rdf_type}>", f"<{ns}approvalStatus>"])
+    attr_exclude = ", ".join([f"<{rdf_type}>", f"<{ns}approvalStatus>"])
     return {
         "vocabulary": _sparql_count(f"""
             PREFIX dl: <{ns}>
@@ -162,13 +162,6 @@ def _count_queries(kb_id: int) -> dict[str, int]:
                 GRAPH <{graph}> {{
                     ?s rdf:type ?entityType .
                     FILTER(?entityType IN ({entity_types}))
-                    {{
-                        ?s skos:broader|skos:narrower ?n .
-                    }}
-                    UNION
-                    {{
-                        ?n skos:broader|skos:narrower ?s .
-                    }}
                 }}
             }}
         """),
@@ -254,7 +247,7 @@ def _fetch_layer_items(kb_id: int, layer_key: str) -> list[dict[str, str]]:
         """)
 
     if layer_key == "entity-concept":
-        entity_types = " ".join(
+        entity_types = ", ".join(
             [
                 f"<{ns}BusinessTerm>",
                 f"<{ns}Metric>",
@@ -276,12 +269,14 @@ def _fetch_layer_items(kb_id: int, layer_key: str) -> list[dict[str, str]]:
                     ?s rdf:type ?entityType0 .
                     FILTER(?entityType0 IN ({entity_types}))
                     OPTIONAL {{ ?s skos:prefLabel ?label0 }}
-                    {{
-                        ?s skos:broader|skos:narrower ?neighbor .
-                    }}
-                    UNION
-                    {{
-                        ?neighbor skos:broader|skos:narrower ?s .
+                    OPTIONAL {{
+                        {{
+                            ?s skos:broader|skos:narrower ?neighbor .
+                        }}
+                        UNION
+                        {{
+                            ?neighbor skos:broader|skos:narrower ?s .
+                        }}
                     }}
                 }}
             }}
@@ -319,7 +314,7 @@ def _fetch_layer_items(kb_id: int, layer_key: str) -> list[dict[str, str]]:
         """)
 
     if layer_key == "attribute":
-        attr_exclude = " ".join([f"<{rdf_type}>", f"<{ns}approvalStatus>"])
+        attr_exclude = ", ".join([f"<{rdf_type}>", f"<{ns}approvalStatus>"])
         return _sparql_rows(f"""
             PREFIX dl: <{ns}>
             PREFIX skos: <{skos}>

@@ -3,7 +3,6 @@ import { entryMatchesApiSource } from "./apiSourceMatching";
 import type { SourceItem } from "./SourceCard";
 import {
   isDocumentIndexingInProgress,
-  needsDocumentIndexing,
 } from "./documentIndexPolicy";
 
 export type SourceIndexSummary = {
@@ -114,28 +113,11 @@ export function getSourceIndexContext(source: SourceItem): {
 }
 
 export function canSemanticCleanSourceItem(source: SourceItem): boolean {
-  if (source.kind === "database") return true;
-  const ctx = getSourceIndexContext(source);
-  if (ctx.summary) return aggregateCanSemanticClean(ctx.summary);
-  if (ctx.primaryDoc) return ctx.primaryDoc.status === "indexed";
-  if (source.kind === "manual") return false;
-  return false;
+  void source;
+  return true;
 }
 
 export function semanticCleanDisabledReasonForSource(source: SourceItem): string | null {
-  if (source.kind === "database") return null;
-  const ctx = getSourceIndexContext(source);
-  if (ctx.summary) return aggregateSemanticCleanDisabledReason(ctx.summary);
-  const doc = ctx.primaryDoc;
-  if (!doc) {
-    if (source.kind === "manual") return "文档索引尚未创建";
-    return needsDocumentIndexing(doc) ? "文档索引尚未创建" : null;
-  }
-  if (doc.status === "indexed") return null;
-  if (doc.status === "failed") {
-    if ((doc.index_attempts ?? 0) >= 3) return "索引已失败 3 次，请先手动索引";
-    return "文档索引失败，请先重试索引";
-  }
-  if (isDocumentIndexingInProgress(doc)) return "文档索引进行中";
-  return "文档尚未完成索引";
+  void source;
+  return null;
 }

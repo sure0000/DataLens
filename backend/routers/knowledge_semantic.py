@@ -424,17 +424,11 @@ def trigger_source_cleaning(
     """对单个导入源触发语义清洗（后台执行，立即返回）。"""
     import logging as _log
 
-    from services.document_index_policy import assert_document_indexed_for_semantic_clean
     from services.semantic_extraction import trigger_semantic_pipeline_background
 
     kb = db.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
-
-    try:
-        assert_document_indexed_for_semantic_clean(db, kb_id, source_id, source_type)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     _log.getLogger(__name__).info(
         "Manual source cleaning triggered: kb=%d source=%d type=%s",

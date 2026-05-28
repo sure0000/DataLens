@@ -12,14 +12,7 @@ interface SourceCardGridProps {
   documents: DocRow[];
   databaseImports: DatabaseImport[];
   kbId: number;
-  gitSyncingId?: number | null;
-  onSyncGit?: (id: number) => void;
-  onRetryDoc?: (docId: number) => void;
-  onManualIndexDoc?: (docId: number) => void;
   onRefresh?: () => void;
-  onAddTag?: (source: SourceItem, tag: string) => void;
-  onRemoveTag?: (source: SourceItem, tag: string) => void;
-  tagLoading?: boolean;
   onSemanticClean?: (source: SourceItem) => void;
   cleaningSourceKey?: string | null;
   cleaningStats?: Record<string, SourceCleaningStat> | null;
@@ -33,14 +26,7 @@ export default function SourceCardGrid({
   documents,
   databaseImports,
   kbId,
-  gitSyncingId,
-  onSyncGit,
-  onRetryDoc,
-  onManualIndexDoc,
   onRefresh,
-  onAddTag,
-  onRemoveTag,
-  tagLoading,
   onSemanticClean,
   cleaningSourceKey,
   cleaningStats,
@@ -76,11 +62,17 @@ export default function SourceCardGrid({
     }
   }
 
-  // File / API-imported entries — include any entry with a linked document or known import kind
+  // File / API-imported entries
+  // Exclude git_file and manual: codebase indexed files should not appear
+  // as standalone cards in the source list.
   const importedKinds = new Set(["file", "notion_api", "confluence_api", "feishu_api", "web"]);
   const importedEntries = entries.filter((e) => {
-    const kind = e.source_meta?.kind;
-    return docByEntryId[e.id] != null || (kind != null && importedKinds.has(kind));
+    const kind = String(e.source_meta?.kind || "");
+    if (kind === "git_file" || kind === "manual") return false;
+    if (kind && importedKinds.has(kind)) return true;
+    // Legacy fallback: entries with linked docs but without explicit kind
+    // are still treated as file cards.
+    return docByEntryId[e.id] != null && !kind;
   });
 
   for (const entry of importedEntries) {
@@ -152,13 +144,6 @@ export default function SourceCardGrid({
               key={key}
               source={item}
               kbId={kbId}
-              gitSyncingId={gitSyncingId}
-              onSyncGit={onSyncGit}
-              onRetryDoc={onRetryDoc}
-              onManualIndexDoc={onManualIndexDoc}
-              onAddTag={onAddTag}
-              onRemoveTag={onRemoveTag}
-              tagLoading={tagLoading}
               onSemanticClean={onSemanticClean}
               cleaningSourceKey={cleaningSourceKey}
               itemCleaningKey={cleaningKey}

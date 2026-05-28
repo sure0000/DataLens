@@ -72,11 +72,11 @@ export default function KbModelingQualityPanel({
   }, [syncFromHash]);
 
   useEffect(() => {
-    if (quarantineTotal > 0 && !window.location.hash.includes("quality=metrics")) {
-      const parsed = parseModelingHash(window.location.hash);
-      if (parsed.tab === "quality" && !parsed.qualitySub) {
-        setQualitySub("todo");
-      }
+    if (typeof window === "undefined") return;
+    if (quarantineTotal <= 0) return;
+    const parsed = parseModelingHash(window.location.hash);
+    if (parsed.tab === "quality" && !parsed.qualitySub) {
+      setQualitySub("todo");
     }
   }, [quarantineTotal]);
 

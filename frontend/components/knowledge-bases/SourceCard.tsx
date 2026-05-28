@@ -1,15 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
 import type { ApiSource, DatabaseImport, DocRow, Entry, GitSource, OntologyCounts, SourceCleaningStat } from "./types";
 import { chipSuccess } from "../../lib/themeClasses";
 import {
-  canManualDocumentIndex,
-  canRetryDocumentIndex,
   canSemanticCleanSource,
-  isDocumentIndexingInProgress,
-  needsDocumentIndexing,
   semanticCleanDisabledReason,
 } from "./documentIndexPolicy";
 import { isSourceActivelyCleaning } from "./sourceCleaningKey";
@@ -27,13 +22,6 @@ export type SourceItem =
 interface SourceCardProps {
   source: SourceItem;
   kbId: number;
-  gitSyncingId?: number | null;
-  onSyncGit?: (id: number) => void;
-  onRetryDoc?: (docId: number) => void;
-  onManualIndexDoc?: (docId: number) => void;
-  onAddTag?: (source: SourceItem, tag: string) => void;
-  onRemoveTag?: (source: SourceItem, tag: string) => void;
-  tagLoading?: boolean;
   onSemanticClean?: (source: SourceItem) => void;
   cleaningSourceKey?: string | null;
   itemCleaningKey: string;
@@ -41,104 +29,9 @@ interface SourceCardProps {
   ontologyCounts?: OntologyCounts;
 }
 
-function getTags(source: SourceItem): string[] {
-  if (source.kind === "git") return source.data.tags ?? [];
-  if (source.kind === "api") return source.data.tags ?? [];
-  if (source.kind === "database") return [];
-  if (source.kind === "api_entry") return source.entry.tags ?? [];
-  return source.entry.tags ?? [];
-}
-
 function formatCleaningDate(iso: string): string {
   const d = new Date(iso);
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()} ${d.toLocaleTimeString("zh-CN", { hour12: false })}`;
-}
-
-function DocumentSourceActions({
-  source,
-  doc,
-  itemCleaningKey,
-  cleaningSourceKey,
-  cleaningStat,
-  onRetryDoc,
-  onManualIndexDoc,
-  onSemanticClean,
-  tagRow,
-}: {
-  source: SourceItem;
-  doc?: DocRow;
-  itemCleaningKey: string;
-  cleaningSourceKey?: string | null;
-  cleaningStat?: SourceCleaningStat;
-  onRetryDoc?: (docId: number) => void;
-  onManualIndexDoc?: (docId: number) => void;
-  onSemanticClean?: (source: SourceItem) => void;
-  tagRow?: ReactNode;
-}) {
-  const isCleaning = isSourceActivelyCleaning(itemCleaningKey, cleaningSourceKey, cleaningStat);
-  const canClean = canSemanticCleanSource(source);
-  const cleanReason = semanticCleanDisabledReason(source);
-  const showRetry = Boolean(doc && canRetryDocumentIndex(doc) && onRetryDoc);
-  const showManual = Boolean(doc && canManualDocumentIndex(doc) && onManualIndexDoc);
-  const indexing = Boolean(doc && isDocumentIndexingInProgress(doc));
-  const awaitingDoc = needsDocumentIndexing(doc);
-
-  return (
-    <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
-      {!doc && awaitingDoc && (
-        <span className="text-[11px] text-app-muted leading-7 px-1" title="未加载到文档记录，请点刷新">
-          索引未就绪
-        </span>
-      )}
-      {showRetry && (
-        <button
-          className="app-button text-[11px] h-7 px-2.5"
-          type="button"
-          onClick={(e) => {
-            e.preventDefault();
-            onRetryDoc?.(doc!.id);
-          }}
-        >
-          {doc!.status === "pending" ? "开始索引" : "重试索引"}
-        </button>
-      )}
-      {showManual && (
-        <button
-          className="app-button text-[11px] h-7 px-2.5"
-          type="button"
-          title="自动重试已达上限，由您确认后再次执行索引流水线"
-          onClick={(e) => {
-            e.preventDefault();
-            onManualIndexDoc?.(doc!.id);
-          }}
-        >
-          手动索引
-        </button>
-      )}
-      {indexing && !showRetry && !showManual && (
-        <button
-          className="app-button-secondary text-[11px] h-7 px-2.5 opacity-70"
-          type="button"
-          disabled
-        >
-          索引中…
-        </button>
-      )}
-      <button
-        className={`app-button-secondary text-[11px] h-7 px-2.5 ${isCleaning ? "is-loading" : ""}`}
-        type="button"
-        disabled={isCleaning || !canClean}
-        title={!canClean && cleanReason ? cleanReason : undefined}
-        onClick={(e) => {
-          e.preventDefault();
-          onSemanticClean?.(source);
-        }}
-      >
-        {isCleaning ? "清洗中…" : "语义清洗"}
-      </button>
-      {tagRow}
-    </div>
-  );
 }
 
 function SemanticCleanButton({
@@ -178,11 +71,9 @@ function SemanticCleanButton({
 
 function CleaningInfo({
   cleaningStat,
-  ontologyCounts,
   isCleaning,
 }: {
   cleaningStat?: SourceCleaningStat;
-  ontologyCounts?: OntologyCounts;
   isCleaning: boolean;
 }) {
   if (isCleaning) {
@@ -190,9 +81,8 @@ function CleaningInfo({
   }
 
   const hasStat = cleaningStat && (cleaningStat.status === "completed" || cleaningStat.status === "failed");
-  const hasOntology = ontologyCounts && (ontologyCounts.entity > 0 || ontologyCounts.relation > 0);
 
-  if (hasStat || hasOntology) {
+  if (hasStat) {
     const parts: string[] = [];
     if (cleaningStat?.status === "completed") {
       parts.push(`清洗完毕 ${cleaningStat.completed_at ? formatCleaningDate(cleaningStat.completed_at) : ""}`);
@@ -201,95 +91,15 @@ function CleaningInfo({
       const reason = cleaningStat.message || cleaningStat.failure_reason;
       if (reason) parts.push(reason);
     }
-    if (hasOntology) {
-      const entity = ontologyCounts?.entity ?? 0;
-      const relation = ontologyCounts?.relation ?? 0;
-      parts.push(`实体（${entity}），关系（${relation}）`);
-    }
     return <p className="mt-1 text-[11px] text-app-muted">{parts.join(" · ")}</p>;
   }
 
   return <p className="mt-1 text-[11px] text-app-muted">未清洗</p>;
 }
 
-function TagRow({
-  tags,
-  tagLoading,
-  onAddTag,
-  onRemoveTag,
-  source,
-}: {
-  tags: string[];
-  tagLoading?: boolean;
-  onAddTag?: (source: SourceItem, tag: string) => void;
-  onRemoveTag?: (source: SourceItem, tag: string) => void;
-  source: SourceItem;
-}) {
-  const [addTagOpen, setAddTagOpen] = useState(false);
-  const [tagInput, setTagInput] = useState("");
-
-  function handleAddTag() {
-    const t = tagInput.trim();
-    if (!t) { setAddTagOpen(false); setTagInput(""); return; }
-    onAddTag?.(source, t);
-    setTagInput("");
-    setAddTagOpen(false);
-  }
-
-  return (
-    <div className="flex flex-wrap items-center gap-1" onClick={(e) => e.preventDefault()}>
-      {tags.map((tag) => (
-        <span
-          key={tag}
-          className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0 text-[10px] font-medium leading-5 app-tag-violet"
-        >
-          {tag}
-          <button
-            type="button"
-            className="text-violet-400 hover:text-violet-700 leading-none"
-            disabled={tagLoading}
-            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onRemoveTag?.(source, tag); }}
-            aria-label={`删除标签 ${tag}`}
-          >
-            ×
-          </button>
-        </span>
-      ))}
-      {addTagOpen ? (
-        <input
-          className="w-16 rounded border border-violet-300 px-1 py-0 text-[10px] outline-none focus:border-violet-500 leading-5"
-          placeholder="标签名"
-          value={tagInput}
-          autoFocus
-          disabled={tagLoading}
-          onChange={(e) => setTagInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") handleAddTag(); if (e.key === "Escape") { setAddTagOpen(false); setTagInput(""); } }}
-          onBlur={() => { setAddTagOpen(false); setTagInput(""); }}
-        />
-      ) : (
-        <button
-          type="button"
-          className={`inline-flex items-center rounded-full border border-dashed border-app-muted px-1.5 py-0 text-[10px] text-app-muted hover:border-violet-400 hover:text-violet-600 leading-5 ${tagLoading ? "opacity-50" : ""}`}
-          disabled={tagLoading}
-          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setAddTagOpen(true); }}
-        >
-          + 标签
-        </button>
-      )}
-    </div>
-  );
-}
-
 export default function SourceCard({
   source,
   kbId,
-  gitSyncingId,
-  onSyncGit,
-  onRetryDoc,
-  onManualIndexDoc,
-  onAddTag,
-  onRemoveTag,
-  tagLoading,
   onSemanticClean,
   cleaningSourceKey,
   itemCleaningKey,
@@ -297,10 +107,6 @@ export default function SourceCard({
   ontologyCounts,
 }: SourceCardProps) {
   const isCleaning = isSourceActivelyCleaning(itemCleaningKey, cleaningSourceKey, cleaningStat);
-  const tags = getTags(source);
-  const sharedTagRow = (
-    <TagRow tags={tags} tagLoading={tagLoading} onAddTag={onAddTag} onRemoveTag={onRemoveTag} source={source} />
-  );
 
   if (source.kind === "git") {
     const s = source.data;
@@ -345,18 +151,9 @@ export default function SourceCard({
               <p className="mt-1.5 text-[11px] text-app-muted truncate leading-snug">{label}</p>
             ) : null;
           })()}
-          <CleaningInfo cleaningStat={cleaningStat} ontologyCounts={ontologyCounts} isCleaning={isCleaning} />
+          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} />
         </Link>
-        {tags.length > 0 && sharedTagRow}
         <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
-          <button
-            className={`app-button text-[11px] h-7 px-2.5 ${gitSyncingId === s.id ? "is-loading" : ""}`}
-            type="button"
-            disabled={gitSyncingId === s.id}
-            onClick={(e) => { e.preventDefault(); onSyncGit?.(s.id); }}
-          >
-            {gitSyncingId === s.id ? "同步中…" : "同步"}
-          </button>
           <SemanticCleanButton
             source={source}
             itemCleaningKey={itemCleaningKey}
@@ -364,7 +161,6 @@ export default function SourceCard({
             cleaningStat={cleaningStat}
             onSemanticClean={onSemanticClean}
           />
-          {tags.length === 0 && sharedTagRow}
         </div>
       </article>
     );
@@ -418,9 +214,8 @@ export default function SourceCard({
               <p className="mt-1.5 text-[11px] text-app-muted truncate leading-snug">{label}</p>
             ) : null;
           })()}
-          <CleaningInfo cleaningStat={cleaningStat} ontologyCounts={ontologyCounts} isCleaning={isCleaning} />
+          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} />
         </Link>
-        {tags.length > 0 && sharedTagRow}
         <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
           <SemanticCleanButton
             source={source}
@@ -429,14 +224,6 @@ export default function SourceCard({
             cleaningStat={cleaningStat}
             onSemanticClean={onSemanticClean}
           />
-          <Link
-            href={`/knowledge-bases/${kbId}/sources/${s.id}?type=api`}
-            className="app-button-secondary text-[11px] h-7 px-2.5 no-underline inline-flex items-center"
-            onClick={(e) => e.stopPropagation()}
-          >
-            管理
-          </Link>
-          {tags.length === 0 && sharedTagRow}
         </div>
       </article>
     );
@@ -486,20 +273,17 @@ export default function SourceCard({
           {doc?.status === "failed" && doc.error_message && (
             <p className="mt-1 text-[11px] app-text-danger line-clamp-2 leading-snug break-words">{doc.error_message}</p>
           )}
-          <CleaningInfo cleaningStat={cleaningStat} ontologyCounts={ontologyCounts} isCleaning={isCleaning} />
+          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} />
         </Link>
-        <DocumentSourceActions
-          source={source}
-          doc={doc}
-          itemCleaningKey={itemCleaningKey}
-          cleaningSourceKey={cleaningSourceKey}
-          cleaningStat={cleaningStat}
-          onRetryDoc={onRetryDoc}
-          onManualIndexDoc={onManualIndexDoc}
-          onSemanticClean={onSemanticClean}
-          tagRow={tags.length === 0 ? sharedTagRow : undefined}
-        />
-        {tags.length > 0 && sharedTagRow}
+        <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
+          <SemanticCleanButton
+            source={source}
+            itemCleaningKey={itemCleaningKey}
+            cleaningSourceKey={cleaningSourceKey}
+            cleaningStat={cleaningStat}
+            onSemanticClean={onSemanticClean}
+          />
+        </div>
       </article>
     );
   }
@@ -539,20 +323,17 @@ export default function SourceCard({
               {doc.char_count != null ? ` · ${doc.char_count.toLocaleString()} 字符` : ""}
             </p>
           )}
-          <CleaningInfo cleaningStat={cleaningStat} ontologyCounts={ontologyCounts} isCleaning={isCleaning} />
+          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} />
         </Link>
-        <DocumentSourceActions
-          source={source}
-          doc={doc}
-          itemCleaningKey={itemCleaningKey}
-          cleaningSourceKey={cleaningSourceKey}
-          cleaningStat={cleaningStat}
-          onRetryDoc={onRetryDoc}
-          onManualIndexDoc={onManualIndexDoc}
-          onSemanticClean={onSemanticClean}
-          tagRow={tags.length === 0 ? sharedTagRow : undefined}
-        />
-        {tags.length > 0 && sharedTagRow}
+        <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
+          <SemanticCleanButton
+            source={source}
+            itemCleaningKey={itemCleaningKey}
+            cleaningSourceKey={cleaningSourceKey}
+            cleaningStat={cleaningStat}
+            onSemanticClean={onSemanticClean}
+          />
+        </div>
       </article>
     );
   }
@@ -591,7 +372,7 @@ export default function SourceCard({
           {s.last_error && (
             <p className="mt-1 text-[11px] app-text-danger line-clamp-2 leading-snug break-words">{s.last_error}</p>
           )}
-          <CleaningInfo cleaningStat={cleaningStat} ontologyCounts={ontologyCounts} isCleaning={isCleaning} />
+          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} />
         </Link>
         <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
           <SemanticCleanButton
@@ -600,7 +381,6 @@ export default function SourceCard({
             cleaningSourceKey={cleaningSourceKey}
             cleaningStat={cleaningStat}
             onSemanticClean={onSemanticClean}
-            className="app-button text-[11px] h-7 px-2.5"
           />
         </div>
       </article>
@@ -645,20 +425,17 @@ export default function SourceCard({
         {doc?.status === "failed" && doc.error_message && (
           <p className="mt-1 text-[11px] app-text-danger line-clamp-2 leading-snug break-words">{doc.error_message}</p>
         )}
-        <CleaningInfo cleaningStat={cleaningStat} ontologyCounts={ontologyCounts} isCleaning={isCleaning} />
+        <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} />
       </Link>
-      <DocumentSourceActions
-        source={source}
-        doc={doc}
-        itemCleaningKey={itemCleaningKey}
-        cleaningSourceKey={cleaningSourceKey}
-        cleaningStat={cleaningStat}
-        onRetryDoc={onRetryDoc}
-        onManualIndexDoc={onManualIndexDoc}
-        onSemanticClean={onSemanticClean}
-        tagRow={tags.length === 0 ? sharedTagRow : undefined}
-      />
-      {tags.length > 0 && sharedTagRow}
+      <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
+        <SemanticCleanButton
+          source={source}
+          itemCleaningKey={itemCleaningKey}
+          cleaningSourceKey={cleaningSourceKey}
+          cleaningStat={cleaningStat}
+          onSemanticClean={onSemanticClean}
+        />
+      </div>
     </article>
   );
 }

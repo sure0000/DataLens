@@ -33,7 +33,8 @@ app.add_middleware(
     allow_origin_regex=settings.cors_origin_regex or None,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "Authorization", "Accept"],
+    # 前端会携带业务域隔离头，需在 CORS 预检中显式放行。
+    allow_headers=["Content-Type", "Authorization", "Accept", "X-Business-Domain-Id"],
 )
 
 

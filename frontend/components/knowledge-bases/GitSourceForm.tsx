@@ -14,6 +14,7 @@ interface GitSourceFormData {
   includeGlobs: string;
   maxFileKb: number;
   maxFiles: number;
+  enableDocumentIndexing: boolean;
   cron: string;
   enabled: boolean;
 }
@@ -40,6 +41,7 @@ export function defaultGitFormData(): GitSourceFormData {
     includeGlobs: "*.md,*.sql,*.py,*.ts,*.tsx,*.java,*.go,*.rs,*.yml,*.yaml,*.json",
     maxFileKb: 512,
     maxFiles: 200,
+    enableDocumentIndexing: false,
     cron: "",
     enabled: true,
   };
@@ -210,6 +212,19 @@ export default function GitSourceForm({ data, onChange, disabled, isEditing }: G
           onChange={(e) => f({ cron: e.target.value })}
           disabled={disabled}
         />
+      </label>
+
+      <label className="app-form-label sm:col-span-2">
+        <span>文档索引</span>
+        <label className="mt-2 inline-flex items-center gap-2 text-sm text-app-secondary">
+          <input
+            type="checkbox"
+            checked={data.enableDocumentIndexing}
+            onChange={(e) => f({ enableDocumentIndexing: e.target.checked })}
+            disabled={disabled}
+          />
+          启用文档分块与向量索引（用于语义检索；关闭时仅做代码解析）
+        </label>
       </label>
     </div>
   );

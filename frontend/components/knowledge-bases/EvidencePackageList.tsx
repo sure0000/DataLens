@@ -4,36 +4,102 @@ import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../../lib/api";
 import type { ModelingStatus } from "../ontology/ModelingPipelineStatus";
 import type { PipelineStepIconStatus } from "../icons";
-import { ConnectorIcon } from "../icons";
 import type { EvidencePackage } from "./ingestionTypes";
 import { CONNECTOR_LABELS } from "./ingestionTypes";
 import type { SourceCleaningStat } from "./types";
 import { evidencePackageCleaningKey } from "./sourceCleaningKey";
 
-/** 连接器图标悬停说明：仅显示连接器中文名 */
-function connectorTooltip(pkg: EvidencePackage): string {
+function connectorDisplayLabel(pkg: EvidencePackage): string {
   const fromApi = (pkg.connector_label || "").trim();
   const fallback = CONNECTOR_LABELS[pkg.connector as keyof typeof CONNECTOR_LABELS];
   return fromApi || fallback || pkg.connector;
 }
 
-function AssetTypeCell({ pkg }: { pkg: EvidencePackage }) {
-  const tip = connectorTooltip(pkg);
+function SourceConnectorIcon({ connector }: { connector: string }) {
+  const props = {
+    width: 16,
+    height: 16,
+    viewBox: "0 0 24 24",
+    fill: "none",
+    stroke: "currentColor",
+    strokeWidth: 1.5,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+    "aria-hidden": true,
+  };
+
+  if (connector === "git") {
+    return (
+      <span className="text-orange-500">
+        <svg {...props}>
+          <path d="M15 22v-4a4.8 4.8 0 00-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.47.28-1.14.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.14-.3 2.35 0 3.5A5.403 5.403 0 004 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4" />
+          <path d="M9 18c-4.51 2-5-2-7-2" />
+        </svg>
+      </span>
+    );
+  }
+  if (connector === "database") {
+    return (
+      <span className="text-cyan-600">
+        <svg {...props}>
+          <ellipse cx="12" cy="6" rx="8" ry="3" />
+          <path d="M4 6v6c0 1.66 3.58 3 8 3s8-1.34 8-3V6" />
+          <path d="M4 12v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6" />
+        </svg>
+      </span>
+    );
+  }
+  if (connector === "api") {
+    return (
+      <span className="text-app-muted">
+        <svg {...props}>
+          <path d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
+        </svg>
+      </span>
+    );
+  }
+  if (connector === "manual") {
+    return (
+      <span className="text-app-secondary">
+        <svg {...props}>
+          <path d="M12 20h9" />
+          <path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+        </svg>
+      </span>
+    );
+  }
+  if (connector === "ttl") {
+    return (
+      <span className="text-app-secondary">
+        <svg {...props}>
+          <path d="M21 16V8a2 2 0 00-1-1.73l-7-4a2 2 0 00-2 0l-7 4A2 2 0 003 8v8a2 2 0 001 1.73l7 4a2 2 0 002 0l7-4A2 2 0 0021 16z" />
+          <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+          <line x1="12" y1="22.08" x2="12" y2="12" />
+        </svg>
+      </span>
+    );
+  }
+  return (
+    <span className="app-text-accent">
+      <svg {...props}>
+        <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+        <polyline points="10 9 9 9 8 9" />
+      </svg>
+    </span>
+  );
+}
+
+function ConnectorCell({ pkg }: { pkg: EvidencePackage }) {
+  const label = connectorDisplayLabel(pkg);
   return (
     <div className="flex items-center gap-2 min-w-0">
-      <span
-        className="group relative inline-flex h-7 w-7 shrink-0 cursor-help items-center justify-center rounded-md border border-app-border bg-[var(--app-surface)]"
-        aria-label={tip}
-      >
-        <ConnectorIcon connector={pkg.connector} />
-        <span
-          role="tooltip"
-          className="pointer-events-none absolute bottom-[calc(100%+6px)] left-1/2 z-20 hidden w-max max-w-[240px] -translate-x-1/2 rounded-md border border-app-border bg-[var(--app-surface)] px-2 py-1 text-[11px] leading-snug text-app-primary shadow-md group-hover:block"
-        >
-          {tip}
-        </span>
+      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-app-border bg-[var(--app-surface)]">
+        <SourceConnectorIcon connector={pkg.connector} />
       </span>
-      <span className="truncate text-app-primary">{pkg.asset_label}</span>
+      <span className="truncate text-app-primary">{label}</span>
     </div>
   );
 }
@@ -363,7 +429,10 @@ const EvidencePackageRow = memo(function EvidencePackageRow({
         {pkg.title}
       </td>
       <td className="px-3 py-2 max-w-[180px]">
-        <AssetTypeCell pkg={pkg} />
+        <ConnectorCell pkg={pkg} />
+      </td>
+      <td className="px-3 py-2 max-w-[180px]">
+        <span className="truncate text-app-primary">{pkg.asset_label}</span>
       </td>
       <td className="px-3 py-2">
         {statusSteps.length > 0 && (
@@ -428,6 +497,13 @@ export default function EvidencePackageList({
   kbId: number;
   cleaningStats?: Record<string, SourceCleaningStat> | null;
 }) {
+  function packageOrderId(pkg: EvidencePackage): number {
+    if (typeof pkg.db_id === "number") return pkg.db_id;
+    const display = (pkg.display_id || "").trim();
+    const m = /^EP-(\d+)$/.exec(display);
+    return m ? Number(m[1]) : Number.MAX_SAFE_INTEGER;
+  }
+
   const [packages, setPackages] = useState<EvidencePackage[]>([]);
   const [localCleaningStats, setLocalCleaningStats] = useState<Record<string, SourceCleaningStat> | null>(null);
   const [modeling, setModeling] = useState<ModelingStatus | null>(null);
@@ -441,7 +517,10 @@ export default function EvidencePackageList({
       const pkgRes = await api<{ packages: EvidencePackage[] }>(
         `/api/knowledge-bases/${kbId}/ingestion/packages`,
       );
-      setPackages(pkgRes.packages ?? []);
+      const sorted = [...(pkgRes.packages ?? [])].sort(
+        (a, b) => packageOrderId(a) - packageOrderId(b),
+      );
+      setPackages(sorted);
     } catch {
       setPackages([]);
     } finally {
@@ -508,7 +587,8 @@ export default function EvidencePackageList({
           <tr>
             <th className="px-3 py-2 text-left">证据包</th>
             <th className="px-3 py-2 text-left">标题</th>
-            <th className="px-3 py-2 text-left">类型</th>
+            <th className="px-3 py-2 text-left">连接器</th>
+            <th className="px-3 py-2 text-left">资产类型</th>
             <th className="px-3 py-2 text-left">状态</th>
             <th className="px-3 py-2 text-left whitespace-nowrap">登记时间</th>
           </tr>

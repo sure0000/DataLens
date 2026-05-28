@@ -9,6 +9,7 @@ SKOS_NS = "http://www.w3.org/2004/02/skos/core#"
 _RELATION_PREDICATES: tuple[str, ...] = (
     f"{NS}dependsOn",
     f"{NS}derivedFrom",
+    f"{NS}relatedTo",
     f"{NS}joinableWith",
     f"{NS}transformsFrom",
     f"{NS}computedFromTable",
@@ -23,7 +24,8 @@ def relation_predicate_iris() -> tuple[str, ...]:
 
 
 def relation_predicate_in_clause() -> str:
-    return " ".join(f"<{predicate}>" for predicate in _RELATION_PREDICATES)
+    # SPARQL IN(...) requires comma-separated values.
+    return ", ".join(f"<{predicate}>" for predicate in _RELATION_PREDICATES)
 
 
 def relation_predicate_local_names() -> list[str]:

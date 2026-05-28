@@ -106,7 +106,9 @@ export default function OntologyCleanResultCards({
     return (
       <section className="space-y-4">
         <h2 className="app-section-title">五层清洗结果</h2>
-        <p className="text-sm text-app-muted">加载中…</p>
+        <div className="app-card p-4">
+          <p className="text-sm text-app-muted">加载中…</p>
+        </div>
       </section>
     );
   }
@@ -121,7 +123,7 @@ export default function OntologyCleanResultCards({
     return (
       <section className="space-y-4">
         <h2 className="app-section-title">五层清洗结果</h2>
-        <div className="space-y-1 text-sm text-app-muted">
+        <div className="app-card space-y-1 p-4 text-sm text-app-muted">
           <p>暂无清洗结果，请先在导入源上点击「语义清洗」触发处理。</p>
           {results.last_cleaning_at && (
             <p>
@@ -134,7 +136,7 @@ export default function OntologyCleanResultCards({
   }
 
   return (
-    <section className="space-y-4">
+    <section className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="app-section-title">五层清洗结果</h2>
         {results.last_cleaning_at && (
@@ -144,45 +146,60 @@ export default function OntologyCleanResultCards({
         )}
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {MODELING_DISPLAY_LAYERS.map((key) => {
-          const layer = layers[key];
-          const total = layer?.total ?? 0;
-          const isActive = selectedChip === key;
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setSelectedChip(key)}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-                isActive
-                  ? "border-app-activeBorder bg-app-activeBg text-app-chipText"
-                  : "border-app-border bg-app-surface text-app-secondary hover:bg-app-hover"
-              }`}
-            >
-              <span>{LAYER_ICONS[key] || "📦"}</span>
-              <span>{layer?.label ?? key}</span>
-              <span className="tabular-nums font-semibold">{total}</span>
-              {key === "entity-concept" && dimensionTotal > 0 && (
-                <span
-                  className="ml-0.5 rounded bg-app-surfaceMuted px-1 py-0.5 text-[10px] text-app-muted"
-                  title={`含 ${dimensionTotal} 个维度`}
-                >
-                  +{dimensionTotal}维
-                </span>
-              )}
-            </button>
-          );
-        })}
+      <div className="app-card p-3 sm:p-4">
+        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-5">
+          {MODELING_DISPLAY_LAYERS.map((key) => {
+            const layer = layers[key];
+            const total = layer?.total ?? 0;
+            const isActive = selectedChip === key;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setSelectedChip(key)}
+                className={`group flex min-h-20 flex-col items-start justify-between rounded-xl border px-3 py-2 text-left transition-colors ${
+                  isActive
+                    ? "border-app-activeBorder bg-app-activeBg"
+                    : "border-app-border bg-app-surface hover:bg-app-hover"
+                }`}
+                aria-pressed={isActive}
+              >
+                <div className="flex w-full items-center justify-between gap-2">
+                  <span
+                    className={`inline-flex h-6 w-6 items-center justify-center rounded-md text-sm ${
+                      isActive ? "bg-app-surface text-app-primary" : "bg-app-surfaceMuted text-app-secondary"
+                    }`}
+                  >
+                    {LAYER_ICONS[key] || "📦"}
+                  </span>
+                  {key === "entity-concept" && dimensionTotal > 0 && (
+                    <span
+                      className="rounded-full border border-app-border px-1.5 py-0.5 text-[10px] text-app-muted"
+                      title={`含 ${dimensionTotal} 个维度`}
+                    >
+                      +{dimensionTotal}维
+                    </span>
+                  )}
+                </div>
+                <div className="space-y-0.5">
+                  <p className={`text-xs font-medium ${isActive ? "text-app-primary" : "text-app-secondary"}`}>
+                    {layer?.label ?? key}
+                  </p>
+                  <p className="text-lg font-semibold tabular-nums text-app-primary">{total}</p>
+                </div>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {selectedChip === "entity-concept" && (
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="app-card flex flex-wrap items-center gap-2 p-3">
           {dimensionTotal > 0 && (
-            <div className="flex gap-1">
+            <div className="inline-flex rounded-lg border border-app-border bg-app-surface p-1">
               <button
                 type="button"
-                className={`rounded-md px-2.5 py-1 text-xs ${
+                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
                   entitySubView === "concept"
                     ? "bg-app-activeBg text-app-chipText font-medium"
                     : "text-app-muted hover:bg-app-hover"
@@ -196,7 +213,7 @@ export default function OntologyCleanResultCards({
               </button>
               <button
                 type="button"
-                className={`rounded-md px-2.5 py-1 text-xs ${
+                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
                   entitySubView === "dimension"
                     ? "bg-app-activeBg text-app-chipText font-medium"
                     : "text-app-muted hover:bg-app-hover"
@@ -217,10 +234,10 @@ export default function OntologyCleanResultCards({
             </div>
           )}
           {entitySubView === "concept" && (
-            <div className="flex gap-1 ml-auto">
+            <div className="ml-auto inline-flex rounded-lg border border-app-border bg-app-surface p-1">
               <button
                 type="button"
-                className={`rounded-md px-2.5 py-1 text-xs ${
+                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
                   conceptViewMode === "list"
                     ? "bg-app-activeBg text-app-chipText font-medium"
                     : "text-app-muted hover:bg-app-hover"
@@ -231,7 +248,7 @@ export default function OntologyCleanResultCards({
               </button>
               <button
                 type="button"
-                className={`rounded-md px-2.5 py-1 text-xs ${
+                className={`rounded-md px-2.5 py-1 text-xs transition-colors ${
                   conceptViewMode === "tree"
                     ? "bg-app-activeBg text-app-chipText font-medium"
                     : "text-app-muted hover:bg-app-hover"

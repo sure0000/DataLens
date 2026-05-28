@@ -555,6 +555,35 @@ canvas {
   background: var(--app-fill-input-focus);
 }
 
+.app-domain-select-wrap {
+  position: relative;
+}
+
+.app-domain-select {
+  width: 100%;
+  appearance: none;
+  border-radius: 0.8rem;
+  border: 1px solid var(--app-card-border);
+  background: var(--app-fill-input);
+  padding: 0.5rem 2.2rem 0.5rem 2rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+  color: var(--app-text-primary);
+  outline: none;
+  transition: border-color 0.2s ease, background 0.2s ease, box-shadow 0.2s ease;
+}
+
+.app-domain-select:hover {
+  border-color: var(--app-border-strong);
+}
+
+.app-domain-select:focus {
+  border-color: var(--app-border-strong);
+  background: var(--app-fill-input-focus);
+  box-shadow: 0 0 0 2px var(--app-focus-inner), 0 0 0 4px var(--app-focus-outer);
+}
+
 .app-textarea {
   width: 100%;
   min-height: 5.25rem;

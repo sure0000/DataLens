@@ -92,6 +92,7 @@ class DataSource(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     source_type: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
+    business_domain_id: Mapped[int | None] = mapped_column(ForeignKey("business_domains.id"))
     host: Mapped[str] = mapped_column(Text, nullable=False)
     port: Mapped[int] = mapped_column(Integer, nullable=False)
     database: Mapped[str] = mapped_column(Text, nullable=False)
@@ -147,6 +148,7 @@ class KnowledgeBase(Base):
     name: Mapped[str] = mapped_column(Text, nullable=False)
     description: Mapped[str | None] = mapped_column(Text)
     category: Mapped[str | None] = mapped_column(Text, nullable=True)
+    business_domain_id: Mapped[int | None] = mapped_column(ForeignKey("business_domains.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     pipeline_config: Mapped["PipelineConfig | None"] = relationship(back_populates="knowledge_base", uselist=False)
@@ -278,6 +280,7 @@ class KnowledgeGitSource(Base):
     )
     max_file_kb: Mapped[int] = mapped_column(Integer, default=512)
     max_files: Mapped[int] = mapped_column(Integer, default=200)
+    enable_document_indexing: Mapped[bool] = mapped_column(Boolean, default=False)
     cron_expression: Mapped[str | None] = mapped_column(Text, nullable=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     category: Mapped[str | None] = mapped_column(Text, nullable=True)

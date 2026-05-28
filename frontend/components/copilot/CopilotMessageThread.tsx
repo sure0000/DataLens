@@ -2,8 +2,7 @@
 
 import { memo } from "react";
 import { stripAutoRepairExplanationNote } from "../../lib/copilotTraceMarkdown";
-import { compactCopilotTraceSteps, type ChatMessage } from "../../lib/chatSessions";
-import CopilotExecutionTrace from "../CopilotExecutionTrace";
+import { type ChatMessage } from "../../lib/chatSessions";
 import SqlBlock from "../SqlBlock";
 import CsvExportButton from "../CsvExportButton";
 import { alertWarning, chatPanel, textDanger, userBubble } from "../../lib/themeClasses";
@@ -89,8 +88,6 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
             ? `${(m.answer || "").trim()}\n\n${(m.explanation || "").trim()}`
             : (m.answer || "").trim() || (m.explanation || "").trim();
         const narrative = stripAutoRepairExplanationNote(narrativeRaw.trim());
-        const traceSteps =
-          m.pipeline_trace && m.pipeline_trace.length > 0 ? compactCopilotTraceSteps(m.pipeline_trace) : [];
         const userQuestion =
           messages
             .slice(0, msgIdx)
@@ -166,17 +163,6 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
               {!isGeneralQa && !queryResult.ok && m.sql && (
                 <p className={`mt-2 text-sm ${textDanger}`}>{queryResult.error || "查询未成功"}</p>
               )}
-
-              {traceSteps.length > 0 ? (
-                <details className="mt-3">
-                  <summary className="cursor-pointer text-xs text-app-muted hover:text-app-secondary">
-                    推理过程（{traceSteps.length} 步）
-                  </summary>
-                  <div className="mt-2">
-                    <CopilotExecutionTrace steps={traceSteps} variant="plain" compact />
-                  </div>
-                </details>
-              ) : null}
 
               <div className="mt-3 flex gap-3 border-t border-app-subtle pt-2 text-xs text-app-muted">
                 <button type="button" className="hover:text-app-primary" onClick={() => copyMessage(m)}>

@@ -2,9 +2,8 @@
 
 import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { stripAutoRepairExplanationNote } from "../../lib/copilotTraceMarkdown";
-import type { PipelineTraceStep } from "../../lib/chatSessions";
 import { streamAsk, type AskPayload, type AskResponse, type StreamStage } from "../../lib/copilotStream";
-import { chatPanel, chipWarning } from "../../lib/themeClasses";
+import { chatPanel } from "../../lib/themeClasses";
 import ChatGptStyleBody from "./ChatGptStyleBody";
 
 export type ActiveAsk = {
@@ -17,7 +16,6 @@ type Ctx = {
   busy: boolean;
   streamStage: StreamStage;
   streamPreview: { answer: string; explanation: string };
-  livePipelineTrace: PipelineTraceStep[];
 };
 
 const GenerationContext = createContext<Ctx | null>(null);
@@ -55,24 +53,18 @@ export const CopilotStreamBubble = memo(function CopilotStreamBubble() {
   return (
     <div ref={rootRef} className="flex min-w-0 max-w-full justify-start">
       <div className={`min-w-0 max-w-[min(100%,40rem)] rounded-2xl px-4 py-3 ${chatPanel}`}>
-        <p className="text-xs text-app-muted" aria-live="polite">
-          <span className={`mr-2 inline-block rounded px-1.5 py-0.5 text-[10px] font-medium ${chipWarning}`}>
-            生成中
-          </span>
-          {stageLabelMap[ctx.streamStage]}
-        </p>
-        <div className="mt-2 min-w-0 text-app-primary">
-          {hasNarrative ? (
-            <>
-              <ChatGptStyleBody text={combined.trim()} />
-              <span
-                className="mt-1 inline-block h-[1em] w-0.5 rounded-sm bg-app-primary/70 motion-safe:animate-pulse"
-                aria-hidden
-              />
-            </>
-          ) : (
-            <p className="text-sm leading-relaxed text-app-secondary">正在处理您的问题…</p>
-          )}
+        <div className="min-w-0 text-app-primary" aria-live="polite">
+          {hasNarrative ? <ChatGptStyleBody text={combined.trim()} /> : null}
+          <div className="mt-1 flex items-center gap-1 text-app-muted" aria-hidden>
+            {!hasNarrative ? (
+              <>
+                <span className="h-1.5 w-1.5 rounded-full bg-current opacity-40 motion-safe:animate-pulse" />
+                <span className="h-1.5 w-1.5 rounded-full bg-current opacity-60 motion-safe:animate-pulse [animation-delay:120ms]" />
+                <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80 motion-safe:animate-pulse [animation-delay:240ms]" />
+              </>
+            ) : null}
+            <span className="inline-block h-[1em] w-0.5 rounded-sm bg-app-primary/70 motion-safe:animate-pulse" />
+          </div>
         </div>
       </div>
     </div>
@@ -94,26 +86,18 @@ export const CopilotGenerationDockStatus = memo(function CopilotGenerationDockSt
 type ProviderProps = {
   activeAsk: ActiveAsk | null;
   children: ReactNode;
-  onSettled: (result: AskResponse, traceAcc: PipelineTraceStep[]) => void;
+  onSettled: (result: AskResponse) => void;
   onStreamError: () => void;
 };
 
 export function CopilotGenerationProvider({ activeAsk, children, onSettled, onStreamError }: ProviderProps) {
   const [streamStage, setStreamStage] = useState<StreamStage>("intent_recognizing");
   const [streamPreview, setStreamPreview] = useState({ answer: "", explanation: "" });
-  const [livePipelineTrace, setLivePipelineTrace] = useState<PipelineTraceStep[]>([]);
-  const traceAccRef = useRef<PipelineTraceStep[]>([]);
   const runIdRef = useRef(0);
   const onSettledRef = useRef(onSettled);
   const onStreamErrorRef = useRef(onStreamError);
   onSettledRef.current = onSettled;
   onStreamErrorRef.current = onStreamError;
-
-  /** 每条 trace 立即入列渲染，避免 rAF 合并导致「结束时一次性出现」 */
-  const enqueueLiveTrace = useCallback((row: PipelineTraceStep) => {
-    traceAccRef.current.push(row);
-    setLivePipelineTrace((prev) => [...prev, row]);
-  }, []);
 
   const busy = !!activeAsk;
 
@@ -121,26 +105,21 @@ export function CopilotGenerationProvider({ activeAsk, children, onSettled, onSt
     () => ({
       busy,
       streamStage,
-      streamPreview,
-      livePipelineTrace
+      streamPreview
     }),
-    [busy, streamStage, streamPreview, livePipelineTrace]
+    [busy, streamStage, streamPreview]
   );
 
   useEffect(() => {
     if (!activeAsk) {
-      traceAccRef.current = [];
       setStreamStage("intent_recognizing");
       setStreamPreview({ answer: "", explanation: "" });
-      setLivePipelineTrace([]);
       return;
     }
 
     const runId = ++runIdRef.current;
-    traceAccRef.current = [];
     setStreamStage("intent_recognizing");
     setStreamPreview({ answer: "", explanation: "" });
-    setLivePipelineTrace([]);
 
     let cancelled = false;
 
@@ -151,15 +130,13 @@ export function CopilotGenerationProvider({ activeAsk, children, onSettled, onSt
           (stage) => {
             if (!cancelled && runId === runIdRef.current) setStreamStage(stage);
           },
-          (row) => {
-            if (!cancelled && runId === runIdRef.current) enqueueLiveTrace(row);
-          },
+          undefined,
           (partial) => {
             if (!cancelled && runId === runIdRef.current) setStreamPreview(partial);
           }
         );
         if (cancelled || runId !== runIdRef.current) return;
-        onSettledRef.current(res, traceAccRef.current);
+        onSettledRef.current(res);
       } catch {
         if (!cancelled && runId === runIdRef.current) onStreamErrorRef.current();
       }
@@ -168,7 +145,7 @@ export function CopilotGenerationProvider({ activeAsk, children, onSettled, onSt
     return () => {
       cancelled = true;
     };
-  }, [activeAsk?.key, activeAsk?.sessionId, enqueueLiveTrace]);
+  }, [activeAsk?.key, activeAsk?.sessionId]);
 
   return <GenerationContext.Provider value={ctxValue}>{children}</GenerationContext.Provider>;
 }

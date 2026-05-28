@@ -1,3 +1,5 @@
+import { getActiveBusinessDomainId } from "./businessDomain";
+
 export type QueryResult = {
   ok: boolean;
   columns: string[];
@@ -202,11 +204,16 @@ const ACTIVE_SESSION_KEY = "chatbi_active_session_id_v2";
 const UPDATE_EVENT = "chatbi-sessions-updated";
 const PROJECTS_KEY = "chatbi_projects_v1";
 
+function scopedKey(base: string): string {
+  const domainId = getActiveBusinessDomainId();
+  return `${base}__domain_${domainId ?? "global"}`;
+}
+
 export function getSessionStorageKeys() {
   return {
-    sessionsKey: SESSIONS_KEY,
-    projectsKey: PROJECTS_KEY,
-    activeSessionKey: ACTIVE_SESSION_KEY,
+    sessionsKey: scopedKey(SESSIONS_KEY),
+    projectsKey: scopedKey(PROJECTS_KEY),
+    activeSessionKey: scopedKey(ACTIVE_SESSION_KEY),
     updateEvent: UPDATE_EVENT
   };
 }
@@ -297,8 +304,9 @@ function sortSessions(list: ChatSession[]) {
 }
 
 function readSessionsOnly(): ChatSession[] {
+  const { sessionsKey } = getSessionStorageKeys();
   try {
-    const raw = localStorage.getItem(SESSIONS_KEY);
+    const raw = localStorage.getItem(sessionsKey);
     const parsed = raw ? (JSON.parse(raw) as Partial<ChatSession>[]) : [];
     return sortSessions(parsed.map((s) => normalizeSession(s)));
   } catch {
@@ -307,25 +315,27 @@ function readSessionsOnly(): ChatSession[] {
 }
 
 export function readSessionState(): StoredState {
+  const { activeSessionKey } = getSessionStorageKeys();
   const sessions = readSessionsOnly();
-  const savedActive = localStorage.getItem(ACTIVE_SESSION_KEY) || "";
+  const savedActive = localStorage.getItem(activeSessionKey) || "";
   const activeSessionId = sessions.some((s) => s.id === savedActive) ? savedActive : sessions[0]?.id || "";
   return { sessions, activeSessionId };
 }
 
 function writeSessionState(next: StoredState) {
+  const { sessionsKey, activeSessionKey } = getSessionStorageKeys();
   const sessions = sortSessions(next.sessions);
   try {
-    localStorage.setItem(SESSIONS_KEY, JSON.stringify(sessions));
-    if (next.activeSessionId) localStorage.setItem(ACTIVE_SESSION_KEY, next.activeSessionId);
-    else localStorage.removeItem(ACTIVE_SESSION_KEY);
+    localStorage.setItem(sessionsKey, JSON.stringify(sessions));
+    if (next.activeSessionId) localStorage.setItem(activeSessionKey, next.activeSessionId);
+    else localStorage.removeItem(activeSessionKey);
   } catch (e) {
     if (e instanceof DOMException && e.name === "QuotaExceededError") {
       // 存储已满：删除最旧的非置顶会话后重试
       const trimmed = sessions.filter((s) => !s.pinned).slice(0, sessions.length - 5);
       const kept = [...sessions.filter((s) => s.pinned), ...trimmed];
       try {
-        localStorage.setItem(SESSIONS_KEY, JSON.stringify(kept));
+        localStorage.setItem(sessionsKey, JSON.stringify(kept));
       } catch {
         // 仍然失败则静默忽略，不阻断用户操作
       }
@@ -527,8 +537,9 @@ export function groupSessionsByTime(sessions: ChatSession[]) {
 }
 
 export function readProjects(): ChatProject[] {
+  const { projectsKey } = getSessionStorageKeys();
   try {
-    const raw = localStorage.getItem(PROJECTS_KEY);
+    const raw = localStorage.getItem(projectsKey);
     const parsed = raw ? (JSON.parse(raw) as Partial<ChatProject>[]) : [];
     return parsed.map((project) => normalizeProject(project)).sort((a, b) => b.updated_at.localeCompare(a.updated_at));
   } catch {
@@ -537,7 +548,8 @@ export function readProjects(): ChatProject[] {
 }
 
 function writeProjects(projects: ChatProject[]) {
-  localStorage.setItem(PROJECTS_KEY, JSON.stringify(projects));
+  const { projectsKey } = getSessionStorageKeys();
+  localStorage.setItem(projectsKey, JSON.stringify(projects));
 }
 
 export function createProject(name: string): ChatProject[] {

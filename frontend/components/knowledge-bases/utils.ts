@@ -153,7 +153,7 @@ export function computeOutputCards(
 }
 
 /** 从血缘边列表计算状态统计 */
-export function computeLineageStats(edges: { status: string }[]): {
+export function computeLineageStats(edges: { status?: string }[]): {
   done: number;
   processing: number;
   pending: number;
@@ -170,8 +170,8 @@ export function filterLineageByGitSource(lineage: LineageData, gitSourceId: numb
   const edges = lineage.edges.filter((e) => e.git_source_id === gitSourceId);
   const tableNames = new Set<string>();
   for (const e of edges) {
-    tableNames.add(e.source_table);
-    tableNames.add(e.target_table);
+    if (e.source_table) tableNames.add(e.source_table);
+    if (e.target_table) tableNames.add(e.target_table);
   }
   const layers = lineage.layers
     .map((layer) => ({

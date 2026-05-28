@@ -67,6 +67,7 @@ def _ensure_safety_columns(conn) -> None:
     """确保旧有迁移中添加的列存在——ADD COLUMN IF NOT EXISTS 无副作用。"""
     _cols = [
         ("data_sources", "description", "TEXT"),
+        ("data_sources", "business_domain_id", "INT"),
         ("tables", "datasource_id", "INT"),
         ("columns", "quality_metrics", "JSONB"),
         ("business_domain_selections", "table_name", "TEXT"),
@@ -76,9 +77,11 @@ def _ensure_safety_columns(conn) -> None:
         ("knowledge_entries", "semantic_role", "TEXT"),
         ("knowledge_entries", "tags", "JSON"),
         ("knowledge_bases", "category", "TEXT"),
+        ("knowledge_bases", "business_domain_id", "INT"),
         ("knowledge_api_sources", "tags", "JSON"),
         ("knowledge_git_sources", "category", "TEXT"),
         ("knowledge_git_sources", "tags", "JSON"),
+        ("knowledge_git_sources", "enable_document_indexing", "BOOLEAN NOT NULL DEFAULT FALSE"),
         ("document_chunks", "semantic_meta", "JSONB"),
         ("documents", "index_attempts", "INT NOT NULL DEFAULT 0"),
         ("pipeline_runs", "source_id", "INT"),
@@ -170,5 +173,23 @@ def _run_data_migrations(conn) -> None:
             "WHERE source_url IS NULL AND source_meta IS NOT NULL "
             "AND trim(coalesce(source_meta->>'kind','')) IN ('web','notion','confluence','obsidian') "
             "AND trim(coalesce(source_meta->>'ref','')) ~ '^https?://';"
+        )
+    )
+    conn.execute(
+        text(
+            "INSERT INTO business_domains(name) "
+            "SELECT '临时域' WHERE NOT EXISTS (SELECT 1 FROM business_domains WHERE name='临时域');"
+        )
+    )
+    conn.execute(
+        text(
+            "UPDATE data_sources SET business_domain_id = (SELECT id FROM business_domains WHERE name='临时域' LIMIT 1) "
+            "WHERE business_domain_id IS NULL;"
+        )
+    )
+    conn.execute(
+        text(
+            "UPDATE knowledge_bases SET business_domain_id = (SELECT id FROM business_domains WHERE name='临时域' LIMIT 1) "
+            "WHERE business_domain_id IS NULL;"
         )
     )

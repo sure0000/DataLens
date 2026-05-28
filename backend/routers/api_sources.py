@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import KnowledgeApiSource
+from services.source_cascade_cleanup import cleanup_api_source_in_kb, collect_api_source_kb_ids
 
 router = APIRouter(prefix="/api/api-sources", tags=["api-sources"])
 
@@ -119,10 +120,29 @@ def update_api_source(source_id: int, body: ApiSourceUpdate, db: Session = Depen
 
 
 @router.delete("/{source_id}")
-def delete_api_source(source_id: int, db: Session = Depends(get_db)) -> dict:
+def delete_api_source(
+    source_id: int,
+    hard_delete: bool = Query(default=True, description="true=硬删导入源；false=软删（仅禁用）"),
+    db: Session = Depends(get_db),
+) -> dict:
     src = db.get(KnowledgeApiSource, source_id)
     if not src or src.knowledge_base_id is not None:
         raise HTTPException(status_code=404, detail="API 源不存在")
-    db.delete(src)
+    kb_ids = collect_api_source_kb_ids(db, source_id, src)
+    agg = {
+        "entries_deleted": 0,
+        "documents_deleted": 0,
+        "evidence_packages_deleted": 0,
+        "assertions_deleted": 0,
+    }
+    for kb_id in kb_ids:
+        stats = cleanup_api_source_in_kb(db, kb_id=kb_id, source_id=source_id).to_dict()
+        for key, val in stats.items():
+            agg[key] += int(val)
+    if hard_delete:
+        db.delete(src)
+    else:
+        src.enabled = False
+        src.updated_at = datetime.utcnow()
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "hard_delete": bool(hard_delete), **agg}

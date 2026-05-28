@@ -514,7 +514,12 @@ def run_git_source_sync(db: Session, source_id: int) -> dict[str, Any]:
             except Exception:
                 _trigger_semantic_extraction(kb_id)
         if total == 0 and deleted == 0:
-            msg = "所有文件均为最新，无需同步。"
+            if len(existing_entries) == 0 and len(remote_map) == 0:
+                prefix = (src.path_prefix or "").strip() or "/"
+                globs = (src.include_globs or "").strip() or "*"
+                msg = f"同步成功，但未匹配到可导入文件（路径前缀: {prefix}；匹配: {globs}）。"
+            else:
+                msg = "所有文件均为最新，无需同步。"
         else:
             parts = []
             if created: parts.append(f"新增 {created}")

@@ -38,6 +38,7 @@ export type GitSource = {
   include_globs: string;
   max_file_kb: number;
   max_files: number;
+  enable_document_indexing?: boolean;
   cron_expression?: string | null;
   enabled: boolean;
   tags?: string[];

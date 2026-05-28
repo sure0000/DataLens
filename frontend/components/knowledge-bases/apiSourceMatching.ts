@@ -31,3 +31,15 @@ export function docMatchesApiSource(
   if (oid) return String(meta.ref || "") === oid;
   return !meta.api_source_id;
 }
+
+/** 是否在当前 KB 已绑定或已有导入数据。 */
+export function shouldShowApiSourceInKb(
+  apiSource: ApiSource,
+  entries: Entry[],
+  documents: DocRow[],
+): boolean {
+  const linkedEntries = entries.filter((entry) => entryMatchesApiSource(entry, apiSource));
+  if (linkedEntries.length > 0) return true;
+  const linkedEntryIds = new Set(linkedEntries.map((entry) => entry.id));
+  return documents.some((doc) => docMatchesApiSource(doc, apiSource, linkedEntryIds));
+}

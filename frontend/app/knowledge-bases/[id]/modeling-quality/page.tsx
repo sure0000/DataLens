@@ -14,7 +14,7 @@ export default function KnowledgeBaseModelingQualityPage({
 }) {
   const kbId = Number(params.id);
   const [kb, setKb] = useState<KB | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [cleaningResults, setCleaningResults] = useState<OntologyCleaningResults | null>(null);
   const [cleaningResultsLoading, setCleaningResultsLoading] = useState(false);
 

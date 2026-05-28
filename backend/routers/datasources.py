@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import ColumnMeta, DataSource, TableMeta, TableSummary
 from routers.analyze import schedule_table_analyze
+from services.business_domain_scope import resolve_scope_domain
 from services.metadata_ingest import run_metadata_ingest_for_datasource
 from services.schema_extractor import (
     ALLOWED_SOURCE_TYPES,
@@ -83,6 +84,7 @@ def _datasource_to_dict(r: DataSource) -> dict:
         "name": r.name,
         "source_type": r.source_type,
         "description": r.description,
+        "business_domain_id": r.business_domain_id,
         "host": r.host,
         "port": r.port,
         "database": r.database,
@@ -91,33 +93,50 @@ def _datasource_to_dict(r: DataSource) -> dict:
     }
 
 
+def _get_scoped_datasource(db: Session, datasource_id: int, domain_id: int) -> DataSource:
+    row = db.get(DataSource, datasource_id)
+    if not row or row.business_domain_id != domain_id:
+        raise HTTPException(status_code=404, detail="datasource not found")
+    return row
+
+
 @router.get("/datasources")
-def list_datasources(db: Session = Depends(get_db)) -> dict:
-    rows = db.execute(select(DataSource).order_by(DataSource.created_at.desc())).scalars().all()
+def list_datasources(request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    rows = (
+        db.execute(
+            select(DataSource)
+            .where(DataSource.business_domain_id == scope_domain.id)
+            .order_by(DataSource.created_at.desc())
+        )
+        .scalars()
+        .all()
+    )
     return {"datasources": [_datasource_to_dict(r) for r in rows]}
 
 
 @router.get("/datasources/{datasource_id}")
-def get_datasource(datasource_id: int, db: Session = Depends(get_db)) -> dict:
-    row = db.get(DataSource, datasource_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="datasource not found")
+def get_datasource(datasource_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    row = _get_scoped_datasource(db, datasource_id, scope_domain.id)
     return {"datasource": _datasource_to_dict(row)}
 
 
 @router.post("/datasources")
-def create_datasource(body: DataSourceBody, db: Session = Depends(get_db)) -> dict:
+def create_datasource(body: DataSourceBody, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
     # 同名数据源检测
     existing = db.execute(
         select(DataSource).where(
             DataSource.name == body.name.strip(),
             DataSource.host == body.host.strip(),
             DataSource.database == body.database.strip(),
+            DataSource.business_domain_id == scope_domain.id,
         )
     ).scalars().first()
     if existing:
         raise HTTPException(status_code=409, detail="同名的数据源已存在")
-    row = DataSource(**_body_to_row_kwargs(body))
+    row = DataSource(**_body_to_row_kwargs(body), business_domain_id=scope_domain.id)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -126,10 +145,9 @@ def create_datasource(body: DataSourceBody, db: Session = Depends(get_db)) -> di
 
 
 @router.put("/datasources/{datasource_id}")
-def update_datasource(datasource_id: int, body: DataSourceBody, db: Session = Depends(get_db)) -> dict:
-    row = db.get(DataSource, datasource_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="datasource not found")
+def update_datasource(datasource_id: int, body: DataSourceBody, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    row = _get_scoped_datasource(db, datasource_id, scope_domain.id)
     data = body.model_dump()
     new_pw = (data.pop("connection_password") or "").strip()
     for key, value in data.items():
@@ -141,10 +159,9 @@ def update_datasource(datasource_id: int, body: DataSourceBody, db: Session = De
 
 
 @router.delete("/datasources/{datasource_id}")
-def delete_datasource(datasource_id: int, db: Session = Depends(get_db)) -> dict:
-    row = db.get(DataSource, datasource_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="datasource not found")
+def delete_datasource(datasource_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    row = _get_scoped_datasource(db, datasource_id, scope_domain.id)
     db.delete(row)
     db.commit()
     return {"success": True}
@@ -160,10 +177,9 @@ def test_datasource_connection(body: DataSourceBody) -> dict:
 
 
 @router.post("/datasources/{datasource_id}/test")
-def test_saved_datasource_connection(datasource_id: int, db: Session = Depends(get_db)) -> dict:
-    row = db.get(DataSource, datasource_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="datasource not found")
+def test_saved_datasource_connection(datasource_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    row = _get_scoped_datasource(db, datasource_id, scope_domain.id)
     payload = {
         "source_type": row.source_type,
         "host": row.host,
@@ -203,10 +219,9 @@ def _conn_payload_with_database(row: DataSource, database_name: str) -> dict:
 
 
 @router.get("/datasources/{datasource_id}/catalog")
-def get_datasource_catalog(datasource_id: int, db: Session = Depends(get_db)) -> dict:
-    row = db.get(DataSource, datasource_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="datasource not found")
+def get_datasource_catalog(datasource_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    row = _get_scoped_datasource(db, datasource_id, scope_domain.id)
     conn_info = _conn_payload(row)
     db_names = get_databases(conn_info)
     analyzed = (
@@ -246,10 +261,9 @@ def get_datasource_catalog(datasource_id: int, db: Session = Depends(get_db)) ->
 
 
 @router.get("/datasources/{datasource_id}/databases/{database_name}/catalog")
-def get_database_catalog(datasource_id: int, database_name: str, db: Session = Depends(get_db)) -> dict:
-    row = db.get(DataSource, datasource_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="datasource not found")
+def get_database_catalog(datasource_id: int, database_name: str, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    row = _get_scoped_datasource(db, datasource_id, scope_domain.id)
 
     conn_info = _conn_payload(row)
     tables_meta = get_tables_meta_for_database(conn_info, database_name)
@@ -310,11 +324,14 @@ def get_database_catalog(datasource_id: int, database_name: str, db: Session = D
 
 @router.post("/datasources/{datasource_id}/analyze/table/{table_name}")
 def analyze_table_by_datasource(
-    datasource_id: int, table_name: str, database_name: str | None = None, db: Session = Depends(get_db)
+    datasource_id: int,
+    table_name: str,
+    request: Request,
+    database_name: str | None = None,
+    db: Session = Depends(get_db),
 ) -> dict:
-    row = db.get(DataSource, datasource_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="datasource not found")
+    scope_domain = resolve_scope_domain(db, request)
+    row = _get_scoped_datasource(db, datasource_id, scope_domain.id)
     target_database = database_name or row.database
     table_id = schedule_table_analyze(
         db,
@@ -328,10 +345,9 @@ def analyze_table_by_datasource(
 
 
 @router.post("/datasources/{datasource_id}/analyze/database/{database_name}")
-def analyze_database_by_datasource(datasource_id: int, database_name: str, db: Session = Depends(get_db)) -> dict:
-    row = db.get(DataSource, datasource_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="datasource not found")
+def analyze_database_by_datasource(datasource_id: int, database_name: str, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    row = _get_scoped_datasource(db, datasource_id, scope_domain.id)
     conn = _conn_payload_with_database(row, database_name)
     tables = get_tables_for_database(conn, database_name)
     ids = [schedule_table_analyze(db, t, conn, row.source_type, database_name, datasource_id) for t in tables]
@@ -339,10 +355,9 @@ def analyze_database_by_datasource(datasource_id: int, database_name: str, db: S
 
 
 @router.post("/datasources/{datasource_id}/analyze/datasource")
-def analyze_datasource(datasource_id: int, db: Session = Depends(get_db)) -> dict:
-    row = db.get(DataSource, datasource_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="datasource not found")
+def analyze_datasource(datasource_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    row = _get_scoped_datasource(db, datasource_id, scope_domain.id)
     conn = _conn_payload(row)
     all_ids: list[int] = []
     db_count = 0
@@ -355,10 +370,9 @@ def analyze_datasource(datasource_id: int, db: Session = Depends(get_db)) -> dic
 
 
 @router.get("/datasources/{datasource_id}/tables/{table_name}/columns")
-def get_table_columns(datasource_id: int, table_name: str, db: Session = Depends(get_db)) -> dict:
-    row = db.get(DataSource, datasource_id)
-    if not row:
-        raise HTTPException(status_code=404, detail="datasource not found")
+def get_table_columns(datasource_id: int, table_name: str, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    row = _get_scoped_datasource(db, datasource_id, scope_domain.id)
 
     latest_table = (
         db.execute(

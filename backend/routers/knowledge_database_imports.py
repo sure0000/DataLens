@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from sqlalchemy import delete, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database import get_db
@@ -17,6 +17,7 @@ from models import (
     TableMeta,
     TableSummary,
 )
+from services.source_cascade_cleanup import cleanup_database_import
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["knowledge-database-imports"])
 
@@ -81,9 +82,10 @@ def create_database_import(kb_id: int, body: DatabaseImportRequest, db: Session 
     db.flush()
 
     db_names_str = ", ".join(body.database_names)
+    clean_title = f"{ds.name} / {db_names_str}"
     entry = KnowledgeEntry(
         knowledge_base_id=kb_id,
-        title=f"[数据库] {ds.name} / {db_names_str}",
+        title=clean_title,
         summary=f"数据源 {ds.name} 的数据库 schema 导入：{db_names_str}",
         body=f"数据源: {ds.name}\n类型: {ds.source_type}\n数据库: {db_names_str}",
         source_meta={
@@ -105,7 +107,7 @@ def create_database_import(kb_id: int, body: DatabaseImportRequest, db: Session 
         register_evidence_from_import(
             db,
             kb_id,
-            title=f"[数据库] {ds.name} / {db_names_str}",
+            title=clean_title,
             route_key="database-imports",
             source_ref={
                 "import_id": import_row.id,
@@ -196,15 +198,8 @@ def delete_database_import(kb_id: int, import_id: int, db: Session = Depends(get
     if not di or di.knowledge_base_id != kb_id:
         raise HTTPException(status_code=404, detail="database import not found")
 
-    # Remove associated KnowledgeEntry
-    db.execute(
-        delete(KnowledgeEntry).where(
-            KnowledgeEntry.knowledge_base_id == kb_id,
-            KnowledgeEntry.source_meta["kind"].astext == "database",
-            KnowledgeEntry.source_meta["import_id"].astext == str(import_id),
-        )
-    )
+    stats = cleanup_database_import(db, kb_id=kb_id, import_id=import_id)
 
     db.delete(di)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, **stats.to_dict()}

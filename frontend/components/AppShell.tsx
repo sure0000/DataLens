@@ -7,6 +7,13 @@ import { Icon, type NavIcon } from "./AppIcons";
 import ConfirmDialog from "./ConfirmDialog";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 import { ontologyUrl } from "../lib/ontologyRoutes";
+import { api } from "../lib/api";
+import {
+  getActiveBusinessDomainId,
+  getBusinessDomainUpdatedEventName,
+  setActiveBusinessDomainId,
+  type BusinessDomainOption
+} from "../lib/businessDomain";
 import {
   createProject,
   createSession,
@@ -60,6 +67,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
   /** true = 显示该分组下全部会话；false/undefined = 仅最近 5 条 */
   const [sidebarGroupSessionsFull, setSidebarGroupSessionsFull] = useState<Record<string, boolean>>({});
   const isCopilot = pathname.startsWith("/copilot");
+  const [businessDomains, setBusinessDomains] = useState<BusinessDomainOption[]>([]);
+  const [activeBusinessDomainId, setActiveBusinessDomainIdState] = useState<number | null>(null);
   const kbFromPath = useMemo(() => {
     const match = pathname.match(/^\/knowledge-bases\/(\d+)/);
     if (!match) return null;
@@ -102,6 +111,43 @@ export default function AppShell({ children }: { children: ReactNode }) {
       window.removeEventListener("storage", onUpdate);
     };
   }, [updateEvent]);
+
+  useEffect(() => {
+    let alive = true;
+    api<{ domains: BusinessDomainOption[] }>("/api/business-domains")
+      .then((res) => {
+        if (!alive) return;
+        const domains = res.domains || [];
+        setBusinessDomains(domains);
+        const saved = getActiveBusinessDomainId();
+        const picked =
+          domains.find((d) => d.id === saved)?.id ??
+          domains.find((d) => d.is_builtin)?.id ??
+          domains[0]?.id ??
+          null;
+        setActiveBusinessDomainIdState(picked);
+        if (picked !== saved) setActiveBusinessDomainId(picked);
+      })
+      .catch(() => {
+        if (!alive) return;
+        setBusinessDomains([]);
+        setActiveBusinessDomainIdState(getActiveBusinessDomainId());
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const evt = getBusinessDomainUpdatedEventName();
+    const handler = () => {
+      setActiveBusinessDomainIdState(getActiveBusinessDomainId());
+      loadCopilotSessions();
+      setProjects(readProjects());
+    };
+    window.addEventListener(evt, handler);
+    return () => window.removeEventListener(evt, handler);
+  }, []);
 
   function toggleSidebar() {
     const next = !sidebarCollapsed;
@@ -456,8 +502,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <Link
               href="/"
               className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${pathname === "/" ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
-              title="业务域"
-              aria-label="业务域"
+              title="首页"
+              aria-label="首页"
             >
               <Icon name="domain" />
             </Link>
@@ -478,14 +524,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
               <Icon name="book" />
             </Link>
             <Link
-              href="/settings"
-              className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isActive(pathname, "/settings") ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
-              title="偏好设置"
-              aria-label="偏好设置"
-            >
-              <Icon name="settings" />
-            </Link>
-            <Link
               href="/copilot"
               className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isCopilot ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
               title="助手"
@@ -499,6 +537,37 @@ export default function AppShell({ children }: { children: ReactNode }) {
         <section className="mt-4 pt-4">
           {!sidebarCollapsed && (
             <div className="space-y-1 pb-3">
+              <label className="mb-2 block px-2 text-xs text-app-muted">
+                <span className="text-[11px] font-medium tracking-wide text-app-muted">当前业务域</span>
+                <div className="app-domain-select-wrap mt-1">
+                  <Icon
+                    name="domain"
+                    className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-app-muted"
+                  />
+                  <select
+                    className="app-domain-select w-full"
+                    value={activeBusinessDomainId ?? ""}
+                    onChange={(e) => {
+                      const value = e.target.value ? Number(e.target.value) : null;
+                      setActiveBusinessDomainId(value);
+                      setActiveBusinessDomainIdState(value);
+                      if (typeof window !== "undefined") {
+                        window.location.reload();
+                      }
+                    }}
+                  >
+                    {businessDomains.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                  <Icon
+                    name="chevronDown"
+                    className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-app-muted"
+                  />
+                </div>
+              </label>
               <button className="app-nav-item w-full rounded-lg" onClick={createCopilotSession}>
                 <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md">
                   <Icon name="plus" className="h-4 w-4" />
@@ -516,12 +585,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
                   <Icon name="database" />
                 </span>
                 <span>数据源</span>
-              </Link>
-              <Link href="/" className={`app-nav-item rounded-lg ${isActive(pathname, "/") ? "is-active" : ""}`}>
-                <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
-                  <Icon name="domain" />
-                </span>
-                <span>业务域</span>
               </Link>
             <Link
               href="/knowledge-bases"
@@ -541,12 +604,6 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </span>
               <span>本体浏览</span>
             </Link>
-              <Link href="/settings" className={`app-nav-item rounded-lg ${isActive(pathname, "/settings") ? "is-active" : ""}`}>
-                <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
-                  <Icon name="settings" />
-                </span>
-                <span>偏好设置</span>
-              </Link>
             </div>
           )}
           {sidebarCollapsed ? (
@@ -749,6 +806,29 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </div>
             )}
         </section>
+        <div className={`mt-auto ${sidebarCollapsed ? "flex justify-center pt-2" : "pt-3"}`}>
+          <Link
+            href="/settings"
+            className={
+              sidebarCollapsed
+                ? `app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isActive(pathname, "/settings") ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`
+                : `app-nav-item rounded-lg ${isActive(pathname, "/settings") ? "is-active" : ""}`
+            }
+            title="设置"
+            aria-label="设置"
+          >
+            <span
+              className={
+                sidebarCollapsed
+                  ? "inline-flex items-center justify-center"
+                  : "app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs"
+              }
+            >
+              <Icon name="settings" />
+            </span>
+            {!sidebarCollapsed ? <span>设置</span> : null}
+          </Link>
+        </div>
       </aside>
 
       <main id="main-content" className="flex min-h-screen min-w-0 flex-1 flex-col bg-[var(--app-main-bg)]" tabIndex={-1}>

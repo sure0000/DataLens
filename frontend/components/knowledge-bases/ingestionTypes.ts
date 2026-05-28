@@ -52,6 +52,15 @@ export const CONNECTORS_BY_ASSET: Record<AssetKind, ConnectorKind[]> = {
   ttl_bundle: ["ttl"],
 };
 
+export const ASSETS_BY_CONNECTOR: Record<ConnectorKind, AssetKind[]> = {
+  file: ["semantic_doc", "relation_lineage"],
+  api: ["semantic_doc"],
+  git: ["processing_code", "relation_lineage"],
+  database: ["physical_schema"],
+  manual: ["semantic_doc", "governance"],
+  ttl: ["ttl_bundle"],
+};
+
 export const CONNECTOR_LABELS: Record<ConnectorKind, string> = {
   file: "文件上传",
   api: "官方 API",

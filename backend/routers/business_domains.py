@@ -17,6 +17,7 @@ from models import (
     TableSummary,
 )
 from services.schema_extractor import get_databases, get_tables_meta_for_database
+from services.business_domain_scope import TEMPORARY_DOMAIN_NAME, ensure_temporary_domain
 
 router = APIRouter(prefix="/api/business-domains", tags=["business-domains"])
 
@@ -113,7 +114,17 @@ def list_domain_options(db: Session = Depends(get_db)) -> dict:
 
 @router.get("")
 def list_domains(db: Session = Depends(get_db)) -> dict:
-    domains = db.execute(select(BusinessDomain).order_by(BusinessDomain.created_at.desc())).scalars().all()
+    ensure_temporary_domain(db)
+    raw_domains = db.execute(select(BusinessDomain).order_by(BusinessDomain.created_at.desc())).scalars().all()
+    # 历史数据中若出现重复“临时域”，列表只保留一个，避免设置页出现多个内置域。
+    domains: list[BusinessDomain] = []
+    temporary_seen = False
+    for domain in raw_domains:
+        if (domain.name or "").strip() == TEMPORARY_DOMAIN_NAME:
+            if temporary_seen:
+                continue
+            temporary_seen = True
+        domains.append(domain)
     latest_desc_map = _latest_description_map(db)
     sel_rows = db.execute(select(BusinessDomainSelection)).scalars().all()
     source_map = {s.id: s for s in db.execute(select(DataSource)).scalars().all()}
@@ -135,6 +146,7 @@ def list_domains(db: Session = Depends(get_db)) -> dict:
             {
                 "id": d.id,
                 "name": d.name,
+                "is_builtin": (d.name or "").strip() == TEMPORARY_DOMAIN_NAME,
                 "description": (latest_desc_map[d.id].content if d.id in latest_desc_map else ""),
                 "selections": sel_map.get(d.id, []),
                 "created_at": d.created_at.isoformat() if d.created_at else "",
@@ -283,6 +295,36 @@ def get_domain_detail(domain_id: int, db: Session = Depends(get_db)) -> dict:
     }
 
 
+class DomainUpdateBody(BaseModel):
+    name: str
+    description: str = ""
+
+
+@router.put("/{domain_id}")
+def update_domain(domain_id: int, body: DomainUpdateBody, db: Session = Depends(get_db)) -> dict:
+    domain = db.get(BusinessDomain, domain_id)
+    if not domain:
+        raise HTTPException(status_code=404, detail="domain not found")
+    if (domain.name or "").strip() == TEMPORARY_DOMAIN_NAME:
+        raise HTTPException(status_code=400, detail="内置临时域不允许编辑")
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="domain name is required")
+    duplicated = (
+        db.execute(select(BusinessDomain).where(BusinessDomain.name == name, BusinessDomain.id != domain_id))
+        .scalars()
+        .first()
+    )
+    if duplicated:
+        raise HTTPException(status_code=409, detail="domain name already exists")
+    domain.name = name
+    desc = (body.description or "").strip()
+    if desc:
+        _set_single_description(db, domain_id, desc)
+    db.commit()
+    return {"success": True}
+
+
 @router.put("/{domain_id}/knowledge-bases")
 def set_domain_knowledge_bases(domain_id: int, body: DomainKnowledgeBasesBody, db: Session = Depends(get_db)) -> dict:
     domain = db.get(BusinessDomain, domain_id)
@@ -310,6 +352,9 @@ def create_domain(body: DomainCreateBody, db: Session = Depends(get_db)) -> dict
     name = body.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="domain name is required")
+    duplicated = db.execute(select(BusinessDomain).where(BusinessDomain.name == name)).scalars().first()
+    if duplicated:
+        raise HTTPException(status_code=409, detail="domain name already exists")
 
     domain = BusinessDomain(name=name)
     db.add(domain)
@@ -442,6 +487,8 @@ def delete_domain(domain_id: int, db: Session = Depends(get_db)) -> dict:
     domain = db.get(BusinessDomain, domain_id)
     if not domain:
         raise HTTPException(status_code=404, detail="domain not found")
+    if (domain.name or "").strip() == TEMPORARY_DOMAIN_NAME:
+        raise HTTPException(status_code=400, detail="内置临时域不允许删除")
     db.execute(delete(BusinessDomainDescription).where(BusinessDomainDescription.domain_id == domain_id))
     db.execute(delete(BusinessDomainSelection).where(BusinessDomainSelection.domain_id == domain_id))
     db.execute(delete(BusinessDomainKnowledgeBase).where(BusinessDomainKnowledgeBase.domain_id == domain_id))

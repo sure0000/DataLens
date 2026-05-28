@@ -6,7 +6,7 @@ from datetime import datetime
 from typing import Any
 
 import httpx
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -21,6 +21,7 @@ from services.knowledge_ingest import (
     fetch_official_notion_database,
     fetch_official_notion_page,
 )
+from services.source_cascade_cleanup import cleanup_api_source_in_kb
 
 _logger = logging.getLogger(__name__)
 
@@ -241,13 +242,23 @@ def update_api_source(kb_id: int, source_id: int, body: ApiSourceUpdate, db: Ses
 
 
 @router.delete("/{source_id}")
-def delete_api_source(kb_id: int, source_id: int, db: Session = Depends(get_db)) -> dict:
+def delete_api_source(
+    kb_id: int,
+    source_id: int,
+    hard_delete: bool = Query(default=True, description="true=硬删导入源；false=软删（仅禁用）"),
+    db: Session = Depends(get_db),
+) -> dict:
     src = db.get(KnowledgeApiSource, source_id)
     if not src or src.knowledge_base_id != kb_id:
         raise HTTPException(status_code=404, detail="API 源不存在")
-    db.delete(src)
+    stats = cleanup_api_source_in_kb(db, kb_id=kb_id, source_id=source_id)
+    if hard_delete:
+        db.delete(src)
+    else:
+        src.enabled = False
+        src.updated_at = datetime.utcnow()
     db.commit()
-    return {"ok": True}
+    return {"ok": True, "hard_delete": bool(hard_delete), **stats.to_dict()}
 
 
 class ImportRequest(BaseModel):

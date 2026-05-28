@@ -158,93 +158,13 @@ def _table_ref_tail(ref: str) -> str:
 
 
 def sync_join_edges_from_document(db: Session, document_id: int, knowledge_base_id: int) -> int:
-    """将 join_guide 分块的 join_edges 同步到 data_lineage（按表名去重）。"""
-    chunks = db.execute(
-        select(DocumentChunk).where(DocumentChunk.document_id == document_id)
-    ).scalars().all()
-
-    existing_pairs: set[tuple[str, str]] = {
-        (
-            (lg.source_table or "").strip().lower(),
-            (lg.target_table or "").strip().lower(),
-        )
-        for lg in db.execute(
-            select(DataLineage).where(DataLineage.knowledge_base_id == knowledge_base_id)
-        ).scalars().all()
-    }
-
-    created = 0
-    for chunk in chunks:
-        meta = chunk.semantic_meta if isinstance(chunk.semantic_meta, dict) else {}
-        if meta.get("semantic_role") != "join_guide":
-            continue
-        for edge in meta.get("join_edges") or []:
-            if not isinstance(edge, dict):
-                continue
-            src = _table_ref_tail(str(edge.get("left") or ""))
-            tgt = _table_ref_tail(str(edge.get("right") or ""))
-            if not src or not tgt:
-                continue
-            pair = (src.lower(), tgt.lower())
-            if pair in existing_pairs:
-                continue
-            db.add(
-                DataLineage(
-                    knowledge_base_id=knowledge_base_id,
-                    source_table=src,
-                    target_table=tgt,
-                    transform_logic=str(edge.get("on") or "").strip() or None,
-                    layer="DWD",
-                    status="done",
-                )
-            )
-            existing_pairs.add(pair)
-            created += 1
-
-    if created:
-        db.flush()
-    return created
+    """Legacy no-op: DataLineage 表已移除，保留接口避免中断文档索引流程。"""
+    return 0
 
 
 def apply_metric_bound_table_refs_from_document(db: Session, document_id: int, knowledge_base_id: int) -> int:
-    """从 business_metric 分块的 grounding 回填 MetricDefinition.bound_table_refs。"""
-    from models import MetricDefinition
-
-    doc = db.get(Document, document_id)
-    if doc is None or not doc.knowledge_entry_id:
-        return 0
-
-    chunks = db.execute(
-        select(DocumentChunk).where(DocumentChunk.document_id == document_id)
-    ).scalars().all()
-
-    refs: list[str] = []
-    for chunk in chunks:
-        meta = chunk.semantic_meta if isinstance(chunk.semantic_meta, dict) else {}
-        if meta.get("semantic_role") != "business_metric":
-            continue
-        grounding = meta.get("grounding") if isinstance(meta.get("grounding"), dict) else {}
-        refs.extend(str(x).strip() for x in (grounding.get("table_refs") or []) if str(x or "").strip())
-
-    if not refs:
-        return 0
-
-    unique_refs = list(dict.fromkeys(refs))
-    metrics = db.execute(
-        select(MetricDefinition).where(
-            MetricDefinition.knowledge_base_id == knowledge_base_id,
-            MetricDefinition.source_entry_id == doc.knowledge_entry_id,
-        )
-    ).scalars().all()
-    updated = 0
-    for metric in metrics:
-        merged = list(dict.fromkeys((metric.bound_table_refs or []) + unique_refs))
-        if merged != (metric.bound_table_refs or []):
-            metric.bound_table_refs = merged
-            updated += 1
-    if updated:
-        db.flush()
-    return updated
+    """Legacy no-op: MetricDefinition 表已移除，保留接口避免中断文档索引流程。"""
+    return 0
 
 
 def structure_document_chunks(
@@ -265,9 +185,18 @@ def structure_document_chunks(
     graph_relations = 0
     ontology_result: dict[str, Any] = {}
     if kb_id is not None:
-        join_edges = sync_join_edges_from_document(db, document_id, kb_id)
-        metric_refs = apply_metric_bound_table_refs_from_document(db, document_id, kb_id)
-        graph_relations = sync_relations_from_document(db, document_id, kb_id)
+        try:
+            join_edges = sync_join_edges_from_document(db, document_id, kb_id)
+        except Exception:
+            _logger.warning("Legacy join-edge sync skipped doc=%s", document_id, exc_info=True)
+        try:
+            metric_refs = apply_metric_bound_table_refs_from_document(db, document_id, kb_id)
+        except Exception:
+            _logger.warning("Legacy metric-ref sync skipped doc=%s", document_id, exc_info=True)
+        try:
+            graph_relations = sync_relations_from_document(db, document_id, kb_id)
+        except Exception:
+            _logger.warning("Legacy semantic-relation sync skipped doc=%s", document_id, exc_info=True)
         # Ontology assertion (Formal OWL path)
         try:
             from config import get_settings

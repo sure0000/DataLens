@@ -5,13 +5,14 @@ import re
 import threading
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, get_db
 from models import Document, KnowledgeBase, KnowledgeEntry
+from services.business_domain_scope import resolve_scope_domain
 from services.embedding_service import (
     KNOWLEDGE_EMBEDDING_REF,
     delete_embeddings_for_knowledge_entries,
@@ -121,11 +122,23 @@ def _entry_row(e: KnowledgeEntry) -> dict:
     }
 
 
+def _get_scoped_kb(db: Session, kb_id: int, domain_id: int) -> KnowledgeBase:
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb or kb.business_domain_id != domain_id:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    return kb
+
+
 @router.get("/categories")
-def list_categories(db: Session = Depends(get_db)) -> dict:
+def list_categories(request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
     rows = db.execute(
         select(KnowledgeBase.category)
-        .where(KnowledgeBase.category.isnot(None), KnowledgeBase.category != "")
+        .where(
+            KnowledgeBase.business_domain_id == scope_domain.id,
+            KnowledgeBase.category.isnot(None),
+            KnowledgeBase.category != "",
+        )
         .distinct()
         .order_by(KnowledgeBase.category)
     ).scalars().all()
@@ -133,16 +146,29 @@ def list_categories(db: Session = Depends(get_db)) -> dict:
 
 
 @router.get("")
-def list_knowledge_bases(db: Session = Depends(get_db)) -> dict:
-    rows = db.execute(select(KnowledgeBase).order_by(KnowledgeBase.created_at.desc())).scalars().all()
+def list_knowledge_bases(request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    rows = (
+        db.execute(
+            select(KnowledgeBase)
+            .where(KnowledgeBase.business_domain_id == scope_domain.id)
+            .order_by(KnowledgeBase.created_at.desc())
+        )
+        .scalars()
+        .all()
+    )
     return {"knowledge_bases": [_kb_row(r) for r in rows]}
 
 
 @router.post("")
-def create_knowledge_base(body: KnowledgeBaseCreate, db: Session = Depends(get_db)) -> dict:
+def create_knowledge_base(body: KnowledgeBaseCreate, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
     # 同名知识库检测
     existing = db.execute(
-        select(KnowledgeBase).where(KnowledgeBase.name == body.name.strip())
+        select(KnowledgeBase).where(
+            KnowledgeBase.name == body.name.strip(),
+            KnowledgeBase.business_domain_id == scope_domain.id,
+        )
     ).scalars().first()
     if existing:
         raise HTTPException(status_code=409, detail="同名的知识库已存在")
@@ -150,6 +176,7 @@ def create_knowledge_base(body: KnowledgeBaseCreate, db: Session = Depends(get_d
         name=body.name.strip(),
         description=body.description.strip() or None,
         category=body.category.strip() or None,
+        business_domain_id=scope_domain.id,
     )
     db.add(kb)
     db.commit()
@@ -158,10 +185,9 @@ def create_knowledge_base(body: KnowledgeBaseCreate, db: Session = Depends(get_d
 
 
 @router.get("/{kb_id}")
-def get_knowledge_base(kb_id: int, db: Session = Depends(get_db)) -> dict:
-    kb = db.get(KnowledgeBase, kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+def get_knowledge_base(kb_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    kb = _get_scoped_kb(db, kb_id, scope_domain.id)
     entries = (
         db.execute(
             select(KnowledgeEntry)
@@ -175,10 +201,9 @@ def get_knowledge_base(kb_id: int, db: Session = Depends(get_db)) -> dict:
 
 
 @router.put("/{kb_id}")
-def update_knowledge_base(kb_id: int, body: KnowledgeBaseUpdate, db: Session = Depends(get_db)) -> dict:
-    kb = db.get(KnowledgeBase, kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+def update_knowledge_base(kb_id: int, body: KnowledgeBaseUpdate, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    kb = _get_scoped_kb(db, kb_id, scope_domain.id)
     if body.name is not None:
         kb.name = body.name.strip()
     if body.description is not None:
@@ -191,10 +216,9 @@ def update_knowledge_base(kb_id: int, body: KnowledgeBaseUpdate, db: Session = D
 
 
 @router.delete("/{kb_id}")
-def delete_knowledge_base(kb_id: int, db: Session = Depends(get_db)) -> dict:
-    kb = db.get(KnowledgeBase, kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+def delete_knowledge_base(kb_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    kb = _get_scoped_kb(db, kb_id, scope_domain.id)
     entry_ids = list(
         db.execute(select(KnowledgeEntry.id).where(KnowledgeEntry.knowledge_base_id == kb_id)).scalars().all()
     )
@@ -206,10 +230,9 @@ def delete_knowledge_base(kb_id: int, db: Session = Depends(get_db)) -> dict:
 
 
 @router.post("/{kb_id}/entries")
-def create_entry(kb_id: int, body: EntryCreate, db: Session = Depends(get_db)) -> dict:
-    kb = db.get(KnowledgeBase, kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+def create_entry(kb_id: int, body: EntryCreate, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    _get_scoped_kb(db, kb_id, scope_domain.id)
     body_text = body.body or ""
     entry = create_entry_svc(
         db, kb_id, body.title, body_text,
@@ -247,14 +270,14 @@ def create_entry(kb_id: int, body: EntryCreate, db: Session = Depends(get_db)) -
 @router.post("/{kb_id}/entries/import-file")
 async def import_entry_from_file(
     kb_id: int,
+    request: Request,
     file: UploadFile = File(...),
     tags: str = Form(default=""),
     import_batch: str = Form(default=""),
     db: Session = Depends(get_db),
 ) -> dict:
-    kb = db.get(KnowledgeBase, kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+    scope_domain = resolve_scope_domain(db, request)
+    _get_scoped_kb(db, kb_id, scope_domain.id)
     fname = normalize_filename(file.filename or "upload.bin")
     raw = await file.read()
     if len(raw) > MAX_INGEST_BYTES:
@@ -327,7 +350,9 @@ async def import_entry_from_file(
 
 
 @router.put("/{kb_id}/entries/{entry_id}")
-def update_entry(kb_id: int, entry_id: int, body: EntryUpdate, db: Session = Depends(get_db)) -> dict:
+def update_entry(kb_id: int, entry_id: int, body: EntryUpdate, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    _get_scoped_kb(db, kb_id, scope_domain.id)
     entry = db.get(KnowledgeEntry, entry_id)
     if not entry or entry.knowledge_base_id != kb_id:
         raise HTTPException(status_code=404, detail="条目不存在")
@@ -350,7 +375,9 @@ def update_entry(kb_id: int, entry_id: int, body: EntryUpdate, db: Session = Dep
 
 
 @router.delete("/{kb_id}/entries/{entry_id}")
-def delete_entry(kb_id: int, entry_id: int, db: Session = Depends(get_db)) -> dict:
+def delete_entry(kb_id: int, entry_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    _get_scoped_kb(db, kb_id, scope_domain.id)
     entry = db.get(KnowledgeEntry, entry_id)
     if not entry or entry.knowledge_base_id != kb_id:
         raise HTTPException(status_code=404, detail="条目不存在")
@@ -361,10 +388,9 @@ def delete_entry(kb_id: int, entry_id: int, db: Session = Depends(get_db)) -> di
 
 
 @router.post("/{kb_id}/entries/batch-delete")
-def batch_delete_entries(kb_id: int, body: EntryBatchDeleteBody, db: Session = Depends(get_db)) -> dict:
-    kb = db.get(KnowledgeBase, kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+def batch_delete_entries(kb_id: int, body: EntryBatchDeleteBody, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    _get_scoped_kb(db, kb_id, scope_domain.id)
     # Only delete entries that belong to this kb
     valid_ids = list(
         db.scalars(
@@ -383,10 +409,9 @@ def batch_delete_entries(kb_id: int, body: EntryBatchDeleteBody, db: Session = D
 
 
 @router.post("/{kb_id}/search")
-def semantic_search(kb_id: int, body: SearchBody, db: Session = Depends(get_db)) -> dict:
-    kb = db.get(KnowledgeBase, kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+def semantic_search(kb_id: int, body: SearchBody, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    _get_scoped_kb(db, kb_id, scope_domain.id)
     hits = search_entries_hybrid(db, kb_id, body.query.strip(), top_k=body.top_k)
     return {"hits": hits}
 
@@ -396,10 +421,9 @@ def semantic_search(kb_id: int, body: SearchBody, db: Session = Depends(get_db))
 # ---------------------------------------------------------------------------
 
 @router.get("/{kb_id}/documents")
-def list_documents(kb_id: int, db: Session = Depends(get_db)) -> dict:
-    kb = db.get(KnowledgeBase, kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+def list_documents(kb_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    _get_scoped_kb(db, kb_id, scope_domain.id)
     return {"documents": get_document_list(db, kb_id)}
 
 
@@ -408,10 +432,9 @@ class DocumentBatchDeleteBody(BaseModel):
 
 
 @router.post("/{kb_id}/documents/batch-delete")
-def batch_delete_documents(kb_id: int, body: DocumentBatchDeleteBody, db: Session = Depends(get_db)) -> dict:
-    kb = db.get(KnowledgeBase, kb_id)
-    if not kb:
-        raise HTTPException(status_code=404, detail="知识库不存在")
+def batch_delete_documents(kb_id: int, body: DocumentBatchDeleteBody, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    _get_scoped_kb(db, kb_id, scope_domain.id)
     # Only delete documents that belong to this kb
     docs = db.execute(
         select(Document).where(
@@ -427,7 +450,9 @@ def batch_delete_documents(kb_id: int, body: DocumentBatchDeleteBody, db: Sessio
 
 
 @router.delete("/{kb_id}/documents/{doc_id}")
-def remove_document(kb_id: int, doc_id: int, db: Session = Depends(get_db)) -> dict:
+def remove_document(kb_id: int, doc_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    scope_domain = resolve_scope_domain(db, request)
+    _get_scoped_kb(db, kb_id, scope_domain.id)
     doc = db.get(Document, doc_id)
     if not doc or doc.knowledge_base_id != kb_id:
         raise HTTPException(status_code=404, detail="文档不存在")

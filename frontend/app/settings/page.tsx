@@ -8,6 +8,7 @@ import PageHeader from "../../components/PageHeader";
 import Toast from "../../components/Toast";
 import AppearanceTab from "../../components/settings/AppearanceTab";
 import ApiSourcesTab from "../../components/settings/ApiSourcesTab";
+import BusinessDomainsTab from "../../components/settings/BusinessDomainsTab";
 import ModelsTab from "../../components/settings/ModelsTab";
 import SemanticTab from "../../components/settings/SemanticTab";
 import { api } from "../../lib/api";
@@ -182,7 +183,7 @@ function IconEyeOff({ className = "h-4 w-4" }: { className?: string }) {
 export default function SettingsPage() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [cfg, setCfg] = useState<LlmConfig | null>(null);
-  const [activeTab, setActiveTab] = useState<"models" | "semantic" | "api_sources" | "appearance">("models");
+  const [activeTab, setActiveTab] = useState<"models" | "semantic" | "api_sources" | "appearance" | "business_domains">("models");
   const [connections, setConnections] = useState<LlmConnPublic[]>([]);
   const [semantic, setSemantic] = useState("auto");
   const [savedSemantic, setSavedSemantic] = useState("");
@@ -244,6 +245,18 @@ export default function SettingsPage() {
 
   useEffect(() => {
     load();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const raw = (new URLSearchParams(window.location.search).get("tab") || "").trim().toLowerCase();
+    const mapped =
+      raw === "business_domains" || raw === "domains"
+        ? "business_domains"
+        : raw === "models" || raw === "semantic" || raw === "api_sources" || raw === "appearance"
+          ? raw
+          : null;
+    if (mapped) setActiveTab(mapped);
   }, []);
 
   async function saveSemantic() {
@@ -400,45 +413,66 @@ export default function SettingsPage() {
   return (
     <main className="app-page">
       <div className="app-breadcrumb-strip">
-        <Breadcrumbs items={[{ label: "首页", href: "/" }, { label: "偏好设置" }]} />
+        <Breadcrumbs items={[{ label: "首页", href: "/" }, { label: "设置" }]} />
       </div>
-      <PageHeader title="偏好设置" />
+      <PageHeader title="设置" subtitle="集中管理模型接入、语义策略、业务域与界面偏好。" />
 
-      <div className="mx-auto mt-6 max-w-2xl pb-16">
-        <div className="flex gap-4">
+      <div className="mx-auto mt-8 max-w-6xl pb-20">
+        <div className="grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
           {/* ── 左侧 Tab 栏 ── */}
-          <nav className="w-36 shrink-0 flex flex-col gap-1" role="tablist" aria-label="偏好设置分类">
+          <nav
+            className="flex shrink-0 flex-col gap-1.5 rounded-2xl border border-app-border bg-app-surface p-2 lg:sticky lg:top-20 lg:h-fit"
+            role="tablist"
+            aria-label="设置分类"
+          >
             <button
               role="tab"
               aria-selected={activeTab === "models"}
               onClick={() => setActiveTab("models")}
-              className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-left transition-colors ${
+              className={`flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-medium text-left transition-colors ${
                 activeTab === "models"
                   ? "bg-app-activeBg text-app-primary border border-app-primary/20"
                   : "text-app-secondary hover:bg-app-hover hover:text-app-ink"
               }`}
             >
               <IconPlug className="h-4 w-4 shrink-0" />
-              模型管理
+              模型与连接
             </button>
             <button
               role="tab"
               aria-selected={activeTab === "semantic"}
               onClick={() => setActiveTab("semantic")}
-              className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-left transition-colors ${
+              className={`flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-medium text-left transition-colors ${
                 activeTab === "semantic"
                   ? "bg-app-activeBg text-app-primary border border-app-primary/20"
                   : "text-app-secondary hover:bg-app-hover hover:text-app-ink"
               }`}
             >
               <IconColumns className="h-4 w-4 shrink-0" />
-              语义分析
+              语义策略
+            </button>
+            <button
+              role="tab"
+              aria-selected={activeTab === "business_domains"}
+              onClick={() => setActiveTab("business_domains")}
+              className={`flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-medium text-left transition-colors ${
+                activeTab === "business_domains"
+                  ? "bg-app-activeBg text-app-primary border border-app-primary/20"
+                  : "text-app-secondary hover:bg-app-hover hover:text-app-ink"
+              }`}
+            >
+              <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                <path d="M3 21h18" />
+                <path d="M5 21V7l7-4 7 4v14" />
+                <path d="M9 10h6M9 14h6" />
+              </svg>
+              业务域管理
             </button>
             <button
               role="tab"
               aria-selected={activeTab === "appearance"}
               onClick={() => setActiveTab("appearance")}
-              className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-left transition-colors ${
+              className={`flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-medium text-left transition-colors ${
                 activeTab === "appearance"
                   ? "bg-app-activeBg text-app-primary border border-app-primary/20"
                   : "text-app-secondary hover:bg-app-hover hover:text-app-ink"
@@ -454,7 +488,7 @@ export default function SettingsPage() {
               role="tab"
               aria-selected={activeTab === "api_sources"}
               onClick={() => setActiveTab("api_sources")}
-              className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm font-medium text-left transition-colors ${
+              className={`flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-medium text-left transition-colors ${
                 activeTab === "api_sources"
                   ? "bg-app-activeBg text-app-primary border border-app-primary/20"
                   : "text-app-secondary hover:bg-app-hover hover:text-app-ink"
@@ -464,7 +498,7 @@ export default function SettingsPage() {
                 <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z" />
                 <polyline points="22,6 12,13 2,6" />
               </svg>
-              API 源
+              API 数据源
             </button>
           </nav>
 
@@ -499,6 +533,8 @@ export default function SettingsPage() {
             {activeTab === "api_sources" && <ApiSourcesTab />}
 
             {activeTab === "appearance" && <AppearanceTab />}
+
+            {activeTab === "business_domains" && <BusinessDomainsTab />}
 
           </div>
         </div>

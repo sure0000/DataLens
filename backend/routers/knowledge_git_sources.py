@@ -8,17 +8,17 @@ from datetime import datetime
 from typing import Any
 
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
-from sqlalchemy import cast, delete, select
+from sqlalchemy import cast, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Document, KnowledgeBase, KnowledgeEntry, KnowledgeGitSource
-from services.embedding_service import delete_embeddings_for_knowledge_entries
 from services.git_knowledge_sync import run_git_source_sync
 from services.git_schedule import refresh_git_sync_schedules
+from services.source_cascade_cleanup import cleanup_git_source
 
 router = APIRouter(prefix="/api/knowledge-bases", tags=["knowledge-git-sources"])
 _logger = logging.getLogger(__name__)
@@ -50,6 +50,7 @@ def _mask_row(r: KnowledgeGitSource) -> dict:
         "include_globs": r.include_globs,
         "max_file_kb": r.max_file_kb,
         "max_files": r.max_files,
+        "enable_document_indexing": bool(r.enable_document_indexing),
         "cron_expression": (r.cron_expression or "").strip() or None,
         "enabled": bool(r.enabled),
         "tags": r.tags if isinstance(r.tags, list) else [],
@@ -80,6 +81,7 @@ class GitSourceCreate(BaseModel):
     )
     max_file_kb: int = Field(default=512, ge=8, le=4096)
     max_files: int = Field(default=200, ge=1, le=5000)
+    enable_document_indexing: bool = False
     cron_expression: str | None = Field(default=None, max_length=120)
     enabled: bool = True
     tags: list[str] | None = None
@@ -105,6 +107,7 @@ class GitSourceUpdate(BaseModel):
     include_globs: str | None = Field(default=None, max_length=2000)
     max_file_kb: int | None = Field(default=None, ge=8, le=4096)
     max_files: int | None = Field(default=None, ge=1, le=5000)
+    enable_document_indexing: bool | None = None
     cron_expression: str | None = Field(default=None, max_length=120)
     enabled: bool | None = None
     tags: list[str] | None = None
@@ -175,6 +178,7 @@ def create_git_source(kb_id: int, body: GitSourceCreate, db: Session = Depends(g
         include_globs=(body.include_globs or "").strip(),
         max_file_kb=body.max_file_kb,
         max_files=body.max_files,
+        enable_document_indexing=bool(body.enable_document_indexing),
         cron_expression=(body.cron_expression or "").strip() or None,
         enabled=body.enabled,
         tags=body.tags if isinstance(body.tags, list) else None,
@@ -189,7 +193,7 @@ def create_git_source(kb_id: int, body: GitSourceCreate, db: Session = Depends(g
         register_evidence_from_import(
             db,
             kb_id,
-            title=f"[Git] {row.name}",
+            title=row.name,
             route_key="git-sources",
             source_ref={
                 "git_source_id": row.id,
@@ -246,6 +250,8 @@ def update_git_source(
         row.max_file_kb = body.max_file_kb
     if body.max_files is not None:
         row.max_files = body.max_files
+    if body.enable_document_indexing is not None:
+        row.enable_document_indexing = bool(body.enable_document_indexing)
     if body.cron_expression is not None:
         row.cron_expression = (body.cron_expression or "").strip() or None
     if body.enabled is not None:
@@ -263,31 +269,29 @@ def update_git_source(
 
 
 @router.delete("/{kb_id}/git-sources/{source_id}")
-def delete_git_source(kb_id: int, source_id: int, db: Session = Depends(get_db)) -> dict:
+def delete_git_source(
+    kb_id: int,
+    source_id: int,
+    hard_delete: bool = Query(default=True, description="true=硬删导入源；false=软删（仅禁用）"),
+    db: Session = Depends(get_db),
+) -> dict:
     _get_kb(db, kb_id)
     row = db.get(KnowledgeGitSource, source_id)
     if not row or row.knowledge_base_id != kb_id:
         raise HTTPException(status_code=404, detail="Git 源不存在")
-    entry_ids = list(
-        db.scalars(
-            select(KnowledgeEntry.id).where(
-                KnowledgeEntry.knowledge_base_id == kb_id,
-                cast(KnowledgeEntry.source_meta, JSONB)["kind"].astext == "git_file",
-                cast(KnowledgeEntry.source_meta, JSONB)["git_source_id"].astext == str(source_id),
-            )
-        ).all()
+    stats = cleanup_git_source(
+        db,
+        kb_id=kb_id,
+        source_id=source_id,
+        hard_delete=hard_delete,
+        source_row=row,
     )
-    delete_embeddings_for_knowledge_entries(db, entry_ids)
-    if entry_ids:
-        db.execute(delete(KnowledgeEntry).where(KnowledgeEntry.id.in_(entry_ids)))
-        db.flush()
-    db.delete(row)
     db.commit()
     try:
         refresh_git_sync_schedules()
     except Exception:  # noqa: BLE001
         pass
-    return {"ok": True}
+    return {"ok": True, "hard_delete": bool(hard_delete), **stats.to_dict()}
 
 
 def _entries_for_git_source(db: Session, kb_id: int, source_id: int) -> list[KnowledgeEntry]:
@@ -359,6 +363,8 @@ def reindex_git_source_entries(kb_id: int, source_id: int, db: Session = Depends
     src = db.get(KnowledgeGitSource, source_id)
     if not src or src.knowledge_base_id != kb_id:
         raise HTTPException(status_code=404, detail="Git 源不存在")
+    if not bool(src.enable_document_indexing):
+        raise HTTPException(status_code=400, detail="该代码源未启用文档索引，请在设置中开启后再重建索引")
 
     entries = _entries_for_git_source(db, kb_id, source_id)
     if not entries:

@@ -73,6 +73,10 @@ def list_evidence_packages(db: Session, kb_id: int) -> list[dict[str, Any]]:
         kind = (meta.get("kind") or "file").lower()
         if kind == "git_file":
             continue
+        if kind == "database":
+            # 数据库导入由 KnowledgeDatabaseImport 统一生成 physical_schema 包，
+            # 这里跳过 entry 级合成，避免同一来源出现“文件/数据源”双记录。
+            continue
         if kind in ("notion", "confluence", "feishu", "api"):
             connector = "api"
             asset_kind = "semantic_doc"
