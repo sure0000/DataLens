@@ -42,6 +42,9 @@ app.add_middleware(
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    # CORS 预检请求不能要求鉴权，否则浏览器会在真正请求前直接报 Failed to fetch。
+    if request.method.upper() == "OPTIONS":
+        return await call_next(request)
     try:
         enforce_request_auth(request)
     except HTTPException as exc:
