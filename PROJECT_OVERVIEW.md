@@ -1,6 +1,6 @@
 # DataLens 项目说明索引
 
-> 2026-05-25 起，产品/实现说明已合并至 [`docs/DATALENS_OVERVIEW.md`](docs/DATALENS_OVERVIEW.md)。以下为推荐阅读顺序。
+> 2026-05-29 起，产品/实现说明已合并至 [`docs/DATALENS_OVERVIEW.md`](docs/DATALENS_OVERVIEW.md)。以下为推荐阅读顺序。
 
 ## 推荐阅读顺序
 
@@ -12,6 +12,7 @@
 
 | 主题 | 文档 |
 |------|------|
+| 本体三层 UI 与语义资产浏览 | [`docs/ONTOLOGY_LAYER_UI_OPTIMIZATION.md`](docs/ONTOLOGY_LAYER_UI_OPTIMIZATION.md) |
 | 企业语义层与域内自治 | [`docs/企业语义层与域内自治实践.md`](docs/企业语义层与域内自治实践.md) |
 | Copilot 语义路由 | [`docs/COPILOT_ROUTING_OPTIMIZATION.md`](docs/COPILOT_ROUTING_OPTIMIZATION.md) |
 | 语义层能力 backlog | [`docs/SEMANTIC_LAYER_OPTIMIZATION_BACKLOG.md`](docs/SEMANTIC_LAYER_OPTIMIZATION_BACKLOG.md) |

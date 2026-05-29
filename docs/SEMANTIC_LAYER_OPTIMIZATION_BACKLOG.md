@@ -5,7 +5,7 @@
 
 ---
 
-## 实现状态总览 (2026-05-25)
+## 实现状态总览 (2026-05-29)
 
 | 能力 | 状态 | 说明 |
 |------|------|------|
@@ -26,10 +26,12 @@
 | Copilot 多信号路由 | ✅ | 见 [COPILOT_ROUTING_OPTIMIZATION](./COPILOT_ROUTING_OPTIMIZATION.md) |
 | 指标→表绑定 | ✅ | `MetricDefinition.bound_table_refs` + metric_router |
 | 按 semantic_role 分流检索 | ✅ | 问句推断 role → hybrid 检索加权 |
+| OWL/RDF 本体引擎 + 五层建模 | ✅ | Fuseki / 本地 Trig；`modeling_layers` + SHACL + 隔离区 |
+| 业务域五层语义资产聚合 | ✅ | `domain_aggregation.py`；`/api/business-domains/{id}/ontology/*` |
 | 业务域全局语义靠前注入 | 🔲 | 域描述在 Copilot prompt 中更靠前 |
 | semantic_relations UI 编辑 | 🔲 | 关系图可视化与人工维护 |
 | PII / 脱敏列标记 | ⏸️ | 合规需求 |
-| Formal OWL 本体 | ⏸️ | 轻量 JSON 关系图已覆盖主要场景 |
+| Formal OWL 本体 | ✅ | 与轻量 `semantic_relations` 双轨并存；Copilot 可走 SPARQL 路由 |
 
 ---
 

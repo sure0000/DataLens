@@ -1,6 +1,6 @@
 # DataLens 项目全貌（人与 AI 双可读）
 
-> 本文档合并了原 `PROJECT_BRIEF_AI.md`、`IMPLEMENTATION_SPEC_AI.md`、`AI_READER_PROMPT.md`，反映 **2026-05-25** 最新状态（含知识库语义结构化、Copilot 多信号路由、轻量语义关系图）。
+> 本文档合并了原 `PROJECT_BRIEF_AI.md`、`IMPLEMENTATION_SPEC_AI.md`、`AI_READER_PROMPT.md`，反映 **2026-05-29** 最新状态（含知识库语义结构化、Copilot 多信号路由、OWL 本体引擎、业务域五层语义资产浏览）。
 
 ---
 
@@ -61,10 +61,12 @@
 - LLM 无 Key 兜底：未配置 API Key 时用规则和本地向量提供基本链路可用性
 - 大模型多厂商接入：DeepSeek / OpenAI / 自定义兼容端点
 - **OWL/RDF 本体引擎**：Apache Jena Fuseki 三元组存储、SPARQL 查询与推理、OWL 2 RL 增量推理
-- **本体建模工作台**：术语/指标/关系/层级的可视化浏览与同步管理
+- **本体建模与清洗**：8 步抽取编排、SHACL 校验、隔离区、五层结果分页 API；知识库详情 `#modeling` 建模与质量区块
+- **业务域语义资产浏览**：按侧栏当前业务域聚合绑定知识库的已入图五层资产（`DomainFiveLayerBrowse`），支持来源知识库 / 导入来源追溯
 - **SHACL 校验写入**：三元组写入前强制校验，通过入 production graph，失败入 quarantine
 - **Copilot 本体路由**：OntologyRouter（SPARQL 概念/表路由）、ContextAssembler（LLM 上下文组装）、CopilotPipeline（统一入口）
-- **前端本体组件**：ConceptHierarchyTree、RelationGraph、MetricDerivationChain、TripleViewer、QuarantineList、ShaclDashboard、ConfidenceDistribution
+- **前端本体组件**：DomainFiveLayerBrowse、ConceptHierarchyPanel、RelationGraph、LineageGraph、QuarantineList、ModelingPipelineStatus、OntologyLayerDetailPanel
+- **数据源级联删除**：删除数据源时自动清理关联表元数据、向量、域选表、知识库数据库导入
 
 ### Out of Scope（当前不做）
 
@@ -117,6 +119,7 @@ backend/
 │   ├── datasources.py          # 数据源 CRUD、目录浏览
 │   ├── tables.py               # 表详情聚合
 │   ├── business_domains.py     # 业务域 CRUD + 选择
+│   ├── domain_ontology.py      # 业务域级本体浏览 API（跨 KB 聚合）
 │   ├── knowledge_bases.py      # 知识库 CRUD + 条目 + 文件上传 + 文档流水线
 │   ├── knowledge_git_sources.py # Git 同步源管理
 │   ├── knowledge_api_sources.py # Notion/飞书等 API 源
@@ -143,7 +146,12 @@ backend/
 │   ├── document_chunker.py     # 文档分块
 │   ├── sql_ast_guard.py        # sqlglot 只读校验
 │   ├── git_knowledge_sync.py   # Git 同步
-│   └── git_schedule.py         # Git 定时调度
+│   ├── git_schedule.py         # Git 定时调度
+│   ├── datasource_cleanup.py   # 数据源删除级联清理
+│   └── ontology/               # RDF 读写、五层建模、域聚合、SHACL、隔离区
+│       ├── domain_aggregation.py  # 业务域跨 KB 本体数据聚合
+│       ├── modeling_layers.py     # 五层摘要与分页明细
+│       └── views.py               # SPARQL 只读视图（graph/lineage/hierarchy 等）
 ├── prompts/                    # LLM prompt 模板
 └── tests/                      # pytest
 
@@ -153,10 +161,12 @@ frontend/
 │   ├── copilot/page.tsx        # Copilot 对话
 │   ├── datasources/            # 数据源管理、目录浏览
 │   ├── table/[id]/page.tsx     # 表详情画像
-│   ├── business-domains/       # 业务域详情
-│   ├── knowledge-bases/        # 知识库管理
+│   ├── business-domains/       # 业务域详情（遗留 /ontology 重定向至 /ontology）
+│   ├── knowledge-bases/        # 知识库管理 + 建模与质量
+│   ├── ontology/page.tsx       # 语义资产（按侧栏当前业务域五层浏览）
 │   └── settings/page.tsx       # LLM 偏好设置
-├── components/                 # 通用组件
+├── components/
+│   ├── ontology/               # DomainFiveLayerBrowse、DomainOntologyPageShell 等
 │   ├── CopilotChat.tsx         # Copilot 对话容器
 │   ├── CopilotExecutionTrace.tsx # 执行链路可视化
 │   ├── ColumnCard.tsx          # 列信息卡片
@@ -344,7 +354,7 @@ sample_data─┼→ profile_column() ─→ profiles[] ─→┤→ ColumnMeta.
 - `POST /api/analyze/{table_name}` — 触发单表异步分析
 
 ### 数据源管理
-- `GET/POST/PUT/DELETE /api/datasources` — CRUD
+- `GET/POST/PUT/DELETE /api/datasources` — CRUD（`DELETE` 级联清理关联表元数据、向量、域选表、知识库数据库导入）
 - `POST /api/datasources/test` — 连接测试
 - `GET /api/datasources/{id}/catalog` — 数据源目录
 - `GET /api/datasources/{id}/databases/{db}/catalog` — 数据库目录
@@ -363,6 +373,20 @@ sample_data─┼→ profile_column() ─→ profiles[] ─→┤→ ColumnMeta.
 - `GET/POST/DELETE /api/business-domains` — CRUD
 - `GET /api/business-domains/{id}` — 域详情
 - `GET /api/business-domains/options` — 下拉选项
+
+### 业务域语义资产（跨知识库聚合）
+- `GET /api/business-domains/{id}/ontology/overview` — 域内各 KB 建模摘要与合计
+- `GET /api/business-domains/{id}/ontology/layers` — 五层摘要（可选 `?kb=` 筛选）
+- `GET /api/business-domains/{id}/ontology/layers/{layer_key}` — 单层明细分页（`limit`/`offset`，可选 `?kb=`）
+- `GET /api/business-domains/{id}/ontology/terms|metrics|dimensions|rules` — 语义实体列表
+- `GET /api/business-domains/{id}/ontology/graph|lineage|assets` — 关系图、血缘、物理表
+
+### 知识库本体建模（单 KB）
+- `GET /api/ontology/knowledge-bases/{id}/modeling/status` — 抽取流水线状态
+- `GET /api/ontology/knowledge-bases/{id}/modeling/layers/{key}` — 五层明细分页
+- `POST /api/ontology/knowledge-bases/{id}/modeling/runs` — 触发完整建模
+- `GET /api/ontology/knowledge-bases/{id}/views/*` — 只读 SPARQL 视图（overview/terms/graph/lineage/hierarchy 等）
+- `GET /api/ontology/knowledge-bases/{id}/provenance` — 实体溯源链
 
 ### 知识库
 - `CRUD /api/knowledge-bases` — 知识库管理
@@ -393,7 +417,9 @@ sample_data─┼→ profile_column() ─→ profiles[] ─→┤→ ColumnMeta.
 | `/datasources/[id]` | 数据源目录 | 库表浏览+分析触发 |
 | `/datasources/[id]/database/[db]` | 数据库目录 | 库级别分析 |
 | `/table/[id]` | 表详情 | 列信息+摘要 |
-| `/business-domains/[id]` | 业务域详情 | 描述+库表选择 |
+| `/business-domains/[id]` | 业务域详情 | 描述+库表选择+知识库绑定 |
+| `/business-domains/[id]/ontology` | 遗留重定向 | → `/ontology`（保留 query） |
+| `/ontology` | 语义资产 | 侧栏当前业务域五层浏览；`?kb=` 筛选知识库；`?layer=` 深链到指定层 |
 | `/knowledge-bases` | 知识库列表 | 管理入口 |
 | `/knowledge-bases/[id]` | 知识库详情 | 导入源（语义清洗）+ 证据包登记 + `#modeling` 建模与质量（流水线 / 五层结果 / 质量与隔离，见 [ONTOLOGY_LAYER_UI_OPTIMIZATION §5.3.1](./ONTOLOGY_LAYER_UI_OPTIMIZATION.md)） |
 | `/settings` | 设置 | LLM偏好 |
@@ -430,4 +456,4 @@ sample_data─┼→ profile_column() ─→ profiles[] ─→┤→ ColumnMeta.
 
 ---
 
-*最后更新：2026-05-26，反映知识库语义结构化（Phase 1~3）、Copilot 多信号路由与 semantic_relations 关系图。*
+*最后更新：2026-05-29，反映业务域五层语义资产浏览、域级本体聚合 API、数据源级联删除与知识库本体建模工作台。*

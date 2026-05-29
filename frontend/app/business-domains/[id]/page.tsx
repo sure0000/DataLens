@@ -13,7 +13,6 @@ import LoadingSkeletonList from "../../../components/LoadingSkeletonList";
 import PageHeader from "../../../components/PageHeader";
 import Toast from "../../../components/Toast";
 import KnowledgeBasePicker from "../../../components/knowledge-bases/KnowledgeBasePicker";
-
 type OptionTable = { name: string; comment?: string };
 type OptionDatabase = { name: string; tables: OptionTable[] };
 type OptionSource = { id: number; name: string; source_type: string; databases: OptionDatabase[] };
@@ -438,6 +437,12 @@ export default function DomainDetailPage({ params }: { params: { id: string } })
         meta={`创建时间：${new Date(detail.domain.created_at).toLocaleString()}`}
         actions={
           <div className="app-toolbar">
+            <Link
+              href="/ontology"
+              className="app-button app-toolbar-action no-underline"
+            >
+              查看语义资产
+            </Link>
             <button className="app-button-secondary" onClick={openEditDescriptionModal}>
               编辑描述
             </button>

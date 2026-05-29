@@ -7,6 +7,7 @@ from database import get_db
 from models import ColumnMeta, DataSource, TableMeta, TableSummary
 from routers.analyze import schedule_table_analyze
 from services.business_domain_scope import resolve_scope_domain
+from services.datasource_cleanup import delete_datasource_row
 from services.metadata_ingest import run_metadata_ingest_for_datasource
 from services.schema_extractor import (
     ALLOWED_SOURCE_TYPES,
@@ -162,9 +163,9 @@ def update_datasource(datasource_id: int, body: DataSourceBody, request: Request
 def delete_datasource(datasource_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
     scope_domain = resolve_scope_domain(db, request)
     row = _get_scoped_datasource(db, datasource_id, scope_domain.id)
-    db.delete(row)
+    result = delete_datasource_row(db, row)
     db.commit()
-    return {"success": True}
+    return result
 
 
 @router.post("/datasources/test")

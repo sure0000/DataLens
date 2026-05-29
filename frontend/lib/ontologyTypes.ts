@@ -7,6 +7,14 @@ export type KnowledgeBaseOption = {
   created_at: string;
 };
 
+export type OntologyEntityOrigin = {
+  knowledge_base_id: number;
+  knowledge_base_name: string;
+  source_label?: string;
+  source_type?: string;
+  evidence_package_display_id?: string;
+};
+
 export type OntologyTerm = {
   id: number;
   iri?: string;
@@ -17,6 +25,7 @@ export type OntologyTerm = {
   concept_id: string | null;
   confidence: number;
   status: string;
+  origin?: OntologyEntityOrigin;
 };
 
 export type OntologyMetric = {
@@ -29,6 +38,7 @@ export type OntologyMetric = {
   concept_id: string | null;
   confidence: number;
   status: string;
+  origin?: OntologyEntityOrigin;
 };
 
 export type OntologyDimension = {
@@ -39,6 +49,7 @@ export type OntologyDimension = {
   dim_type: string;
   confidence: number;
   status: string;
+  origin?: OntologyEntityOrigin;
 };
 
 export type OntologyRule = {
@@ -49,10 +60,95 @@ export type OntologyRule = {
   rule_type: string;
   confidence: number;
   status: string;
+  origin?: OntologyEntityOrigin;
 };
 
-export type GraphNode = { id: string; type: string; label: string; status?: string };
-export type GraphEdge = { id: string; type: string; source: string; target: string };
+export type GraphNode = {
+  id: string;
+  type: string;
+  label: string;
+  status?: string;
+  knowledge_base_id?: number;
+  knowledge_base_name?: string;
+};
+export type GraphEdge = {
+  id: string;
+  type: string;
+  source: string;
+  target: string;
+  knowledge_base_id?: number;
+};
+
+export type DomainKbOntologySummary = {
+  knowledge_base_id: number;
+  knowledge_base_name: string;
+  term_count: number;
+  metric_count: number;
+  physical_table_count: number;
+  relation_edge_count: number;
+  triple_count: number;
+  quarantine_count: number;
+  shacl_pass_rate?: number | null;
+  pipeline_status?: string | null;
+  last_cleaning_at?: string | null;
+};
+
+export type DomainOntologyOverview = {
+  ok: boolean;
+  domain_id: number;
+  domain_name: string;
+  knowledge_base_count: number;
+  knowledge_bases: DomainKbOntologySummary[];
+  totals: {
+    term_count: number;
+    metric_count: number;
+    physical_table_count: number;
+    relation_edge_count: number;
+    triple_count: number;
+    quarantine_count: number;
+  };
+};
+
+export type DomainPhysicalTable = {
+  iri: string;
+  platform_id: string;
+  summary: string;
+  origin: OntologyEntityOrigin;
+};
+
+export type DomainOntologyLayerSummary = {
+  label: string;
+  description: string;
+  total: number;
+  ontology_class: string;
+  criteria?: Record<string, string | number | boolean | string[]>;
+};
+
+export type DomainOntologyLayersSummary = {
+  ok: boolean;
+  domain_id: number;
+  knowledge_base_count: number;
+  layers: Record<string, DomainOntologyLayerSummary>;
+};
+
+export type DomainLayerItem = Record<string, string> & {
+  origin?: OntologyEntityOrigin;
+};
+
+export type DomainOntologyLayerDetail = {
+  ok: boolean;
+  domain_id: number;
+  layer_key: string;
+  label: string;
+  description: string;
+  ontology_class: string;
+  criteria?: Record<string, string | number | boolean | string[]>;
+  total: number;
+  offset: number;
+  limit: number;
+  has_more: boolean;
+  items: DomainLayerItem[];
+};
 
 export type OntologyStoreInfo = {
   triple_count?: number;
@@ -76,7 +172,7 @@ export type SyncResult = {
   };
 };
 
-export type OntologyTab = "overview" | "semantics" | "assets" | "graph" | "expert";
+export type OntologyTab = "overview" | "semantics" | "assets" | "graph";
 
 export type RdfEntity = {
   iri: string;

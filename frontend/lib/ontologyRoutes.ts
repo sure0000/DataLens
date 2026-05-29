@@ -1,10 +1,21 @@
 /** Canonical URLs for ontology browse and KB modeling-quality pages. */
 
-export type OntologyBrowseTab = "overview" | "semantics" | "assets" | "graph" | "expert";
+export type OntologyBrowseTab = "overview" | "semantics" | "assets" | "graph";
 
 export type ModelingSectionTab = "layers" | "quality";
 
 export type QualitySubTab = "todo" | "metrics";
+
+/** Product five-layer chip order for semantic assets browse. */
+export const SEMANTIC_ASSET_LAYERS = [
+  "entity-concept",
+  "relation",
+  "rule",
+  "attribute",
+  "vocabulary",
+] as const;
+
+export type SemanticAssetLayer = (typeof SEMANTIC_ASSET_LAYERS)[number];
 
 /** Product five-layer chip order (dimension is a sub-view of entity-concept). */
 export const MODELING_DISPLAY_LAYERS = [
@@ -22,7 +33,6 @@ const BROWSE_TABS = new Set<OntologyBrowseTab>([
   "semantics",
   "assets",
   "graph",
-  "expert",
 ]);
 
 const MODELING_TABS = new Set<ModelingSectionTab>(["layers", "quality"]);
@@ -39,6 +49,7 @@ export function normalizeModelingLayerKey(key: string | null | undefined): strin
   if (!key) return null;
   const normalized = LAYER_ALIASES[key] ?? key;
   if (
+    SEMANTIC_ASSET_LAYERS.includes(normalized as SemanticAssetLayer) ||
     MODELING_DISPLAY_LAYERS.includes(normalized as ModelingDisplayLayer) ||
     normalized === "dimension"
   ) {
@@ -53,19 +64,76 @@ export function normalizeQualitySubTab(value: string | null | undefined): Qualit
 }
 
 export function isOntologyBrowseTab(tab: string | null | undefined): tab is OntologyBrowseTab {
-  return tab != null && BROWSE_TABS.has(tab as OntologyBrowseTab);
+  if (tab == null) return false;
+  if (tab === "expert") return false;
+  return BROWSE_TABS.has(tab as OntologyBrowseTab);
 }
 
-export function ontologyUrl(options?: { kbId?: number; tab?: OntologyBrowseTab }): string {
+/** Semantic assets browse for a business domain (optional KB filter). */
+export function ontologyUrl(options?: {
+  domainId?: number;
+  kbId?: number;
+  tab?: OntologyBrowseTab;
+  layer?: string;
+  entitySub?: "concept" | "dimension";
+  conceptView?: "list" | "tree";
+}): string {
+  if (options?.domainId != null && Number.isFinite(options.domainId)) {
+    return domainOntologyUrl(options.domainId, {
+      kbId: options.kbId,
+      tab: options.tab,
+      layer: options.layer,
+      entitySub: options.entitySub,
+      conceptView: options.conceptView,
+    });
+  }
   const params = new URLSearchParams();
   if (options?.kbId != null && Number.isFinite(options.kbId)) {
     params.set("kb", String(options.kbId));
   }
-  if (options?.tab && options.tab !== "overview") {
+  if (options?.layer) {
+    params.set("layer", options.layer);
+  } else if (options?.tab && options.tab !== "overview") {
     params.set("tab", options.tab);
+  }
+  if (options?.entitySub && options.entitySub !== "concept") {
+    params.set("entity", options.entitySub);
+  }
+  if (options?.conceptView && options.conceptView !== "list") {
+    params.set("view", options.conceptView);
   }
   const q = params.toString();
   return q ? `/ontology?${q}` : "/ontology";
+}
+
+export function domainOntologyUrl(
+  domainId: number,
+  options?: {
+    kbId?: number;
+    tab?: OntologyBrowseTab;
+    layer?: string;
+    entitySub?: "concept" | "dimension";
+    conceptView?: "list" | "tree";
+  },
+): string {
+  const params = new URLSearchParams();
+  if (options?.kbId != null && Number.isFinite(options.kbId)) {
+    params.set("kb", String(options.kbId));
+  }
+  if (options?.layer) {
+    params.set("layer", options.layer);
+  } else if (options?.tab && options.tab !== "overview") {
+    params.set("tab", options.tab);
+  }
+  if (options?.entitySub && options.entitySub !== "concept") {
+    params.set("entity", options.entitySub);
+  }
+  if (options?.conceptView && options.conceptView !== "list") {
+    params.set("view", options.conceptView);
+  }
+  const q = params.toString();
+  const base = `/business-domains/${domainId}/ontology`;
+  return q ? `${base}?${q}` : base;
 }
 
 export type ModelingHashState = {
@@ -167,4 +235,10 @@ export function parseKbIdFromSearchParams(
   if (!raw) return null;
   const id = Number(raw);
   return Number.isFinite(id) ? id : null;
+}
+
+export function parseKbFilterFromSearchParams(
+  searchParams: URLSearchParams | { get: (key: string) => string | null },
+): number | null {
+  return parseKbIdFromSearchParams(searchParams);
 }

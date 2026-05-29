@@ -42,7 +42,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const isOntologyBrowseNav = pathname.startsWith("/ontology");
+  const isOntologyBrowseNav =
+    pathname.startsWith("/ontology") || /^\/business-domains\/\d+\/ontology/.test(pathname);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileOpen, setMobileOpen] = useState(false);
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -81,11 +82,15 @@ export default function AppShell({ children }: { children: ReactNode }) {
     const parsed = Number(raw);
     return Number.isFinite(parsed) ? parsed : null;
   }, [searchParams]);
-  const ontologyNavHref = kbFromPath
-    ? ontologyUrl({ kbId: kbFromPath })
-    : kbFromOntologyQuery
-      ? ontologyUrl({ kbId: kbFromOntologyQuery })
-      : "/ontology";
+  const ontologyNavHref = useMemo(() => {
+    if (kbFromPath) {
+      return ontologyUrl({ kbId: kbFromPath });
+    }
+    if (kbFromOntologyQuery) {
+      return ontologyUrl({ kbId: kbFromOntologyQuery });
+    }
+    return "/ontology";
+  }, [kbFromPath, kbFromOntologyQuery]);
   const { updateEvent } = getSessionStorageKeys();
 
   function loadCopilotSessions() {
@@ -518,10 +523,10 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <Link
               href={ontologyNavHref}
               className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isOntologyBrowseNav ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
-              title="本体浏览：总览与业务语义等 Tab"
-              aria-label="本体浏览"
+              title="语义资产：查看当前业务域已入图的术语、指标、表与关系"
+              aria-label="语义资产"
             >
-              <Icon name="book" />
+              <Icon name="layers" />
             </Link>
             <Link
               href="/copilot"
@@ -600,9 +605,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
               className={`app-nav-item rounded-lg ${isOntologyBrowseNav ? "is-active" : ""}`}
             >
               <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
-                <Icon name="book" />
+                <Icon name="layers" />
               </span>
-              <span>本体浏览</span>
+              <span>语义资产</span>
             </Link>
             </div>
           )}

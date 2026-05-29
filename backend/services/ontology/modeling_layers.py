@@ -415,3 +415,32 @@ def get_modeling_layer(
         "has_more": has_more,
         "items": page,
     }
+
+
+def count_layers_for_kb(kb_id: int) -> dict[str, int]:
+    return _count_queries(kb_id)
+
+
+def fetch_items_for_layer(kb_id: int, layer_key: str) -> list[dict[str, str]]:
+    normalized = normalize_layer_key(layer_key)
+    if not normalized:
+        return []
+    return _fetch_layer_items(kb_id, normalized)
+
+
+def build_layers_summary(counts: dict[str, int]) -> dict[str, dict[str, Any]]:
+    return _build_summary_layers(counts)
+
+
+def get_layer_metadata(layer_key: str) -> dict[str, Any] | None:
+    normalized = normalize_layer_key(layer_key)
+    if not normalized:
+        return None
+    meta = _LAYER_META[normalized]
+    return {
+        "layer_key": normalized,
+        "label": meta["label"],
+        "description": meta["description"],
+        "ontology_class": meta["ontology_class"],
+        "criteria": _LAYER_CRITERIA.get(normalized),
+    }
