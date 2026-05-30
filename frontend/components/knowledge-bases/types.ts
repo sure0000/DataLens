@@ -1,3 +1,5 @@
+import type { OntologyEntityOrigin } from "../../lib/ontologyTypes";
+
 /** 与后端 GET /api/knowledge-bases 响应对齐 */
 export type KB = {
   id: number;
@@ -36,6 +38,14 @@ export type GitSource = {
   has_token: boolean;
   token?: string;
   include_globs: string;
+  extraction_config?: {
+    extraction_profile?: string;
+    prefer_extensions?: string[];
+    enable_regex_extractors?: boolean;
+    enable_llm_fallback?: boolean;
+    min_body_chars?: number;
+    skip_extensions?: string[];
+  };
   max_file_kb: number;
   max_files: number;
   enable_document_indexing?: boolean;
@@ -298,7 +308,7 @@ export type OntologyLayerDetail = {
   offset: number;
   limit: number;
   has_more: boolean;
-  items: Record<string, string>[];
+  items: Array<Record<string, string> & { origin?: OntologyEntityOrigin }>;
 };
 
 /** Per-source cleaning status (from pipeline_runs) */

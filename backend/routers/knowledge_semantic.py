@@ -345,13 +345,18 @@ def get_source_cleaning_stats(kb_id: int, db: Session = Depends(get_db)):
 
     stats: dict[str, dict] = {}
     for run in db.execute(runs).scalars().all():
-        from services.extraction.pipeline_status import pipeline_failure_reason
+        from services.extraction.pipeline_status import pipeline_failure_reason, source_cleaning_stat_key
 
-        key = f"{run.source_type}:{run.source_id}"
+        key = source_cleaning_stat_key(run.source_type, run.source_id)
+        if not key:
+            continue
         failure_reason = pipeline_failure_reason(run)
         pipeline_meta = (run.steps or {}).get("_pipeline") if isinstance(run.steps, dict) else None
-        message = pipeline_meta.get("message") if isinstance(pipeline_meta, dict) else None
-        stats[key] = {
+        raw_message = pipeline_meta.get("message") if isinstance(pipeline_meta, dict) else None
+        message = failure_reason or raw_message
+        if message and str(message).strip().lower() in {"failed", "skipped", "completed", "running", "pending"}:
+            message = failure_reason
+        entry = {
             "status": run.status,
             "started_at": run.started_at.isoformat() if run.started_at else None,
             "completed_at": run.completed_at.isoformat() if run.completed_at else None,
@@ -360,6 +365,10 @@ def get_source_cleaning_stats(kb_id: int, db: Session = Depends(get_db)):
             "run_id": run.id,
             "steps": run.steps if isinstance(run.steps, dict) else None,
         }
+        existing = stats.get(key)
+        if existing and int(existing.get("run_id") or 0) >= run.id:
+            continue
+        stats[key] = entry
 
     return {"ok": True, "kb_id": kb_id, "stats": stats}
 
@@ -429,6 +438,13 @@ def trigger_source_cleaning(
     kb = db.get(KnowledgeBase, kb_id)
     if not kb:
         raise HTTPException(status_code=404, detail="知识库不存在")
+
+    from services.source_index_policy import assert_document_indexed_for_semantic_clean
+
+    try:
+        assert_document_indexed_for_semantic_clean(db, kb_id, source_id, source_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     _log.getLogger(__name__).info(
         "Manual source cleaning triggered: kb=%d source=%d type=%s",

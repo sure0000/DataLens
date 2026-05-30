@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConfirmDialog from "../../../components/ConfirmDialog";
 import PageHeader from "../../../components/PageHeader";
 import Toast from "../../../components/Toast";
@@ -30,17 +30,23 @@ import EvidencePackageList from "../../../components/knowledge-bases/EvidencePac
 import { kbModelingSectionUrl } from "../../../lib/ontologyRoutes";
 import type { SourceItem } from "../../../components/knowledge-bases/SourceCard";
 import SourceCardGrid from "../../../components/knowledge-bases/SourceCardGrid";
+import type { ModelingStatus } from "../../../components/ontology/ModelingPipelineStatus";
 import {
-  isDocumentIndexingInProgress,
-} from "../../../components/knowledge-bases/documentIndexPolicy";
-import { shouldShowApiSourceInKb } from "../../../components/knowledge-bases/apiSourceMatching";
+  cleaningStatsRunningFingerprint,
+  cleaningStatsSnapshotFingerprint,
+  documentIndexingPollFingerprint,
+  entriesDocumentsSnapshotFingerprint,
+  modelingStatusFingerprint,
+} from "../../../components/knowledge-bases/kbTaskActivity";
+import { useBackgroundTaskPolling } from "../../../hooks/useBackgroundTaskPolling";
+import {
+  fetchKbEntriesAndDocuments,
+  fetchKbSourcesSnapshot,
+} from "../../../lib/knowledgeBaseSources";
 import SemanticCleanChoiceDialog, {
   type SemanticCleanResumeOptions,
 } from "../../../components/knowledge-bases/SemanticCleanChoiceDialog";
-import {
-  importSourceCleaningKey,
-  pipelineRunCleaningKey,
-} from "../../../components/knowledge-bases/sourceCleaningKey";
+import { importSourceCleaningKey } from "../../../components/knowledge-bases/sourceCleaningKey";
 
 type GitHubDiagProbe = {
   reachable?: boolean;
@@ -66,8 +72,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   const [gitSources, setGitSources] = useState<GitSource[]>([]);
   const [apiSources, setApiSources] = useState<ApiSource[]>([]);
   const [documents, setDocuments] = useState<DocRow[]>([]);
-  const [docsLoading, setDocsLoading] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   // ── Toast ──
   const [message, setMessageText] = useState("");
@@ -119,7 +124,20 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   // ── Semantic cleaning ──
   /** 当前清洗中的导入源键，形如 source:database:3（勿仅用数字 id，会与 git 等源冲突）。 */
   const [cleaningSourceKey, setCleaningSourceKey] = useState<string | null>(null);
-  const cleaningPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cleaningSourceKeyRef = useRef<string | null>(null);
+  const cleaningStatsRef = useRef<Record<string, SourceCleaningStat> | null>(null);
+  const documentsRef = useRef(documents);
+  documentsRef.current = documents;
+  const [evidenceRefreshSeq, setEvidenceRefreshSeq] = useState(0);
+  const entriesDocsFpRef = useRef("");
+  const cleaningStatsFpRef = useRef("");
+  const modelingFpRef = useRef("");
+  /** 导入/清洗触发后强制轮询截止时间（ms），覆盖 pending 索引尚未进入 worker 态的窗口 */
+  const [pollBurstDeadline, setPollBurstDeadline] = useState(0);
+  const armPollBurst = useCallback(() => {
+    setPollBurstDeadline(Date.now() + 15 * 60 * 1000);
+  }, []);
+  const [modelingStatus, setModelingStatus] = useState<ModelingStatus | null>(null);
   const [cleanChoiceOpen, setCleanChoiceOpen] = useState(false);
   const [cleanChoiceOptions, setCleanChoiceOptions] = useState<SemanticCleanResumeOptions | null>(null);
   const [cleanChoicePending, setCleanChoicePending] = useState<{
@@ -141,83 +159,81 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   // Data fetching
   // ═══════════════════════════════════════════════════
 
-  const loadDocuments = useCallback(async () => {
-    setDocsLoading(true);
+  /** 轮询用：只更新条目与文档，不触发整页 loading */
+  const refreshIndexingSnapshot = useCallback(async () => {
+    if (!Number.isFinite(kbId)) return;
     try {
-      const res = await api<{ documents: DocRow[] }>(`/api/knowledge-bases/${kbId}/documents`);
-      setDocuments(res.documents ?? []);
+      const { entries: nextEntries, documents: nextDocs } = await fetchKbEntriesAndDocuments(kbId);
+      const fp = entriesDocumentsSnapshotFingerprint(nextEntries, nextDocs);
+      if (fp === entriesDocsFpRef.current) return;
+      entriesDocsFpRef.current = fp;
+      setEntries(nextEntries);
+      setDocuments(nextDocs);
     } catch {
-      setDocuments([]);
-    } finally {
-      setDocsLoading(false);
+      /* 轮询失败保留上一帧状态 */
     }
   }, [kbId]);
 
-  async function loadAll() {
-    if (!Number.isFinite(kbId)) return;
-    setLoading(true);
+  const fetchSourceCleaningStats = useCallback(async () => {
     try {
-      const [res, gitRes, kbApiRes, globalApiRes, docsRes] = await Promise.all([
-        api<{ knowledge_base: KB; entries: Entry[] }>(`/api/knowledge-bases/${kbId}`),
-        api<{ git_sources: GitSource[] }>(`/api/knowledge-bases/${kbId}/git-sources`).catch(() => ({ git_sources: [] })),
-        api<{ api_sources: ApiSource[] }>(`/api/knowledge-bases/${kbId}/api-sources`).catch(() => ({ api_sources: [] })),
-        api<{ api_sources: ApiSource[] }>(`/api/api-sources`).catch(() => ({ api_sources: [] })),
-        api<{ documents: DocRow[] }>(`/api/knowledge-bases/${kbId}/documents`).catch(() => ({ documents: [] })),
-      ]);
-      setKb(res.knowledge_base);
-      setEntries(res.entries);
-      setGitSources(gitRes.git_sources ?? []);
-      const docs = docsRes.documents ?? [];
-      setDocuments(docs);
-      const mergedApi = [...(kbApiRes.api_sources ?? [])];
-      const seen = new Set(mergedApi.map((s) => s.id));
-      for (const s of globalApiRes.api_sources ?? []) {
-        if (seen.has(s.id)) continue;
-        if (!shouldShowApiSourceInKb(s, res.entries ?? [], docs)) continue;
-        mergedApi.push(s);
+      const res = await api<{ ok: boolean; kb_id: number; stats: Record<string, SourceCleaningStat> }>(
+        `/api/knowledge-bases/${kbId}/source-cleaning-stats`,
+      );
+      const stats = res.stats ?? null;
+      const fp = cleaningStatsSnapshotFingerprint(stats);
+      if (fp !== cleaningStatsFpRef.current) {
+        cleaningStatsFpRef.current = fp;
+        setCleaningStats(stats);
       }
-      setApiSources(mergedApi);
-      const dbRes = await api<{ imports: DatabaseImport[] }>(`/api/knowledge-bases/${kbId}/database-imports`).catch(() => ({ imports: [] }));
-      setDatabaseImports(dbRes.imports ?? []);
-      loadCleaningResults();
-      loadSourceCleaningStats();
-      checkRunningPipeline();
+      cleaningStatsRef.current = stats;
+      return stats;
     } catch {
-      setKb(null); setEntries([]); setGitSources([]); setApiSources([]);
-    } finally {
-      setLoading(false);
+      if (cleaningStatsFpRef.current !== "") {
+        cleaningStatsFpRef.current = "";
+        setCleaningStats(null);
+      }
+      cleaningStatsRef.current = null;
+      return null;
+    }
+  }, [kbId]);
+
+  const applySourcesSnapshot = useCallback((snap: Awaited<ReturnType<typeof fetchKbSourcesSnapshot>>) => {
+    setKb(snap.kb);
+    setGitSources(snap.gitSources);
+    setApiSources(snap.apiSources);
+    setDatabaseImports(snap.databaseImports);
+    const fp = entriesDocumentsSnapshotFingerprint(snap.entries, snap.documents);
+    entriesDocsFpRef.current = fp;
+    setEntries(snap.entries);
+    setDocuments(snap.documents);
+  }, []);
+
+  const refreshSources = useCallback(async () => {
+    if (!Number.isFinite(kbId)) return;
+    try {
+      const snap = await fetchKbSourcesSnapshot(kbId);
+      applySourcesSnapshot(snap);
+      await fetchSourceCleaningStats();
+    } catch {
+      setKb(null);
+      setEntries([]);
+      setGitSources([]);
+      setApiSources([]);
+    }
+  }, [kbId, applySourcesSnapshot, fetchSourceCleaningStats]);
+
+  async function checkRunningPipeline() {
+    const stats = await fetchSourceCleaningStats();
+    if (!stats) return;
+    for (const [key, stat] of Object.entries(stats)) {
+      if (stat.status === "running") {
+        setCleaningSourceKey(key);
+        return;
+      }
     }
   }
 
-  useEffect(() => {
-    if (!documents.some((d) => isDocumentIndexingInProgress(d))) return;
-    const t = setInterval(() => {
-      void loadDocuments();
-    }, 3000);
-    return () => clearInterval(t);
-  }, [documents, loadDocuments]);
-
-  function checkRunningPipeline() {
-    if (cleaningPollRef.current) return;
-
-    api<{
-      last_pipeline_run: {
-        id: number;
-        status: string;
-        source_type: string | null;
-        source_id: number | null;
-      } | null;
-    }>(`/api/knowledge-bases/${kbId}/pipeline-stats`).then(stats => {
-      const run = stats.last_pipeline_run;
-      if (run && run.status === "running") {
-        const key = pipelineRunCleaningKey(run.source_type, run.source_id);
-        if (key) setCleaningSourceKey(key);
-        startCleaningPoll(run.id);
-      }
-    }).catch(() => { /* ignore */ });
-  }
-
-  async function loadCleaningResults() {
+  const loadCleaningResults = useCallback(async () => {
     setCleaningResultsLoading(true);
     try {
       const res = await api<OntologyCleaningResults>(`/api/ontology/knowledge-bases/${kbId}/ontology-cleaning-results`);
@@ -227,36 +243,121 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     } finally {
       setCleaningResultsLoading(false);
     }
-    loadSourceCleaningStats();
-  }
+  }, [kbId]);
 
-  async function loadSourceCleaningStats() {
+  const refreshModelingSnapshot = useCallback(async () => {
     try {
-      const res = await api<{ ok: boolean; kb_id: number; stats: Record<string, SourceCleaningStat> }>(
-        `/api/knowledge-bases/${kbId}/source-cleaning-stats`
+      const res = await api<ModelingStatus>(
+        `/api/ontology/knowledge-bases/${kbId}/modeling/status`,
       );
-      setCleaningStats(res.stats ?? null);
+      const fp = modelingStatusFingerprint(res);
+      if (fp !== modelingFpRef.current) {
+        modelingFpRef.current = fp;
+        setModelingStatus(res);
+      }
     } catch {
-      setCleaningStats(null);
+      if (modelingFpRef.current !== "") {
+        modelingFpRef.current = "";
+        setModelingStatus(null);
+      }
     }
-  }
+  }, [kbId]);
 
-  useEffect(() => { loadAll(); }, [kbId]);
+  const loadInitial = useCallback(async () => {
+    if (!Number.isFinite(kbId)) return;
+    setInitialLoading(true);
+    try {
+      await refreshSources();
+      await loadCleaningResults();
+      await refreshModelingSnapshot();
+      await checkRunningPipeline();
+    } finally {
+      setInitialLoading(false);
+    }
+  }, [kbId, refreshSources, loadCleaningResults, refreshModelingSnapshot]);
+
+  useEffect(() => { void loadInitial(); }, [loadInitial]);
+
 
   useEffect(() => {
-    if (loading || !kb) return;
+    if (initialLoading || !kb) return;
     const hash = typeof window !== "undefined" ? window.location.hash.slice(1) : "";
     if (hash) {
       document.getElementById(hash)?.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-  }, [loading, kb]);
+  }, [initialLoading, kb]);
 
-  // Cleanup polling interval on unmount
   useEffect(() => {
-    return () => {
-      if (cleaningPollRef.current) clearInterval(cleaningPollRef.current);
-    };
-  }, [kbId]);
+    cleaningSourceKeyRef.current = cleaningSourceKey;
+  }, [cleaningSourceKey]);
+
+  const cleaningRunningFp = useMemo(
+    () => cleaningStatsRunningFingerprint(cleaningStats),
+    [cleaningStats],
+  );
+  const docsPollFp = useMemo(
+    () => documentIndexingPollFingerprint(documents),
+    [documents],
+  );
+  const tasksActive = useMemo(() => {
+    if (Date.now() < pollBurstDeadline) return true;
+    return cleaningRunningFp.length > 0 || docsPollFp.length > 0;
+  }, [pollBurstDeadline, cleaningRunningFp, docsPollFp]);
+
+  const pollBackgroundTasks = useCallback(async () => {
+    const prev = cleaningStatsRef.current;
+    if (documentIndexingPollFingerprint(documentsRef.current).length > 0) {
+      await refreshIndexingSnapshot();
+    }
+    const stats = await fetchSourceCleaningStats();
+    const cleaningRunning = cleaningStatsRunningFingerprint(stats).length > 0;
+    if (cleaningRunning || Date.now() < pollBurstDeadline) {
+      await refreshModelingSnapshot();
+    }
+    if (!stats) return;
+
+    for (const [key, stat] of Object.entries(stats)) {
+      if (stat.status === "running") {
+        setCleaningSourceKey((cur) => cur ?? key);
+      }
+      const wasRunning = prev?.[key]?.status === "running";
+      const now = stat.status;
+      if (wasRunning && now && now !== "running") {
+        void loadCleaningResults();
+        setEvidenceRefreshSeq((n) => n + 1);
+        if (cleaningSourceKeyRef.current === key) {
+          clearCleaningState();
+          if (now === "failed") {
+            const reason = (stat.message || stat.failure_reason || "").trim();
+            notifyUser(reason ? `语义清洗失败：${reason}` : "语义清洗失败，请重试", "error");
+          } else if (now === "completed") {
+            notifyUser("语义清洗已完成", "success");
+          }
+        }
+      }
+    }
+  }, [
+    refreshIndexingSnapshot,
+    fetchSourceCleaningStats,
+    refreshModelingSnapshot,
+    loadCleaningResults,
+    notifyUser,
+    pollBurstDeadline,
+  ]);
+
+  useBackgroundTaskPolling({
+    tasksActive: Number.isFinite(kbId) && tasksActive,
+    onTick: pollBackgroundTasks,
+    onTasksCompleted: () => {
+      setPollBurstDeadline(0);
+      setEvidenceRefreshSeq((n) => n + 1);
+      void loadCleaningResults();
+      void refreshModelingSnapshot();
+      if (cleaningSourceKeyRef.current) {
+        clearCleaningState();
+      }
+    },
+  });
 
   // Close settings menu on outside click
   useEffect(() => {
@@ -273,64 +374,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   // ── Semantic clean ──
 
   function clearCleaningState() {
-    if (cleaningPollRef.current) clearInterval(cleaningPollRef.current);
-    cleaningPollRef.current = null;
     setCleaningSourceKey(null);
-  }
-
-  function startCleaningPoll(previousRunId: number | null) {
-    if (cleaningPollRef.current) clearInterval(cleaningPollRef.current);
-
-    const pollStart = Date.now();
-    const MAX_POLL_MS = 10 * 60 * 1000;
-    let seenRunning = false;
-
-    cleaningPollRef.current = setInterval(async () => {
-      try {
-        const stats = await api<{ last_pipeline_run: { id: number; status: string } | null }>(
-          `/api/knowledge-bases/${kbId}/pipeline-stats`
-        );
-        const run = stats.last_pipeline_run;
-
-        // Track this run if: it's a new run, it's currently running, or we already confirmed it
-        const isOurRun = run && (
-          run.id !== previousRunId || run.status === "running" || seenRunning
-        );
-
-        if (!run || !isOurRun) {
-          if (Date.now() - pollStart > 30000) {
-            clearCleaningState();
-            notifyUser("语义清洗可能未能启动，请重试", "error");
-          }
-          return;
-        }
-
-        if (run.status === "running") {
-          seenRunning = true;
-          void loadSourceCleaningStats();
-          return;
-        }
-
-        if (seenRunning || Date.now() - pollStart > 6000) {
-          clearCleaningState();
-          loadCleaningResults();
-          if (run.status === "failed") {
-            notifyUser("语义清洗失败，请重试", "error");
-          } else {
-            notifyUser("语义清洗已完成", "success");
-          }
-          return;
-        }
-      } catch {
-        // Keep polling on transient errors
-      }
-
-      if (Date.now() - pollStart > MAX_POLL_MS) {
-        clearCleaningState();
-        loadCleaningResults();
-        notifyUser("语义清洗超时，请手动刷新查看结果", "error");
-      }
-    }, 3000);
   }
 
   function resolveSemanticCleanTarget(source: SourceItem): {
@@ -355,7 +399,15 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       return { sourceId: source.entry.id, sourceType: "manual", label: source.entry.title };
     }
     if (source.kind === "api_entry") {
-      return { sourceId: source.entry.id, sourceType: "api_entry", label: source.entry.title };
+      const rawApiSourceId =
+        typeof source.entry.source_meta?.api_source_id === "string" ||
+        typeof source.entry.source_meta?.api_source_id === "number"
+          ? Number(source.entry.source_meta?.api_source_id)
+          : NaN;
+      if (Number.isFinite(rawApiSourceId) && rawApiSourceId > 0) {
+        return { sourceId: rawApiSourceId, sourceType: "api", label: source.entry.title };
+      }
+      return { sourceId: source.entry.id, sourceType: "file", label: source.entry.title };
     }
     return { sourceId: source.entry.id, sourceType: "file", label: source.entry.title };
   }
@@ -374,18 +426,9 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     opts: { resume: boolean; resumeFromRunId?: number },
   ) {
     setCleaningSourceKey(cleaningKeyForSourceType(sourceType, sourceId));
+    armPollBurst();
     notifyUser(opts.resume ? "正在从上次失败处续跑…" : "正在触发语义清洗（完整重跑）…", "info");
     try {
-      let previousRunId: number | null = null;
-      try {
-        const stats = await api<{ last_pipeline_run: { id: number } | null }>(
-          `/api/knowledge-bases/${kbId}/pipeline-stats`,
-        );
-        previousRunId = stats.last_pipeline_run?.id ?? null;
-      } catch {
-        /* proceed */
-      }
-
       const params = new URLSearchParams({ source_type: sourceType });
       if (opts.resume) {
         params.set("resume", "true");
@@ -397,8 +440,8 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
         method: "POST",
       });
       notifyUser(opts.resume ? "续跑已启动，正在后台运行…" : "语义清洗已触发，正在后台运行…", "success");
-      void loadSourceCleaningStats();
-      startCleaningPoll(previousRunId);
+      void fetchSourceCleaningStats();
+      void refreshModelingSnapshot();
     } catch (e: unknown) {
       notifyUser(
         e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "清洗启动失败",
@@ -494,6 +537,8 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       maxFileKb: s.max_file_kb,
       maxFiles: s.max_files,
       enableDocumentIndexing: !!s.enable_document_indexing,
+      extractionProfile:
+        s.extraction_config?.extraction_profile === "data_warehouse" ? "data_warehouse" : "mixed",
       cron: s.cron_expression ?? "",
       enabled: s.enabled,
     });
@@ -519,6 +564,12 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
         max_file_kb: gitFormData.maxFileKb,
         max_files: gitFormData.maxFiles,
         enable_document_indexing: gitFormData.enableDocumentIndexing,
+        extraction_config: {
+          extraction_profile: gitFormData.extractionProfile,
+          enable_regex_extractors: true,
+          enable_llm_fallback: true,
+          min_body_chars: 50,
+        },
         cron_expression: gitFormData.cron.trim() || null,
         enabled: gitFormData.enabled,
       };
@@ -529,7 +580,8 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       });
       notifyUser("代码源已更新");
       setGitEditOpen(false);
-      loadAll();
+      void refreshSources();
+      setEvidenceRefreshSeq((n) => n + 1);
     } catch (e: unknown) {
       notifyUser(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "保存失败", "error");
     } finally { setGitSaving(false); }
@@ -546,7 +598,8 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     });
     notifyUser("知识库信息已更新");
     setEditKbOpen(false);
-    loadAll();
+    const res = await api<{ knowledge_base: KB }>(`/api/knowledge-bases/${kbId}`);
+    setKb(res.knowledge_base);
   }
 
   // ═══════════════════════════════════════════════════
@@ -557,7 +610,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     return <main className="app-page text-app-secondary">无效的知识库 ID</main>;
   }
 
-  if (!loading && !kb) {
+  if (!initialLoading && !kb) {
     return (
       <main className="app-page">
         <p className="text-app-secondary">知识库不存在或已删除。</p>
@@ -574,11 +627,11 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     <main className="app-page">
       <PageHeader
         breadcrumbs={[
-          { label: "语义知识库", href: "/knowledge-bases" },
+          { label: "本体清洗", href: "/knowledge-bases" },
           { label: kb?.name || "…" },
         ]}
-        title={kb?.name || "语义知识库"}
-        subtitle={kb?.description || "数据接入：登记证据包并在导入源上触发语义清洗。"}
+        title={kb?.name || "本体清洗"}
+        subtitle={kb?.description || "本体清洗：登记证据包并在导入源上触发语义清洗。"}
         actions={
           <div className="app-toolbar flex-wrap">
             <Link
@@ -615,7 +668,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
               )}
             </div>
             <button className="app-button app-toolbar-action" type="button" onClick={() => setImportPickerOpen(true)}>
-              数据接入
+              本体清洗
             </button>
           </div>
         }
@@ -623,9 +676,9 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
 
       <Toast message={message} tone={messageTone} duration={toastDurationMs} onClose={dismissToast} />
 
-      {loading && <p className="app-text-muted mt-4 text-sm">加载中…</p>}
+      {initialLoading && <p className="app-text-muted mt-4 text-sm">加载中…</p>}
 
-      {!loading && kb && (
+      {kb && (
         <>
           {/* Derive ontology counts from cleaning results layers */}
           {(() => {
@@ -644,7 +697,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                   documents={documents}
                   databaseImports={databaseImports}
                   kbId={kbId}
-                  onRefresh={loadAll}
+                  onRefresh={() => void refreshSources()}
                   onSemanticClean={handleSemanticClean}
                   cleaningSourceKey={cleaningSourceKey}
                   cleaningStats={cleaningStats}
@@ -657,12 +710,16 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
           <section className="mt-8 space-y-3">
             <h2 className="app-section-title">证据包登记</h2>
             <p className="text-xs text-app-muted">
-              导入层统一视图：按语义资产类型与连接器登记的证据（写入 RDF 前仅作溯源与进度展示）。需推进建模时，请在上方对应导入源上点击「语义清洗」。
+              导入层统一视图：按连接器/导入源自动登记，仅作溯源与进度展示。需推进建模时，请在上方对应导入源上点击「语义清洗」。
             </p>
-            <EvidencePackageList kbId={kbId} cleaningStats={cleaningStats} />
+            <EvidencePackageList
+              kbId={kbId}
+              cleaningStats={cleaningStats}
+              documents={documents}
+              modeling={modelingStatus}
+              refreshSeq={evidenceRefreshSeq}
+            />
           </section>
-
-          {docsLoading && <p className="text-sm text-app-muted mt-3">加载文档状态…</p>}
 
           {/* ── Modals ── */}
           <ImportPickerModal
@@ -670,7 +727,18 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
             kbId={kbId}
             apiSources={apiSources}
             onClose={() => setImportPickerOpen(false)}
-            onSuccess={loadAll}
+            onSuccess={async () => {
+              armPollBurst();
+              try {
+                const snap = await fetchKbSourcesSnapshot(kbId);
+                applySourcesSnapshot(snap);
+              } catch {
+                /* 保留上一帧 */
+              }
+              void fetchSourceCleaningStats();
+              void refreshModelingSnapshot();
+              setEvidenceRefreshSeq((n) => n + 1);
+            }}
             notifyUser={notifyUser}
           />
 

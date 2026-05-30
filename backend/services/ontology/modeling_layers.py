@@ -7,8 +7,9 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from models import PipelineRun
+from models import KnowledgeBase, PipelineRun
 from ontology import NS, kb_graph_iri
+from services.ontology.provenance import build_entity_origin, fetch_grounded_sources
 from services.ontology.relation_predicates import (
     relation_predicate_in_clause,
     relation_predicate_local_names,
@@ -383,6 +384,7 @@ def get_cleaning_results(
 
 
 def get_modeling_layer(
+    db: Session,
     kb_id: int,
     layer_key: str,
     *,
@@ -393,6 +395,10 @@ def get_modeling_layer(
     if not normalized:
         return {"ok": False, "error": f"未知清洗层: {layer_key}"}
 
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        return {"ok": False, "error": "知识库不存在"}
+
     meta = _LAYER_META[normalized]
     counts = _count_queries(kb_id)
     total = counts.get(normalized, 0)
@@ -402,6 +408,15 @@ def get_modeling_layer(
     safe_limit = max(1, min(limit, 2000))
     page = all_items[safe_offset : safe_offset + safe_limit]
     has_more = safe_offset + len(page) < total
+
+    sources = fetch_grounded_sources(db, kb_id)
+    enriched_page: list[dict[str, Any]] = []
+    for item in page:
+        enriched = dict(item)
+        subject = str(item.get("s", ""))
+        src = sources.get(subject, {}) if subject else {}
+        enriched["origin"] = build_entity_origin(kb, src or None)
+        enriched_page.append(enriched)
 
     return {
         "ok": True,
@@ -415,7 +430,7 @@ def get_modeling_layer(
         "offset": safe_offset,
         "limit": safe_limit,
         "has_more": has_more,
-        "items": page,
+        "items": enriched_page,
     }
 
 

@@ -24,36 +24,15 @@ _logger = logging.getLogger(__name__)
 
 # ── 预过滤器：快速判断文件是否可能包含数据表引用 ──────────────────────────
 
-# 匹配 SQL 表引用模式
-_RE_SQL_TABLE = re.compile(
-    r"\b(FROM|JOIN|INTO|UPDATE|TABLE|INSERT\s+INTO|MERGE\s+INTO)\s+[`\"'\[\]]?(\w+)[`\"'\[\]]?",
-    re.IGNORECASE,
+from services.extraction.code_patterns.regex_common import (
+    RE_CONFIG_TABLE,
+    RE_DBT_MODEL,
+    RE_ORM_TABLE,
+    RE_SQL_TABLE,
+    RE_TABLE_NAME_ASSIGN,
+    RE_TABLENAME_ASSIGN,
+    SKIP_EXTENSIONS as _SKIP_EXTENSIONS,
 )
-
-# 匹配 ORM / Model 文件中的类名或表名引用
-_RE_ORM_TABLE = re.compile(
-    r"__(tablename__|table_args__)|class\s+\w+.*Base|db\.Table\(|\.table_name\s*=\s*['\"](\w+)['\"]",
-    re.IGNORECASE,
-)
-
-# 匹配 YAML/JSON 配置中的表名
-_RE_CONFIG_TABLE = re.compile(
-    r"(table|source_table|target_table|table_name|tablename)\s*:\s*['\"]?(\w+)['\"]?",
-    re.IGNORECASE,
-)
-
-# 匹配 DBT / dataform 等数据工程工具的模型文件
-_RE_DBT_MODEL = re.compile(
-    r"(ref|source)\s*\(\s*['\"](\w+)['\"]",
-    re.IGNORECASE,
-)
-
-# 纯标记文件、证书、图片等（跳过分析）
-_SKIP_EXTENSIONS = {
-    ".lock", ".png", ".jpg", ".gif", ".svg", ".ico", ".woff", ".woff2",
-    ".ttf", ".eot", ".map", ".min.js", ".min.css", ".pdf", ".zip", ".tar",
-    ".gz", ".whl", ".egg",
-}
 
 _MAX_INPUT_CHARS = 8000  # 发往 LLM 的最大字符数
 
@@ -74,13 +53,13 @@ def _should_skip_file(title: str, body: str) -> bool:
 
 def _likely_has_table_refs(body: str) -> bool:
     """预过滤：检查文件内容是否可能包含数据表引用。"""
-    if _RE_SQL_TABLE.search(body):
+    if RE_SQL_TABLE.search(body):
         return True
-    if _RE_ORM_TABLE.search(body):
+    if RE_ORM_TABLE.search(body):
         return True
-    if _RE_CONFIG_TABLE.search(body):
+    if RE_CONFIG_TABLE.search(body):
         return True
-    if _RE_DBT_MODEL.search(body):
+    if RE_DBT_MODEL.search(body):
         return True
     # 对 .sql / .py / .ts / .java / .go 等源文件放宽条件：
     # 只要提到了已知表名模式的词也视为候选
@@ -182,16 +161,15 @@ def _regex_extract(title: str, body: str) -> dict[str, Any]:
     table_names: set[str] = set()
     content = f"{title}\n{body}"
 
-    for pattern in [_RE_SQL_TABLE, _RE_CONFIG_TABLE, _RE_DBT_MODEL]:
+    for pattern in [RE_SQL_TABLE, RE_CONFIG_TABLE, RE_DBT_MODEL]:
         for m in pattern.finditer(content):
             name = m.group(2).strip().strip("`\"'[]")
             if name and len(name) >= 2 and not name.isdigit():
                 table_names.add(name.lower())
 
-    # ORM: __tablename__ = 'xxx' or table_name = 'xxx'
-    for m in re.finditer(r"""__tablename__\s*=\s*['"](\w+)['"]""", content):
+    for m in RE_TABLENAME_ASSIGN.finditer(content):
         table_names.add(m.group(1).lower())
-    for m in re.finditer(r"""\.table_name\s*=\s*['"](\w+)['"]""", content):
+    for m in RE_TABLE_NAME_ASSIGN.finditer(content):
         table_names.add(m.group(1).lower())
 
     refs = [{"table_name": t, "columns": [], "usage_summary": "由正则表达式提取（非 LLM 分析）"} for t in sorted(table_names)]

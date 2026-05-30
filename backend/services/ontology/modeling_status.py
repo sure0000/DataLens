@@ -62,12 +62,24 @@ def get_modeling_status(db: Session, kb_id: int) -> dict[str, Any]:
     total_docs = sum(int(v) for v in doc_counts.values())
     indexed_docs = int(doc_counts.get("indexed", 0))
 
-    last_run = db.execute(
+    running_run = db.execute(
         select(PipelineRun)
-        .where(PipelineRun.knowledge_base_id == kb_id)
+        .where(
+            PipelineRun.knowledge_base_id == kb_id,
+            PipelineRun.status == "running",
+        )
         .order_by(PipelineRun.id.desc())
         .limit(1)
     ).scalar_one_or_none()
+
+    last_run = running_run
+    if last_run is None:
+        last_run = db.execute(
+            select(PipelineRun)
+            .where(PipelineRun.knowledge_base_id == kb_id)
+            .order_by(PipelineRun.id.desc())
+            .limit(1)
+        ).scalar_one_or_none()
 
     steps_raw: dict[str, Any] = {}
     if last_run and last_run.steps:

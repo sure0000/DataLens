@@ -10,7 +10,8 @@ from models import PipelineRun
 
 REASON_LABELS: dict[str, str] = {
     "no_eligible_chunks": "没有可抽取的文档分块（文档需完成索引且分块质量分≥0.4）",
-    "no_document_chunks": "无文档分块，已跳过术语/指标类抽取",
+    "no_git_entries": "该 Git 源暂无已同步文件，请先在源详情页执行「同步仓库」",
+    "no_document_chunks": "无可抽取的正文内容（文档分块或 Git 文件正文为空/过短）",
     "no_llm_available": "未配置可用的大模型，请在设置中填写 API Key",
     "no_analyzed_tables": "导入库中的表尚未完成 AI 分析，请先在数据源中分析表",
     "no_tables_found": "未找到数据源中的表，请确认导入的数据库名称正确",
@@ -23,8 +24,24 @@ REASON_LABELS: dict[str, str] = {
     "timeout": "抽取超时（超过 10 分钟）",
     "unexpected_error": "流水线异常终止",
     "already_running": "已有正在运行的抽取任务",
+    "shacl_blocked": "入图被 SHACL 校验拦截，请查看建模与质量页",
+    "no_triples_written": "入图未写入任何三元组",
+    "no_triples": (
+        "抽取已完成但未产生可入图三元组。请确认仓库含表间依赖或 JOIN 类逻辑"
+        "（SQL/dbt/Python/Spark 等），且单文件正文≥50 字符；可在流水线步骤中查看 _git_diagnostics"
+    ),
     "unknown": "未知错误",
+    "failed": "抽取流水线失败",
+    "json_query_error": "导入源筛选条件解析失败（JSON 字段查询异常），请重试或联系管理员",
 }
+
+_GENERIC_STATUS_TOKENS = frozenset({"failed", "skipped", "completed", "running", "pending", "timeout"})
+_GENERIC_PIPELINE_MESSAGES = frozenset({
+    "failed",
+    "抽取流水线失败",
+    "抽取失败，详见服务端日志",
+    "unknown",
+})
 
 STEP_LABELS: dict[str, str] = {
     "term_extraction": "术语",
@@ -35,6 +52,7 @@ STEP_LABELS: dict[str, str] = {
     "hierarchy_building": "层级",
     "data_lineage": "血缘",
     "join_extraction": "JOIN",
+    "domain_term_extraction": "领域术语",
     "ontology_write": "入图",
     "physical_schema": "物理 Schema",
 }
@@ -43,13 +61,23 @@ STEP_LABELS: dict[str, str] = {
 def humanize_reason(code: str | None) -> str:
     if not code:
         return REASON_LABELS["unknown"]
-    text = REASON_LABELS.get(code)
+    normalized = str(code).strip()
+    if not normalized:
+        return REASON_LABELS["unknown"]
+    if normalized.lower() in _GENERIC_STATUS_TOKENS:
+        return REASON_LABELS.get(normalized.lower(), REASON_LABELS["unexpected_error"])
+    text = REASON_LABELS.get(normalized)
     if text:
-        if code == "pipeline_stale":
+        if normalized == "pipeline_stale":
             minutes = max(1, get_settings().pipeline_run_timeout_seconds // 60)
             return f"流水线长时间无进展（超过 {minutes} 分钟未更新进度，已自动中止）"
         return text
-    return code
+    lower = normalized.lower()
+    if "astext" in lower and ("binaryexpression" in lower or "comparator" in lower):
+        return REASON_LABELS["json_query_error"]
+    if len(normalized) > 120:
+        return normalized[:117] + "..."
+    return normalized
 
 
 def _utc_now() -> datetime:
@@ -184,14 +212,6 @@ def pipeline_failure_reason(run: PipelineRun | None) -> str | None:
         return None
 
     steps: dict[str, Any] = run.steps if isinstance(run.steps, dict) else {}
-    pipeline_meta = steps.get("_pipeline")
-    if isinstance(pipeline_meta, dict):
-        message = pipeline_meta.get("message")
-        if message:
-            return str(message)
-        reason = pipeline_meta.get("reason")
-        if reason:
-            return humanize_reason(str(reason))
 
     failed: list[str] = []
     for key, val in steps.items():
@@ -199,11 +219,47 @@ def pipeline_failure_reason(run: PipelineRun | None) -> str | None:
             continue
         if val.get("status") != "failed":
             continue
-        detail = humanize_reason(str(val.get("reason"))) if val.get("reason") else None
-        label = step_label(key)
-        failed.append(f"{label}：{detail}" if detail else label)
+        step_message = val.get("message")
+        if isinstance(step_message, str) and step_message.strip():
+            msg = step_message.strip()
+            if msg not in _GENERIC_PIPELINE_MESSAGES:
+                failed.append(f"{step_label(key)}：{msg}" if key in STEP_LABELS else msg)
+                continue
+        reason = val.get("reason")
+        if reason:
+            detail = humanize_reason(str(reason))
+            if detail and detail not in _GENERIC_PIPELINE_MESSAGES:
+                failed.append(f"{step_label(key)}：{detail}" if key in STEP_LABELS else detail)
 
     if failed:
         return "；".join(failed[:3])
 
+    pipeline_meta = steps.get("_pipeline")
+    if isinstance(pipeline_meta, dict):
+        message = pipeline_meta.get("message")
+        reason = pipeline_meta.get("reason")
+        if message:
+            msg = str(message).strip()
+            if msg not in _GENERIC_PIPELINE_MESSAGES and msg.lower() not in _GENERIC_STATUS_TOKENS:
+                return msg
+        if reason:
+            return humanize_reason(str(reason))
+
     return "抽取失败，详见服务端日志"
+
+
+def source_cleaning_stat_key(source_type: str | None, source_id: int | None) -> str | None:
+    """Normalize PipelineRun source to frontend cleaning key (source:{kind}:{id})."""
+    if source_type is None or source_id is None:
+        return None
+    st = str(source_type).strip()
+    if not st:
+        return None
+    bare = st.removeprefix("source:")
+    if bare == "api_entry":
+        bare = "api"
+    if bare in ("git", "api", "database", "file", "manual"):
+        return f"source:{bare}:{source_id}"
+    if st.startswith("source:"):
+        return f"{st}:{source_id}"
+    return None

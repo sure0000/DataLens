@@ -74,7 +74,7 @@ async def extract_metric_triples(
 
             slug = concept_slug(name, "metric")
             iri = metric_iri(kb_id, slug)
-            formula = item.get("formula") or ""
+            formula = (item.get("formula") or "").strip() or (item.get("caliber") or "").strip() or f"待补充：{name}"
             caliber = item.get("caliber") or ""
             definition = item.get("definition") or ""
             status = "approved" if confidence >= auto_approve_confidence else "draft"

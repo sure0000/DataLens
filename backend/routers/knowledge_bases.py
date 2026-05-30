@@ -250,6 +250,21 @@ def create_entry(kb_id: int, body: EntryCreate, request: Request, db: Session = 
     )
     db.commit()
     db.refresh(entry)
+    try:
+        from services.ingestion.connectors import register_evidence_from_import
+
+        register_evidence_from_import(
+            db,
+            kb_id,
+            title=body.title.strip() or "手动条目",
+            route_key="manual-entry",
+            source_ref={"entry_id": entry.id},
+            linked_entry_ids=[entry.id],
+            linked_document_id=doc.id,
+            processing_state="registered",
+        )
+    except Exception:
+        pass
     if body_text.strip():
         doc_id = doc.id
         raw_text = body_text
@@ -376,15 +391,16 @@ def update_entry(kb_id: int, entry_id: int, body: EntryUpdate, request: Request,
 
 @router.delete("/{kb_id}/entries/{entry_id}")
 def delete_entry(kb_id: int, entry_id: int, request: Request, db: Session = Depends(get_db)) -> dict:
+    from services.source_cascade_cleanup import cleanup_entry_in_kb
+
     scope_domain = resolve_scope_domain(db, request)
     _get_scoped_kb(db, kb_id, scope_domain.id)
     entry = db.get(KnowledgeEntry, entry_id)
     if not entry or entry.knowledge_base_id != kb_id:
         raise HTTPException(status_code=404, detail="条目不存在")
-    delete_embeddings_for_knowledge_entries(db, [entry_id])
-    db.delete(entry)
+    stats = cleanup_entry_in_kb(db, kb_id=kb_id, entry_id=entry_id)
     db.commit()
-    return {"ok": True}
+    return {"ok": True, **stats.to_dict()}
 
 
 @router.post("/{kb_id}/entries/batch-delete")
@@ -402,10 +418,21 @@ def batch_delete_entries(kb_id: int, body: EntryBatchDeleteBody, request: Reques
     )
     if not valid_ids:
         return {"ok": True, "deleted": 0}
-    delete_embeddings_for_knowledge_entries(db, valid_ids)
-    db.execute(delete(KnowledgeEntry).where(KnowledgeEntry.id.in_(valid_ids)))
+    from services.source_cascade_cleanup import cleanup_entry_in_kb
+
+    agg = {
+        "entries_deleted": 0,
+        "documents_deleted": 0,
+        "evidence_packages_deleted": 0,
+        "assertions_deleted": 0,
+        "pipeline_runs_deleted": 0,
+    }
+    for entry_id in valid_ids:
+        stats = cleanup_entry_in_kb(db, kb_id=kb_id, entry_id=int(entry_id))
+        for key in agg:
+            agg[key] += int(stats.to_dict().get(key, 0))
     db.commit()
-    return {"ok": True, "deleted": len(valid_ids)}
+    return {"ok": True, "deleted": len(valid_ids), **agg}
 
 
 @router.post("/{kb_id}/search")

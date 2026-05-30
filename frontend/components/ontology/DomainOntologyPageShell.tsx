@@ -78,7 +78,7 @@ function DomainOntologyPageInner() {
         subtitle={`汇总「${domainName}」五层语义资产（实体概念、关系、规则、属性、词汇），支持追溯来源。`}
       />
       <div className="mt-4 flex min-h-0 flex-1 flex-col">
-        <DomainOntologyWorkspace domainId={domainId} domainName={domainName} />
+        <DomainOntologyWorkspace domainId={domainId} />
       </div>
     </div>
   );

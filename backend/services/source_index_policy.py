@@ -88,11 +88,7 @@ def assert_document_indexed_for_semantic_clean(
         entry_ids = _entry_ids_for_git_source(db, kb_id, source_id)
         if not entry_ids:
             raise ValueError("该 Git 源暂无已同步文件，请先执行「同步仓库」")
-        docs = _documents_for_entry_ids(db, kb_id, entry_ids)
-        _assert_any_indexed(
-            docs,
-            empty_hint="Git 文件已同步但尚无文档索引，请在详情页「设置 → 重新索引」",
-        )
+        # 代码库清洗直接读取 git_file 条目正文（血缘/JOIN），不要求文档分块索引。
         return
 
     if st == "api":

@@ -34,6 +34,25 @@ function formatCleaningDate(iso: string): string {
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()} ${d.toLocaleTimeString("zh-CN", { hour12: false })}`;
 }
 
+function cleaningFailureMessage(stat?: SourceCleaningStat): string | null {
+  const raw = (stat?.message || stat?.failure_reason || "").trim();
+  if (!raw) return null;
+  const lower = raw.toLowerCase();
+  if (lower === "failed") {
+    return "抽取流水线失败，请重试或查看服务端日志";
+  }
+  if (["skipped", "completed", "running", "pending"].includes(lower)) {
+    return null;
+  }
+  if (
+    lower.includes("astext") &&
+    (lower.includes("binaryexpression") || lower.includes("comparator"))
+  ) {
+    return "导入源筛选条件解析失败（JSON 字段查询异常），请重试";
+  }
+  return raw;
+}
+
 function SemanticCleanButton({
   source,
   itemCleaningKey,
@@ -86,12 +105,24 @@ function CleaningInfo({
     const parts: string[] = [];
     if (cleaningStat?.status === "completed") {
       parts.push(`清洗完毕 ${cleaningStat.completed_at ? formatCleaningDate(cleaningStat.completed_at) : ""}`);
-    } else if (cleaningStat?.status === "failed") {
-      parts.push(`清洗失败 ${cleaningStat.completed_at ? formatCleaningDate(cleaningStat.completed_at) : ""}`);
-      const reason = cleaningStat.message || cleaningStat.failure_reason;
-      if (reason) parts.push(reason);
+      return <p className="mt-1 text-[11px] text-app-muted">{parts.join(" · ")}</p>;
     }
-    return <p className="mt-1 text-[11px] text-app-muted">{parts.join(" · ")}</p>;
+    if (cleaningStat?.status === "failed") {
+      parts.push(`清洗失败 ${cleaningStat.completed_at ? formatCleaningDate(cleaningStat.completed_at) : ""}`);
+      const reason = cleaningFailureMessage(cleaningStat);
+      return (
+        <div className="mt-1 space-y-0.5">
+          <p className="text-[11px] text-app-muted">{parts.join(" · ")}</p>
+          {reason ? (
+            <p className="text-[11px] text-red-600 leading-snug break-words line-clamp-3" title={reason}>
+              {reason}
+            </p>
+          ) : (
+            <p className="text-[11px] text-red-600">未返回具体原因，请查看服务端日志</p>
+          )}
+        </div>
+      );
+    }
   }
 
   return <p className="mt-1 text-[11px] text-app-muted">未清洗</p>;

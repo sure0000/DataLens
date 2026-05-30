@@ -48,10 +48,8 @@ class FakeSession:
         return _ScalarResult([])
 
 
-def test_git_source_requires_indexed_docs():
-    doc = SimpleNamespace(status="indexed", index_attempts=1, error_message=None)
-    db = FakeSession(entry_ids=[1, 2], documents=[doc])
-    db.entries = []
+def test_git_source_with_synced_entries_ok_without_docs():
+    db = FakeSession(entry_ids=[1, 2])
     assert_document_indexed_for_semantic_clean(db, 1, 5, "git")
 
 

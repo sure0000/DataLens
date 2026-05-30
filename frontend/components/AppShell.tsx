@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Icon, type NavIcon } from "./AppIcons";
 import BusinessDomainSelect from "./BusinessDomainSelect";
 import ConfirmDialog from "./ConfirmDialog";
@@ -102,6 +102,25 @@ export default function AppShell({ children }: { children: ReactNode }) {
     setProjects(projectList);
   }
 
+  const loadBusinessDomains = useCallback(async () => {
+    try {
+      const res = await api<{ domains: BusinessDomainOption[] }>("/api/business-domains");
+      const domains = res.domains || [];
+      setBusinessDomains(domains);
+      const saved = getActiveBusinessDomainId();
+      const picked =
+        domains.find((d) => d.id === saved)?.id ??
+        domains.find((d) => d.is_builtin)?.id ??
+        domains[0]?.id ??
+        null;
+      setActiveBusinessDomainIdState(picked);
+      if (picked !== saved) setActiveBusinessDomainId(picked);
+    } catch {
+      setBusinessDomains([]);
+      setActiveBusinessDomainIdState(getActiveBusinessDomainId());
+    }
+  }, []);
+
   useEffect(() => {
     const stored = localStorage.getItem(SIDEBAR_COLLAPSE_KEY);
     setSidebarCollapsed(stored === "1");
@@ -119,41 +138,19 @@ export default function AppShell({ children }: { children: ReactNode }) {
   }, [updateEvent]);
 
   useEffect(() => {
-    let alive = true;
-    api<{ domains: BusinessDomainOption[] }>("/api/business-domains")
-      .then((res) => {
-        if (!alive) return;
-        const domains = res.domains || [];
-        setBusinessDomains(domains);
-        const saved = getActiveBusinessDomainId();
-        const picked =
-          domains.find((d) => d.id === saved)?.id ??
-          domains.find((d) => d.is_builtin)?.id ??
-          domains[0]?.id ??
-          null;
-        setActiveBusinessDomainIdState(picked);
-        if (picked !== saved) setActiveBusinessDomainId(picked);
-      })
-      .catch(() => {
-        if (!alive) return;
-        setBusinessDomains([]);
-        setActiveBusinessDomainIdState(getActiveBusinessDomainId());
-      });
-    return () => {
-      alive = false;
-    };
-  }, []);
+    void loadBusinessDomains();
+  }, [loadBusinessDomains]);
 
   useEffect(() => {
     const evt = getBusinessDomainUpdatedEventName();
     const handler = () => {
-      setActiveBusinessDomainIdState(getActiveBusinessDomainId());
+      void loadBusinessDomains();
       loadCopilotSessions();
       setProjects(readProjects());
     };
     window.addEventListener(evt, handler);
     return () => window.removeEventListener(evt, handler);
-  }, []);
+  }, [loadBusinessDomains]);
 
   function toggleSidebar() {
     const next = !sidebarCollapsed;
@@ -516,8 +513,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <Link
               href="/knowledge-bases"
               className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isActive(pathname, "/knowledge-bases") ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
-              title="数据接入"
-              aria-label="数据接入"
+              title="本体清洗"
+              aria-label="本体清洗"
             >
               <Icon name="book" className="h-4 w-4" />
             </Link>
@@ -574,7 +571,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               className={`app-nav-item rounded-lg ${isActive(pathname, "/knowledge-bases") ? "is-active" : ""}`}
             >
               <Icon name="book" className="h-4 w-4 shrink-0" />
-              <span>数据接入</span>
+              <span>本体清洗</span>
             </Link>
             <Link
               href={ontologyNavHref}

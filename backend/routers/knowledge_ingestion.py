@@ -68,3 +68,21 @@ def normalize_ingestion_package(
     if not result.get("ok"):
         raise HTTPException(status_code=404, detail=result.get("error", "规范化失败"))
     return result
+
+
+@router.post("/{kb_id}/ingestion/cleanup-orphans")
+def cleanup_kb_orphans(
+    kb_id: int,
+    dry_run: bool = False,
+    db: Session = Depends(get_db),
+) -> dict:
+    """清理本知识库内因历史删除路径遗留的孤立证据包、文档、流水线与 RDF 断言。"""
+    from services.source_cascade_cleanup import cleanup_legacy_orphans
+
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    report = cleanup_legacy_orphans(db, kb_id=kb_id, dry_run=dry_run)
+    if not dry_run:
+        db.commit()
+    return {"ok": True, "kb_id": kb_id, "report": report}

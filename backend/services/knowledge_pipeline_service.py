@@ -161,7 +161,49 @@ def run_pipeline(db: Session, doc: Document, raw_text: str) -> None:
         try:
             from services.ingestion.events import emit
 
-            emit("document.indexed", kb_id=doc.knowledge_base_id, document_id=doc.id, db=db)
+            clean_source_type: str | None = None
+            clean_source_id: int | None = None
+            meta = doc.source_meta if isinstance(doc.source_meta, dict) else {}
+            if doc.source_type == "file" and doc.knowledge_entry_id is not None:
+                clean_source_type = "file"
+                clean_source_id = int(doc.knowledge_entry_id)
+            elif doc.source_type == "manual" and doc.knowledge_entry_id is not None:
+                clean_source_type = "manual"
+                clean_source_id = int(doc.knowledge_entry_id)
+            elif doc.source_type == "api":
+                raw_api_id = meta.get("api_source_id")
+                if isinstance(raw_api_id, (str, int)) and str(raw_api_id).strip():
+                    try:
+                        clean_source_type = "api"
+                        clean_source_id = int(raw_api_id)
+                    except (TypeError, ValueError):
+                        clean_source_type = None
+                        clean_source_id = None
+                elif doc.knowledge_entry_id is not None:
+                    # 兼容历史 api_entry：无 api_source_id 时按文件条目清洗
+                    clean_source_type = "file"
+                    clean_source_id = int(doc.knowledge_entry_id)
+            elif doc.source_type == "git":
+                raw_git_id = meta.get("git_source_id")
+                if isinstance(raw_git_id, (str, int)) and str(raw_git_id).strip():
+                    try:
+                        clean_source_type = "git"
+                        clean_source_id = int(raw_git_id)
+                    except (TypeError, ValueError):
+                        clean_source_type = None
+                        clean_source_id = None
+
+            if clean_source_type is not None and clean_source_id is not None:
+                emit(
+                    "document.indexed",
+                    kb_id=doc.knowledge_base_id,
+                    document_id=doc.id,
+                    db=db,
+                    cleaning_source_type=clean_source_type,
+                    cleaning_source_id=clean_source_id,
+                )
+            else:
+                emit("document.indexed", kb_id=doc.knowledge_base_id, document_id=doc.id, db=db)
         except Exception:
             pass
         _logger.info(

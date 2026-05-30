@@ -9,6 +9,7 @@ import Toast from "../Toast";
 import { useToast } from "../../hooks/useToast";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { api, ApiError, formatApiError } from "../../lib/api";
+import { emitBusinessDomainUpdated } from "../../lib/businessDomain";
 
 type Domain = { id: number; name: string; description: string; created_at: string; is_builtin?: boolean };
 
@@ -74,6 +75,7 @@ export default function BusinessDomainsTab() {
       setNewDesc("");
       notify("业务域创建成功");
       await loadDomains();
+      emitBusinessDomainUpdated();
     } catch (e: unknown) {
       notify(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "创建失败", "error");
     } finally {
@@ -102,6 +104,7 @@ export default function BusinessDomainsTab() {
       setEditingDomain(null);
       notify("业务域更新成功");
       await loadDomains();
+      emitBusinessDomainUpdated();
     } catch (e: unknown) {
       notify(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "更新失败", "error");
     } finally {
@@ -116,6 +119,7 @@ export default function BusinessDomainsTab() {
       setConfirmDeleteDomain(null);
       notify("业务域删除成功");
       await loadDomains();
+      emitBusinessDomainUpdated();
     } catch (e: unknown) {
       notify(e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "删除失败", "error");
     } finally {

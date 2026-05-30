@@ -29,6 +29,8 @@ def emit(event: str, **payload: Any) -> None:
 def _on_document_indexed(**payload: Any) -> None:
     kb_id = payload.get("kb_id")
     document_id = payload.get("document_id")
+    cleaning_source_type = payload.get("cleaning_source_type")
+    cleaning_source_id = payload.get("cleaning_source_id")
     _logger.info(
         "document.indexed kb=%s doc=%s — scheduling extraction pipeline",
         kb_id,
@@ -39,7 +41,18 @@ def _on_document_indexed(**payload: Any) -> None:
     try:
         from services.extraction.orchestrator import trigger_extraction_pipeline_background
 
-        trigger_extraction_pipeline_background(int(kb_id), source_type="document.indexed")
+        if (
+            isinstance(cleaning_source_type, str)
+            and cleaning_source_type.strip()
+            and cleaning_source_id is not None
+        ):
+            trigger_extraction_pipeline_background(
+                int(kb_id),
+                source_type=f"source:{cleaning_source_type.strip()}",
+                source_id=int(cleaning_source_id),
+            )
+        else:
+            trigger_extraction_pipeline_background(int(kb_id), source_type="document.indexed")
     except Exception:
         _logger.warning("Failed to trigger extraction after document.indexed", exc_info=True)
 
@@ -88,12 +101,20 @@ def _on_schema_analyzed(**payload: Any) -> None:
 
 def _on_git_sync_completed(**payload: Any) -> None:
     kb_id = payload.get("kb_id")
+    source_id = payload.get("source_id")
     if kb_id is None:
+        return
+    if source_id is None:
+        _logger.warning("git.sync.completed missing source_id for kb=%s", kb_id)
         return
     try:
         from services.extraction.orchestrator import trigger_extraction_pipeline_background
 
-        trigger_extraction_pipeline_background(int(kb_id), source_type="git.sync.completed")
+        trigger_extraction_pipeline_background(
+            int(kb_id),
+            source_type="source:git",
+            source_id=int(source_id),
+        )
     except Exception:
         _logger.warning("git.sync.completed handler failed kb=%s", kb_id, exc_info=True)
 

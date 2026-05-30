@@ -12,7 +12,7 @@ from models import BusinessDomain, BusinessDomainKnowledgeBase, Document, Docume
 from ontology import NS, kb_graph_iri
 from services.context_builder import kb_ids_for_business_domain
 from services.ontology.modeling_status import get_modeling_status
-from services.ontology.provenance import _chunk_id_from_iri
+from services.ontology.provenance import build_entity_origin, fetch_grounded_sources
 from services.ontology.reader import OntologyReader
 from services.ontology.views import view_graph, view_lineage
 from services.ontology_rdf_browser import fetch_kb_rdf_view
@@ -35,74 +35,6 @@ def _domain_kb_rows(db: Session, domain_id: int) -> list[KnowledgeBase]:
     return [by_id[i] for i in kb_ids if i in by_id]
 
 
-def _origin(kb: KnowledgeBase, source: dict[str, Any] | None = None) -> dict[str, Any]:
-    base = {
-        "knowledge_base_id": kb.id,
-        "knowledge_base_name": kb.name,
-    }
-    if source:
-        base.update(source)
-    return base
-
-
-def _fetch_grounded_sources(db: Session, kb_id: int) -> dict[str, dict[str, Any]]:
-    """Map entity IRI -> source_label / source_type from groundedBy → Document."""
-    graph = kb_graph_iri(kb_id)
-    ns = str(NS)
-    subject_to_chunk: dict[str, str] = {}
-    try:
-        rows = sparql_query(
-            f"""
-            PREFIX dl: <{ns}>
-            SELECT ?s ?chunk WHERE {{
-              GRAPH <{graph}> {{
-                ?s dl:groundedBy ?chunk .
-              }}
-            }}
-            LIMIT 2000
-            """
-        )
-        for row in rows:
-            s = str(row.get("s", ""))
-            chunk = str(row.get("chunk", ""))
-            if s and chunk and s not in subject_to_chunk:
-                subject_to_chunk[s] = chunk
-    except Exception as exc:
-        _logger.warning("groundedBy batch query failed kb=%s: %s", kb_id, exc)
-        return {}
-
-    chunk_ids: list[int] = []
-    iri_for_chunk: dict[int, list[str]] = {}
-    for subject, chunk_iri in subject_to_chunk.items():
-        cid = _chunk_id_from_iri(chunk_iri)
-        if cid is None:
-            continue
-        chunk_ids.append(cid)
-        iri_for_chunk.setdefault(cid, []).append(subject)
-
-    if not chunk_ids:
-        return {}
-
-    chunks = db.execute(select(DocumentChunk).where(DocumentChunk.id.in_(chunk_ids))).scalars().all()
-    doc_ids = {c.document_id for c in chunks if c.document_id}
-    docs_by_id: dict[int, Document] = {}
-    if doc_ids:
-        docs = db.execute(select(Document).where(Document.id.in_(doc_ids))).scalars().all()
-        docs_by_id = {d.id: d for d in docs}
-
-    out: dict[str, dict[str, Any]] = {}
-    for chunk in chunks:
-        doc = docs_by_id.get(chunk.document_id) if chunk.document_id else None
-        source_label = (doc.title if doc else None) or "文档分块"
-        source_type = doc.source_type if doc else None
-        for subject in iri_for_chunk.get(chunk.id, []):
-            out[subject] = {
-                "source_label": source_label,
-                "source_type": source_type,
-            }
-    return out
-
-
 def _normalize_term(raw: dict[str, Any], kb: KnowledgeBase, idx: int, sources: dict[str, dict]) -> dict[str, Any]:
     iri = raw.get("iri", "")
     src = sources.get(iri, {})
@@ -116,7 +48,7 @@ def _normalize_term(raw: dict[str, Any], kb: KnowledgeBase, idx: int, sources: d
         "concept_id": None,
         "confidence": float(raw.get("confidence") or 0),
         "status": raw.get("status") or "draft",
-        "origin": _origin(kb, src),
+        "origin": build_entity_origin(kb, src),
     }
 
 
@@ -133,7 +65,7 @@ def _normalize_metric(raw: dict[str, Any], kb: KnowledgeBase, idx: int, sources:
         "concept_id": None,
         "confidence": float(raw.get("confidence") or 0),
         "status": raw.get("status") or "draft",
-        "origin": _origin(kb, src),
+        "origin": build_entity_origin(kb, src),
     }
 
 
@@ -148,7 +80,7 @@ def _normalize_dimension(raw: dict[str, Any], kb: KnowledgeBase, idx: int, sourc
         "dim_type": raw.get("dimensionType", ""),
         "confidence": float(raw.get("confidence") or 0),
         "status": raw.get("status") or "draft",
-        "origin": _origin(kb, src),
+        "origin": build_entity_origin(kb, src),
     }
 
 
@@ -189,7 +121,7 @@ def _normalize_rule(raw: dict[str, Any], kb: KnowledgeBase, idx: int, sources: d
         "rule_type": str(raw.get("ruleType", "")),
         "confidence": float(raw.get("confidence") or 0),
         "status": str(raw.get("status") or "draft"),
-        "origin": _origin(kb, src),
+        "origin": build_entity_origin(kb, src),
     }
 
 
@@ -268,7 +200,7 @@ def domain_terms(db: Session, domain_id: int, *, kb_filter: int | None = None) -
     reader = _reader()
     terms: list[dict[str, Any]] = []
     for kb in kb_rows:
-        sources = _fetch_grounded_sources(db, kb.id)
+        sources = fetch_grounded_sources(db, kb.id)
         raw_list = reader.list_terms(kb.id)
         for idx, raw in enumerate(raw_list):
             terms.append(_normalize_term(raw, kb, idx, sources))
@@ -281,7 +213,7 @@ def domain_metrics(db: Session, domain_id: int, *, kb_filter: int | None = None)
     reader = _reader()
     metrics: list[dict[str, Any]] = []
     for kb in kb_rows:
-        sources = _fetch_grounded_sources(db, kb.id)
+        sources = fetch_grounded_sources(db, kb.id)
         raw_list = reader.list_metrics(kb.id)
         for idx, raw in enumerate(raw_list):
             metrics.append(_normalize_metric(raw, kb, idx, sources))
@@ -294,7 +226,7 @@ def domain_dimensions(db: Session, domain_id: int, *, kb_filter: int | None = No
     reader = _reader()
     dimensions: list[dict[str, Any]] = []
     for kb in kb_rows:
-        sources = _fetch_grounded_sources(db, kb.id)
+        sources = fetch_grounded_sources(db, kb.id)
         raw_list = reader.list_dimensions(kb.id)
         for idx, raw in enumerate(raw_list):
             dimensions.append(_normalize_dimension(raw, kb, idx, sources))
@@ -306,7 +238,7 @@ def domain_rules(db: Session, domain_id: int, *, kb_filter: int | None = None) -
     kb_rows = _filter_kb_ids(_domain_kb_rows(db, domain_id), kb_filter)
     rules: list[dict[str, Any]] = []
     for kb in kb_rows:
-        sources = _fetch_grounded_sources(db, kb.id)
+        sources = fetch_grounded_sources(db, kb.id)
         raw_list = _list_rules_for_kb(kb.id)
         for idx, raw in enumerate(raw_list):
             rules.append(_normalize_rule(raw, kb, idx, sources))
@@ -364,7 +296,7 @@ def domain_assets(db: Session, domain_id: int, *, kb_filter: int | None = None) 
                 tables.append(
                     {
                         **tbl,
-                        "origin": _origin(kb),
+                        "origin": build_entity_origin(kb),
                     }
                 )
         except Exception:
@@ -445,12 +377,12 @@ def domain_layer_detail(
     kb_rows = _filter_kb_ids(_domain_kb_rows(db, domain_id), kb_filter)
     all_items: list[dict[str, Any]] = []
     for kb in kb_rows:
-        sources = _fetch_grounded_sources(db, kb.id) if normalized in _LAYERS_WITH_GROUNDING else {}
+        sources = fetch_grounded_sources(db, kb.id) if normalized in _LAYERS_WITH_GROUNDING else {}
         for item in fetch_items_for_layer(kb.id, normalized):
             enriched = dict(item)
             subject = str(item.get("s", ""))
             src = sources.get(subject, {}) if subject else {}
-            enriched["origin"] = _origin(kb, src)
+            enriched["origin"] = build_entity_origin(kb, src)
             all_items.append(enriched)
 
     all_items = _sort_layer_items(normalized, all_items)

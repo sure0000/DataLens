@@ -15,6 +15,7 @@ interface GitSourceFormData {
   maxFileKb: number;
   maxFiles: number;
   enableDocumentIndexing: boolean;
+  extractionProfile: "mixed" | "data_warehouse";
   cron: string;
   enabled: boolean;
 }
@@ -38,10 +39,11 @@ export function defaultGitFormData(): GitSourceFormData {
     branch: "",
     pathPrefix: "",
     token: "",
-    includeGlobs: "*.md,*.sql,*.py,*.ts,*.tsx,*.java,*.go,*.rs,*.yml,*.yaml,*.json",
+    includeGlobs: "*.sql,*.py,*.yml,*.yaml,*.hql",
     maxFileKb: 512,
     maxFiles: 200,
     enableDocumentIndexing: false,
+    extractionProfile: "mixed",
     cron: "",
     enabled: true,
   };
@@ -212,6 +214,19 @@ export default function GitSourceForm({ data, onChange, disabled, isEditing }: G
           onChange={(e) => f({ cron: e.target.value })}
           disabled={disabled}
         />
+      </label>
+
+      <label className="app-form-label">
+        <span>抽取配置</span>
+        <select
+          className="app-input"
+          value={data.extractionProfile}
+          onChange={(e) => f({ extractionProfile: e.target.value as "mixed" | "data_warehouse" })}
+          disabled={disabled}
+        >
+          <option value="mixed">mixed — 宽范围（含多语言代码）</option>
+          <option value="data_warehouse">data_warehouse — 数仓优先（跳过 .ts/.tsx/.jsx）</option>
+        </select>
       </label>
 
       <label className="app-form-label sm:col-span-2">

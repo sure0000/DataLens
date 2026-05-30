@@ -8,13 +8,26 @@ export function sourceCleaningKey(
   return `source:${sourceType}:${sourceId}`;
 }
 
+/** 解析 source_ref 中的数值 id（API/DB 可能返回 number 或 string）。 */
+export function parseRefSourceId(value: unknown): number | null {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value.trim());
+    if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return null;
+}
+
 /** 从证据包 source_ref / 合成 id 解析对应的清洗状态键。 */
 export function evidencePackageCleaningKey(pkg: EvidencePackage): string | null {
   const ref = pkg.source_ref ?? {};
 
   if (pkg.connector === "database") {
-    if (typeof ref.import_id === "number") {
-      return sourceCleaningKey(ref.import_id, "database");
+    const importId = parseRefSourceId(ref.import_id);
+    if (importId != null) {
+      return sourceCleaningKey(importId, "database");
     }
     const m = /^db-(\d+)$/.exec(pkg.id);
     if (m) return sourceCleaningKey(Number(m[1]), "database");
@@ -22,36 +35,40 @@ export function evidencePackageCleaningKey(pkg: EvidencePackage): string | null 
   }
 
   if (pkg.connector === "git") {
-    if (typeof ref.git_source_id === "number") {
-      return sourceCleaningKey(ref.git_source_id, "git");
+    const gitSourceId = parseRefSourceId(ref.git_source_id);
+    if (gitSourceId != null) {
+      return sourceCleaningKey(gitSourceId, "git");
     }
-    const m = /^git-(\d+)-/.exec(pkg.id);
+    const m = /^git-(\d+)/.exec(pkg.id);
     if (m) return sourceCleaningKey(Number(m[1]), "git");
     return null;
   }
 
   if (pkg.connector === "api") {
-    if (typeof ref.source_id === "number") {
-      return sourceCleaningKey(ref.source_id, "api");
+    const apiSourceId = parseRefSourceId(ref.source_id ?? ref.api_source_id);
+    if (apiSourceId != null) {
+      return sourceCleaningKey(apiSourceId, "api");
     }
     return null;
   }
 
-  if (pkg.connector === "manual" && typeof ref.entry_id === "number") {
-    return sourceCleaningKey(ref.entry_id, "manual");
+  const entryId = parseRefSourceId(ref.entry_id);
+  if (pkg.connector === "manual" && entryId != null) {
+    return sourceCleaningKey(entryId, "manual");
   }
 
-  if (typeof ref.entry_id === "number") {
+  if (entryId != null) {
     const kind = String(ref.kind ?? "").toLowerCase();
     if (kind === "manual") {
-      return sourceCleaningKey(ref.entry_id, "manual");
+      return sourceCleaningKey(entryId, "manual");
     }
     if (kind === "notion" || kind === "confluence" || kind === "feishu" || kind === "api") {
-      if (typeof ref.source_id === "number") {
-        return sourceCleaningKey(ref.source_id, "api");
+      const apiSourceId = parseRefSourceId(ref.source_id ?? ref.api_source_id);
+      if (apiSourceId != null) {
+        return sourceCleaningKey(apiSourceId, "api");
       }
     }
-    return sourceCleaningKey(ref.entry_id, "file");
+    return sourceCleaningKey(entryId, "file");
   }
 
   return null;

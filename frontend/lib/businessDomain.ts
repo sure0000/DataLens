@@ -26,9 +26,14 @@ export function setActiveBusinessDomainId(domainId: number | null): void {
   } else {
     window.localStorage.setItem(ACTIVE_DOMAIN_KEY, String(domainId));
   }
-  window.dispatchEvent(new Event(DOMAIN_UPDATED_EVENT));
+  emitBusinessDomainUpdated();
 }
 
 export function getBusinessDomainUpdatedEventName(): string {
   return DOMAIN_UPDATED_EVENT;
+}
+
+export function emitBusinessDomainUpdated(): void {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new Event(DOMAIN_UPDATED_EVENT));
 }

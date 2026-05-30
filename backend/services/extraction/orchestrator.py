@@ -8,7 +8,8 @@ import threading
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import cast, select
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Session
 
 from config import get_settings
@@ -104,6 +105,7 @@ def _start_pipeline_run(db: Session, kb_id: int, source_type: str | None = None,
             "hierarchy_building": "pending",
             "data_lineage": "pending",
             "join_extraction": "pending",
+            "domain_term_extraction": "pending",
         },
     )
     run = PipelineRun(
@@ -138,6 +140,11 @@ def _persist_pipeline_steps(db: Session, run: PipelineRun, steps: dict[str, Any]
 # ── Query helpers ───────────────────────────────────────────────────────
 
 
+def _json_text(column: Any, key: str) -> Any:
+    """PostgreSQL JSON 字段取字符串值（须 cast 为 JSONB 才有 .astext）。"""
+    return cast(column, JSONB)[key].astext
+
+
 def _get_eligible_chunks(db: Session, kb_id: int, limit: int | None = None, source_type: str | None = None, source_id: int | None = None) -> list[Any]:
     if limit is None:
         limit = get_settings().extraction_max_chunks
@@ -154,22 +161,20 @@ def _get_eligible_chunks(db: Session, kb_id: int, limit: int | None = None, sour
         src = source_type.removeprefix("source:")
         if src == "git":
             q = q.join(KnowledgeEntry, KnowledgeEntry.id == Document.knowledge_entry_id).where(
-                KnowledgeEntry.source_meta["kind"].astext == "git_file",
-                KnowledgeEntry.source_meta["git_source_id"].astext == str(source_id),
+                _json_text(KnowledgeEntry.source_meta, "kind") == "git_file",
+                _json_text(KnowledgeEntry.source_meta, "git_source_id") == str(source_id),
             )
         elif src == "api":
             from sqlalchemy import or_
-            from sqlalchemy import cast as sa_cast
-            from sqlalchemy.dialects.postgresql import JSONB
 
             q = q.join(KnowledgeEntry, KnowledgeEntry.id == Document.knowledge_entry_id).where(
                 or_(
-                    sa_cast(KnowledgeEntry.source_meta, JSONB)["api_source_id"].astext == str(source_id),
-                    sa_cast(Document.source_meta, JSONB)["api_source_id"].astext == str(source_id),
+                    _json_text(KnowledgeEntry.source_meta, "api_source_id") == str(source_id),
+                    _json_text(Document.source_meta, "api_source_id") == str(source_id),
                 )
             )
         elif src in ("database",):
-            q = q.where(Document.source_meta["import_id"].astext == str(source_id))
+            q = q.where(_json_text(Document.source_meta, "import_id") == str(source_id))
         else:
             q = q.where(Document.knowledge_entry_id == source_id)
     return db.execute(
@@ -177,14 +182,80 @@ def _get_eligible_chunks(db: Session, kb_id: int, limit: int | None = None, sour
     ).scalars().all()
 
 
-def _get_git_entries(db: Session, kb_id: int, limit: int = 80, source_type: str | None = None, source_id: int | None = None) -> list[Any]:
+_GIT_EXT_PRIORITY: dict[str, int] = {
+    ".sql": 0,
+    ".hql": 1,
+    ".py": 2,
+    ".yml": 3,
+    ".yaml": 3,
+}
+
+
+def _entry_ref_path(entry: Any) -> str:
+    meta = getattr(entry, "source_meta", None) or {}
+    if isinstance(meta, dict):
+        ref = str(meta.get("ref") or "").strip()
+        if ref:
+            return ref
+    return str(getattr(entry, "title", "") or "")
+
+
+def _git_ext_priority(path: str) -> int:
+    lower = path.lower()
+    for ext, pri in _GIT_EXT_PRIORITY.items():
+        if lower.endswith(ext):
+            return pri
+    return 99
+
+
+def _should_skip_git_entry(path: str, extraction_config: dict[str, Any] | None) -> bool:
+    cfg = extraction_config or {}
+    skip = cfg.get("skip_extensions") or []
+    if cfg.get("extraction_profile") == "data_warehouse" and not skip:
+        skip = [".ts", ".tsx", ".jsx"]
+    lower = path.lower()
+    for ext in skip:
+        e = ext if str(ext).startswith(".") else f".{ext}"
+        if lower.endswith(e):
+            return True
+    return False
+
+
+def _resolve_git_extraction_config(db: Session, kb_id: int, source_id: int | None) -> dict[str, Any]:
+    if source_id is None:
+        return {}
+    src = db.get(KnowledgeGitSource, source_id)
+    if not src or src.knowledge_base_id != kb_id:
+        return {}
+    cfg = getattr(src, "extraction_config", None)
+    return dict(cfg) if isinstance(cfg, dict) else {}
+
+
+def _get_git_entries(
+    db: Session,
+    kb_id: int,
+    limit: int = 200,
+    source_type: str | None = None,
+    source_id: int | None = None,
+    extraction_config: dict[str, Any] | None = None,
+) -> list[Any]:
+    cfg = extraction_config if extraction_config is not None else _resolve_git_extraction_config(db, kb_id, source_id)
+    if source_id is not None:
+        src = db.get(KnowledgeGitSource, source_id)
+        if src and src.knowledge_base_id == kb_id and src.max_files:
+            limit = min(limit, int(src.max_files))
+
     q = select(KnowledgeEntry).where(
         KnowledgeEntry.knowledge_base_id == kb_id,
-        KnowledgeEntry.source_meta["kind"].astext == "git_file",
+        _json_text(KnowledgeEntry.source_meta, "kind") == "git_file",
     )
     if source_id is not None and source_type is not None and source_type.removeprefix("source:") == "git":
-        q = q.where(KnowledgeEntry.source_meta["git_source_id"].astext == str(source_id))
-    return db.execute(q.limit(limit)).scalars().all()
+        q = q.where(_json_text(KnowledgeEntry.source_meta, "git_source_id") == str(source_id))
+
+    rows = list(db.execute(q).scalars().all())
+    filtered = [e for e in rows if not _should_skip_git_entry(_entry_ref_path(e), cfg)]
+    filtered.sort(key=lambda e: (_git_ext_priority(_entry_ref_path(e)), _entry_ref_path(e)))
+    return filtered[:limit]
 
 
 def _has_git_source(db: Session, kb_id: int) -> bool:
@@ -195,13 +266,20 @@ def _has_git_source(db: Session, kb_id: int) -> bool:
 
 def _resolve_domain_id(db: Session, kb_id: int) -> int | None:
     """Resolve a knowledge base ID to its primary business domain ID."""
-    from models import BusinessDomainKnowledgeBase
+    from models import BusinessDomainKnowledgeBase, KnowledgeBase
     row = db.execute(
         select(BusinessDomainKnowledgeBase.domain_id).where(
             BusinessDomainKnowledgeBase.knowledge_base_id == kb_id
         ).limit(1)
     ).scalar_one_or_none()
-    return int(row) if row is not None else None
+    if row is not None:
+        return int(row)
+
+    # Backward-compatible fallback: many KBs only have knowledge_bases.business_domain_id
+    kb_domain_id = db.execute(
+        select(KnowledgeBase.business_domain_id).where(KnowledgeBase.id == kb_id).limit(1)
+    ).scalar_one_or_none()
+    return int(kb_domain_id) if kb_domain_id is not None else None
 
 
 # ── Orchestrator ────────────────────────────────────────────────────────
@@ -275,17 +353,6 @@ class ExtractionOrchestrator:
             _checkpoint()
             return True
 
-        def _chunk_progress(step_key: str):
-            def _report(done: int, total: int) -> None:
-                steps[step_key] = {"status": "running", "chunk_done": done, "chunk_total": total}
-                meta = steps.get("_pipeline")
-                if not isinstance(meta, dict):
-                    meta = {}
-                steps["_pipeline"] = {**meta, "active_step": step_key}
-                _checkpoint()
-
-            return _report
-
         client_info = _get_llm_client(db)
         if client_info is None:
             return {
@@ -307,138 +374,254 @@ class ExtractionOrchestrator:
                 source_type,
                 source_id,
             )
+        git_extraction_config = _resolve_git_extraction_config(db, kb_id, source_id) if src == "git" else {}
         git_entries = (
-            _get_git_entries(db, kb_id, source_type=source_type, source_id=source_id)
+            _get_git_entries(
+                db,
+                kb_id,
+                source_type=source_type,
+                source_id=source_id,
+                extraction_config=git_extraction_config,
+            )
             if src == "git" or _has_git_source(db, kb_id)
             else []
         )
 
-        if not chunks and not git_entries:
+        from services.extraction.git_entry_chunks import git_entries_as_llm_chunks
+
+        min_body_chars = int(git_extraction_config.get("min_body_chars") or 50)
+        llm_chunks = chunks
+        if not llm_chunks and git_entries:
+            llm_chunks = git_entries_as_llm_chunks(git_entries, min_body_chars=min_body_chars)
+            if llm_chunks:
+                _logger.info(
+                    "Extraction kb=%s: %d git file bodies as LLM input (no document index), source=%s:%s",
+                    kb_id,
+                    len(llm_chunks),
+                    source_type,
+                    source_id,
+                )
+
+        if not llm_chunks and not git_entries:
+            if src == "git":
+                return {
+                    "status": "skipped",
+                    "reason": "no_git_entries",
+                    "steps": {"_pipeline": {"status": "skipped", "reason": "no_git_entries"}},
+                }
             return {
                 "status": "skipped",
                 "reason": "no_eligible_chunks",
                 "steps": {"_pipeline": {"status": "skipped", "reason": "no_eligible_chunks"}},
             }
 
-        if not chunks:
+        if not llm_chunks:
             steps.update(_skipped_chunk_steps("no_document_chunks"))
 
         domain_id = _resolve_domain_id(db, kb_id)
         all_triples: list[RawTriple] = []
+        step_lock = threading.Lock()
+        git_scope_entries: list[Any] = []
+        git_diag: Any = None
 
-        if chunks:
-            if not _try_resume_step("term_extraction"):
-                steps["term_extraction"] = {"status": "running"}
+        def _chunk_progress(step_key: str):
+            def _report(done: int, total: int) -> None:
+                with step_lock:
+                    steps[step_key] = {"status": "running", "chunk_done": done, "chunk_total": total}
+                    meta = steps.get("_pipeline")
+                    if not isinstance(meta, dict):
+                        meta = {}
+                    steps["_pipeline"] = {**meta, "active_step": step_key}
+                    _checkpoint()
+
+            return _report
+
+        async def _run_extraction_step(step_key: str, extract_coro) -> None:
+            """Run one pipeline step; independent steps may execute concurrently."""
+            with step_lock:
+                if steps.get(step_key, {}).get("status") == "done":
+                    return
+                if _try_resume_step(step_key):
+                    return
+                steps[step_key] = {"status": "running"}
+                meta = steps.get("_pipeline")
+                if not isinstance(meta, dict):
+                    meta = {}
+                steps["_pipeline"] = {**meta, "active_step": step_key}
                 _checkpoint()
-            try:
-                if steps.get("term_extraction", {}).get("status") == "done":
-                    pass
-                else:
-                    from services.extraction.term_extractor import extract_term_triples
 
-                    term_triples = await extract_term_triples(
+            try:
+                with step_lock:
+                    if steps.get(step_key, {}).get("status") == "done":
+                        return
+                triples = await extract_coro
+                with step_lock:
+                    if steps.get(step_key, {}).get("status") == "skipped":
+                        return
+                    all_triples.extend(triples)
+                    steps[step_key] = {"status": "done", "triples": len(triples)}
+                    _save_step_cache(step_key, triples)
+                    _checkpoint()
+            except Exception as exc:
+                _logger.warning("%s failed for kb=%s", step_key, kb_id, exc_info=True)
+                with step_lock:
+                    steps[step_key] = {"status": "failed", "reason": _step_error(exc)}
+                    _checkpoint()
+
+        parallel_tasks: list[Any] = []
+
+        if llm_chunks:
+            from services.extraction.dimension_extractor import extract_dimension_triples
+            from services.extraction.metric_extractor import extract_metric_triples
+            from services.extraction.rule_extractor import extract_rule_triples
+            from services.extraction.term_extractor import extract_term_triples
+
+            parallel_tasks.extend(
+                [
+                    _run_extraction_step(
+                        "term_extraction",
+                        extract_term_triples(
+                            kb_id=kb_id,
+                            chunks=llm_chunks,
+                            llm_client=llm_client,
+                            model_name=model_name,
+                            call_llm_json=_call_llm_json,
+                            load_prompt=_load_prompt,
+                            auto_approve_confidence=auto_approve,
+                            domain_id=domain_id,
+                            on_chunk_progress=_chunk_progress("term_extraction"),
+                        ),
+                    ),
+                    _run_extraction_step(
+                        "metric_caliber",
+                        extract_metric_triples(
+                            kb_id=kb_id,
+                            chunks=llm_chunks,
+                            llm_client=llm_client,
+                            model_name=model_name,
+                            call_llm_json=_call_llm_json,
+                            load_prompt=_load_prompt,
+                            auto_approve_confidence=auto_approve,
+                            domain_id=domain_id,
+                            on_chunk_progress=_chunk_progress("metric_caliber"),
+                        ),
+                    ),
+                    _run_extraction_step(
+                        "dimension_extraction",
+                        extract_dimension_triples(
+                            kb_id=kb_id,
+                            chunks=llm_chunks,
+                            llm_client=llm_client,
+                            model_name=model_name,
+                            call_llm_json=_call_llm_json,
+                            load_prompt=_load_prompt,
+                            auto_approve_confidence=auto_approve,
+                            domain_id=domain_id,
+                            on_chunk_progress=_chunk_progress("dimension_extraction"),
+                        ),
+                    ),
+                    _run_extraction_step(
+                        "rule_extraction",
+                        extract_rule_triples(
+                            kb_id=kb_id,
+                            chunks=llm_chunks,
+                            llm_client=llm_client,
+                            model_name=model_name,
+                            call_llm_json=_call_llm_json,
+                            load_prompt=_load_prompt,
+                            auto_approve_confidence=auto_approve,
+                            domain_id=domain_id,
+                            on_chunk_progress=_chunk_progress("rule_extraction"),
+                        ),
+                    ),
+                ]
+            )
+
+        if git_entries or _has_git_source(db, kb_id):
+            entries = git_entries or _get_git_entries(
+                db,
+                kb_id,
+                source_type=source_type,
+                source_id=source_id,
+                extraction_config=git_extraction_config,
+            )
+            git_scope_entries = list(entries)
+
+            from services.extraction.code_patterns.diagnostics import GitDiagnostics
+
+            git_diag = GitDiagnostics(
+                total_entries=len(entries),
+                processed_limit=len(entries),
+            )
+            git_diag.min_body_chars = int(git_extraction_config.get("min_body_chars") or 50)
+            for _entry in entries:
+                _body = (getattr(_entry, "body", None) or "").strip()
+                git_diag.record_entry(_entry, _body)
+
+            async def _lineage_coro():
+                from services.extraction.lineage_extractor import extract_lineage_triples
+
+                return await extract_lineage_triples(
                     kb_id=kb_id,
-                    chunks=chunks,
+                    entries=entries,
                     llm_client=llm_client,
                     model_name=model_name,
                     call_llm_json=_call_llm_json,
                     load_prompt=_load_prompt,
-                    auto_approve_confidence=auto_approve,
-                    domain_id=domain_id,
-                    on_chunk_progress=_chunk_progress("term_extraction"),
-                    )
-                    all_triples.extend(term_triples)
-                    steps["term_extraction"] = {"status": "done", "triples": len(term_triples)}
-                    _save_step_cache("term_extraction", term_triples)
-            except Exception as exc:
-                _logger.warning("Term extraction failed for kb=%s", kb_id, exc_info=True)
-                steps["term_extraction"] = {"status": "failed", "reason": _step_error(exc)}
-            _checkpoint()
+                    diagnostics=git_diag,
+                    extraction_config=git_extraction_config,
+                )
 
-            if not _try_resume_step("metric_caliber"):
-                steps["metric_caliber"] = {"status": "running"}
-                _checkpoint()
-            try:
-                if steps.get("metric_caliber", {}).get("status") == "done":
-                    pass
-                else:
-                    from services.extraction.metric_extractor import extract_metric_triples
+            async def _join_coro():
+                from services.extraction.join_extractor import extract_join_triples
 
-                    metric_triples = await extract_metric_triples(
+                return await extract_join_triples(
                     kb_id=kb_id,
-                    chunks=chunks,
+                    entries=entries,
                     llm_client=llm_client,
                     model_name=model_name,
                     call_llm_json=_call_llm_json,
                     load_prompt=_load_prompt,
-                    auto_approve_confidence=auto_approve,
-                    domain_id=domain_id,
-                    on_chunk_progress=_chunk_progress("metric_caliber"),
-                    )
-                    all_triples.extend(metric_triples)
-                    steps["metric_caliber"] = {"status": "done", "triples": len(metric_triples)}
-                    _save_step_cache("metric_caliber", metric_triples)
-            except Exception as exc:
-                _logger.warning("Metric extraction failed for kb=%s", kb_id, exc_info=True)
-                steps["metric_caliber"] = {"status": "failed", "reason": _step_error(exc)}
-            _checkpoint()
+                    domain_tables=None,
+                    diagnostics=git_diag,
+                    extraction_config=git_extraction_config,
+                )
 
-            if not _try_resume_step("dimension_extraction"):
-                steps["dimension_extraction"] = {"status": "running"}
-                _checkpoint()
-            try:
-                if steps.get("dimension_extraction", {}).get("status") == "done":
-                    pass
-                else:
-                    from services.extraction.dimension_extractor import extract_dimension_triples
+            async def _domain_term_coro():
+                from services.extraction.domain_term_extractor import extract_domain_term_triples
 
-                    dim_triples = await extract_dimension_triples(
+                return extract_domain_term_triples(
                     kb_id=kb_id,
-                    chunks=chunks,
-                    llm_client=llm_client,
-                    model_name=model_name,
-                    call_llm_json=_call_llm_json,
-                    load_prompt=_load_prompt,
-                    auto_approve_confidence=auto_approve,
+                    entries=entries,
                     domain_id=domain_id,
-                    on_chunk_progress=_chunk_progress("dimension_extraction"),
-                    )
-                    all_triples.extend(dim_triples)
-                    steps["dimension_extraction"] = {"status": "done", "triples": len(dim_triples)}
-                    _save_step_cache("dimension_extraction", dim_triples)
-            except Exception as exc:
-                _logger.warning("Dimension extraction failed for kb=%s", kb_id, exc_info=True)
-                steps["dimension_extraction"] = {"status": "failed", "reason": _step_error(exc)}
-            _checkpoint()
-
-            if not _try_resume_step("rule_extraction"):
-                steps["rule_extraction"] = {"status": "running"}
-                _checkpoint()
-            try:
-                if steps.get("rule_extraction", {}).get("status") == "done":
-                    pass
-                else:
-                    from services.extraction.rule_extractor import extract_rule_triples
-
-                    rule_triples = await extract_rule_triples(
-                    kb_id=kb_id,
-                    chunks=chunks,
-                    llm_client=llm_client,
-                    model_name=model_name,
-                    call_llm_json=_call_llm_json,
-                    load_prompt=_load_prompt,
+                    diagnostics=git_diag,
+                    extraction_config=git_extraction_config,
                     auto_approve_confidence=auto_approve,
-                    domain_id=domain_id,
-                    on_chunk_progress=_chunk_progress("rule_extraction"),
-                    )
-                    all_triples.extend(rule_triples)
-                    steps["rule_extraction"] = {"status": "done", "triples": len(rule_triples)}
-                    _save_step_cache("rule_extraction", rule_triples)
-            except Exception as exc:
-                _logger.warning("Rule extraction failed for kb=%s", kb_id, exc_info=True)
-                steps["rule_extraction"] = {"status": "failed", "reason": _step_error(exc)}
-            _checkpoint()
+                )
 
+            if entries:
+                parallel_tasks.extend(
+                    [
+                        _run_extraction_step("data_lineage", _lineage_coro()),
+                        _run_extraction_step("join_extraction", _join_coro()),
+                        _run_extraction_step("domain_term_extraction", _domain_term_coro()),
+                    ]
+                )
+            else:
+                with step_lock:
+                    steps["data_lineage"] = {"status": "skipped", "reason": "no_git_entries"}
+                    steps["join_extraction"] = {"status": "skipped", "reason": "no_git_entries"}
+                    steps["domain_term_extraction"] = {"status": "skipped", "reason": "no_git_entries"}
+                    _checkpoint()
+        else:
+            steps["data_lineage"] = {"status": "skipped", "reason": "no_git_source"}
+            steps["join_extraction"] = {"status": "skipped", "reason": "no_git_source"}
+            steps["domain_term_extraction"] = {"status": "skipped", "reason": "no_git_source"}
+
+        if parallel_tasks:
+            await asyncio.gather(*parallel_tasks)
+
+        if llm_chunks:
             term_iris: dict[str, str] = {}
             metric_iris: dict[str, str] = {}
             for t in all_triples:
@@ -451,111 +634,40 @@ class ExtractionOrchestrator:
                         metric_iris[name] = str(t.subject)
 
             if term_iris or metric_iris:
-                _try_resume_step("relation_extraction")
-                try:
-                    if steps.get("relation_extraction", {}).get("status") == "done":
-                        pass
-                    else:
-                        from services.extraction.relation_extractor import extract_relation_triples
+                from services.extraction.hierarchy_builder import build_hierarchy_triples
+                from services.extraction.relation_extractor import extract_relation_triples
 
-                        rel_triples = await extract_relation_triples(
-                        kb_id=kb_id,
-                        term_iris=term_iris,
-                        metric_iris=metric_iris,
-                        chunks=chunks,
-                        llm_client=llm_client,
-                        model_name=model_name,
-                        call_llm_json=_call_llm_json,
-                        load_prompt=_load_prompt,
-                        )
-                        all_triples.extend(rel_triples)
-                        steps["relation_extraction"] = {"status": "done", "triples": len(rel_triples)}
-                        _save_step_cache("relation_extraction", rel_triples)
-                except Exception as exc:
-                    _logger.warning("Relation extraction failed for kb=%s", kb_id, exc_info=True)
-                    steps["relation_extraction"] = {"status": "failed", "reason": _step_error(exc)}
-
-                _try_resume_step("hierarchy_building")
-                try:
-                    if steps.get("hierarchy_building", {}).get("status") == "done":
-                        pass
-                    else:
-                        from services.extraction.hierarchy_builder import build_hierarchy_triples
-
-                        hier_triples = await build_hierarchy_triples(
-                        kb_id=kb_id,
-                        term_iris=term_iris,
-                        metric_iris=metric_iris,
-                        llm_client=llm_client,
-                        model_name=model_name,
-                        call_llm_json=_call_llm_json,
-                        load_prompt=_load_prompt,
-                        )
-                        all_triples.extend(hier_triples)
-                        steps["hierarchy_building"] = {"status": "done", "triples": len(hier_triples)}
-                        _save_step_cache("hierarchy_building", hier_triples)
-                except Exception as exc:
-                    _logger.warning("Hierarchy building failed for kb=%s", kb_id, exc_info=True)
-                    steps["hierarchy_building"] = {"status": "failed", "reason": _step_error(exc)}
+                await asyncio.gather(
+                    _run_extraction_step(
+                        "relation_extraction",
+                        extract_relation_triples(
+                            kb_id=kb_id,
+                            term_iris=term_iris,
+                            metric_iris=metric_iris,
+                            chunks=llm_chunks,
+                            llm_client=llm_client,
+                            model_name=model_name,
+                            call_llm_json=_call_llm_json,
+                            load_prompt=_load_prompt,
+                        ),
+                    ),
+                    _run_extraction_step(
+                        "hierarchy_building",
+                        build_hierarchy_triples(
+                            kb_id=kb_id,
+                            term_iris=term_iris,
+                            metric_iris=metric_iris,
+                            llm_client=llm_client,
+                            model_name=model_name,
+                            call_llm_json=_call_llm_json,
+                            load_prompt=_load_prompt,
+                        ),
+                    ),
+                )
             elif not steps.get("relation_extraction"):
                 steps["relation_extraction"] = {"status": "skipped", "reason": "no_concepts"}
                 steps["hierarchy_building"] = {"status": "skipped", "reason": "no_concepts"}
-            _checkpoint()
-
-        if git_entries or _has_git_source(db, kb_id):
-            entries = git_entries or _get_git_entries(db, kb_id, source_type=source_type, source_id=source_id)
-            _try_resume_step("data_lineage")
-            try:
-                if steps.get("data_lineage", {}).get("status") == "done":
-                    pass
-                elif entries:
-                    from services.extraction.lineage_extractor import extract_lineage_triples
-
-                    lineage_triples = await extract_lineage_triples(
-                        kb_id=kb_id,
-                        entries=entries,
-                        llm_client=llm_client,
-                        model_name=model_name,
-                        call_llm_json=_call_llm_json,
-                        load_prompt=_load_prompt,
-                    )
-                    all_triples.extend(lineage_triples)
-                    steps["data_lineage"] = {"status": "done", "triples": len(lineage_triples)}
-                    _save_step_cache("data_lineage", lineage_triples)
-                else:
-                    steps["data_lineage"] = {"status": "skipped", "reason": "no_git_entries"}
-            except Exception as exc:
-                _logger.warning("Lineage extraction failed for kb=%s", kb_id, exc_info=True)
-                steps["data_lineage"] = {"status": "failed", "reason": _step_error(exc)}
-
-            _try_resume_step("join_extraction")
-            try:
-                if steps.get("join_extraction", {}).get("status") == "done":
-                    pass
-                elif entries:
-                    from services.extraction.join_extractor import extract_join_triples
-
-                    join_triples = await extract_join_triples(
-                        kb_id=kb_id,
-                        entries=entries,
-                        llm_client=llm_client,
-                        model_name=model_name,
-                        call_llm_json=_call_llm_json,
-                        load_prompt=_load_prompt,
-                        domain_tables=None,
-                    )
-                    all_triples.extend(join_triples)
-                    steps["join_extraction"] = {"status": "done", "triples": len(join_triples)}
-                    _save_step_cache("join_extraction", join_triples)
-                else:
-                    steps["join_extraction"] = {"status": "skipped", "reason": "no_git_entries"}
-            except Exception as exc:
-                _logger.warning("Join extraction failed for kb=%s", kb_id, exc_info=True)
-                steps["join_extraction"] = {"status": "failed", "reason": _step_error(exc)}
-            _checkpoint()
-        else:
-            steps["data_lineage"] = {"status": "skipped", "reason": "no_git_source"}
-            steps["join_extraction"] = {"status": "skipped", "reason": "no_git_source"}
+                _checkpoint()
 
         if all_triples:
             try:
@@ -587,6 +699,28 @@ class ExtractionOrchestrator:
             steps["ontology_write"] = {"status": "skipped", "reason": "no_triples"}
 
         has_failures = any(isinstance(v, dict) and v.get("status") == "failed" for v in steps.values())
+        if not all_triples and not has_failures and (git_scope_entries or chunks):
+            from services.extraction.pipeline_status import humanize_reason
+
+            hint = humanize_reason("no_triples")
+            if git_scope_entries:
+                try:
+                    steps["_git_diagnostics"] = git_diag.to_dict()
+                except Exception:
+                    pass
+            steps["ontology_write"] = {"status": "failed", "reason": "no_triples", "message": hint}
+            steps["_pipeline"] = {
+                "status": "failed",
+                "reason": "no_triples",
+                "message": hint,
+            }
+            return {
+                "status": "failed",
+                "reason": "no_triples",
+                "steps": steps,
+                "total_triples": 0,
+            }
+
         return {
             "status": "failed" if has_failures else "completed",
             "steps": steps,
@@ -663,7 +797,7 @@ async def run_database_schema_pipeline(db: Session, kb_id: int, import_id: int) 
 
 def _finalize_pipeline_run(db: Session, run: PipelineRun, result: dict[str, Any]) -> dict[str, Any]:
     """Persist step details and set run status from orchestrator result."""
-    from services.extraction.pipeline_status import humanize_reason
+    from services.extraction.pipeline_status import humanize_reason, pipeline_failure_reason
 
     steps = result.get("steps") if isinstance(result.get("steps"), dict) else {}
     reason = result.get("reason")
@@ -679,14 +813,27 @@ def _finalize_pipeline_run(db: Session, run: PipelineRun, result: dict[str, Any]
         success = True
     elif status == "skipped":
         success = False
-        if isinstance(steps.get("_pipeline"), dict) and not steps["_pipeline"].get("message"):
-            steps["_pipeline"]["message"] = humanize_reason(str(reason or "unknown"))
-            run.steps = steps
     else:
         success = False
-        if isinstance(steps.get("_pipeline"), dict) and not steps["_pipeline"].get("message"):
-            steps["_pipeline"]["message"] = humanize_reason(str(reason or status or "unknown"))
+
+    if not success:
+        pipeline_meta = steps.get("_pipeline") if isinstance(steps.get("_pipeline"), dict) else {}
+        if not pipeline_meta.get("message"):
             run.steps = steps
+            message = pipeline_failure_reason(run) or humanize_reason(str(reason or status or "unknown"))
+            steps = {
+                **steps,
+                "_pipeline": {
+                    **pipeline_meta,
+                    "status": status or "failed",
+                    "reason": pipeline_meta.get("reason") or reason or status,
+                    "message": message,
+                },
+            }
+            run.steps = steps
+    elif status == "skipped" and isinstance(steps.get("_pipeline"), dict) and not steps["_pipeline"].get("message"):
+        steps["_pipeline"]["message"] = humanize_reason(str(reason or "unknown"))
+        run.steps = steps
 
     _finish_pipeline_run(db, run, success=success)
     return {**result, "run_id": run.id}
@@ -714,12 +861,16 @@ async def run_extraction_pipeline(
     )
 
     if skip_if_running:
-        existing = db.execute(
-            select(PipelineRun).where(
-                PipelineRun.knowledge_base_id == kb_id,
-                PipelineRun.status == "running",
+        running_q = select(PipelineRun).where(
+            PipelineRun.knowledge_base_id == kb_id,
+            PipelineRun.status == "running",
+        )
+        if source_type and source_id is not None:
+            running_q = running_q.where(
+                PipelineRun.source_type == source_type,
+                PipelineRun.source_id == source_id,
             )
-        ).scalars().first()
+        existing = db.execute(running_q).scalars().first()
         if existing:
             if is_pipeline_run_stale(existing):
                 from services.extraction.pipeline_status import pipeline_active_step
@@ -813,11 +964,21 @@ async def run_extraction_pipeline(
         result = {"status": "timeout", "reason": "pipeline_timeout", "steps": steps_out}
         return _finalize_pipeline_run(db, run, result)
     except Exception as exc:
+        from services.extraction.pipeline_status import humanize_reason
+
         _logger.warning("Extraction pipeline failed for kb=%s", kb_id, exc_info=True)
+        err = _step_error(exc)
         result = {
             "status": "failed",
-            "reason": _step_error(exc),
-            "steps": {**(run.steps or {}), "_pipeline": {"status": "failed", "reason": _step_error(exc)}},
+            "reason": err,
+            "steps": {
+                **(run.steps if isinstance(run.steps, dict) else {}),
+                "_pipeline": {
+                    "status": "failed",
+                    "reason": err,
+                    "message": humanize_reason(err),
+                },
+            },
         }
         return _finalize_pipeline_run(db, run, result)
 

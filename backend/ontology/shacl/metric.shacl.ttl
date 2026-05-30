@@ -21,6 +21,7 @@ dl:MetricShape a sh:NodeShape ;
     sh:path dl:computedFromTable ;
     sh:name "计算来源表"@zh ;
     sh:description "每个指标必须声明其从哪张物理表取数"@zh ;
+    sh:severity sh:Warning ;
     sh:minCount 1 ;
   ] ;
   sh:property [

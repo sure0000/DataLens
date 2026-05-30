@@ -6,6 +6,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT_DIR/docker-compose.yml"
 RUNTIME_DIR="$ROOT_DIR/.run"
 FUSEKI_DATA_DIR="$RUNTIME_DIR/fuseki-data"
+FUSEKI_PID_FILE="$RUNTIME_DIR/fuseki.pid"
+FUSEKI_LOG_FILE="$RUNTIME_DIR/fuseki.log"
+FUSEKI_HOME_DEFAULT="$RUNTIME_DIR/apache-jena-fuseki-6.1.0"
 
 FUSEKI_PORT_DEFAULT=3030
 FUSEKI_DATASET_DEFAULT=datalens
@@ -23,6 +26,10 @@ if [[ -f "$ROOT_DIR/.env" ]]; then
   FUSEKI_IMAGE="${FUSEKI_IMAGE:-$FUSEKI_IMAGE_DEFAULT}"
   FUSEKI_URL="${FUSEKI_URL:-http://localhost:${FUSEKI_PORT}}"
 fi
+
+FUSEKI_HOME="${FUSEKI_HOME:-$FUSEKI_HOME_DEFAULT}"
+# native | docker | auto — auto 优先使用本机已解压的 Fuseki，否则回退 Docker
+FUSEKI_LAUNCHER="${FUSEKI_LAUNCHER:-auto}"
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -70,15 +77,98 @@ wait_fuseki() {
   log "Fuseki 已就绪: ${FUSEKI_URL}/${FUSEKI_DATASET}"
 }
 
+native_fuseki_available() {
+  [[ -x "${FUSEKI_HOME}/fuseki-server" ]]
+}
+
+read_native_fuseki_pid() {
+  if [[ -f "$FUSEKI_PID_FILE" ]]; then
+    cat "$FUSEKI_PID_FILE"
+  fi
+}
+
+native_fuseki_running() {
+  local pid
+  pid="$(read_native_fuseki_pid || true)"
+  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+}
+
+start_fuseki_native() {
+  if ! native_fuseki_available; then
+    log "未找到本机 Fuseki: ${FUSEKI_HOME}/fuseki-server"
+    log "请将 Apache Jena Fuseki 解压到 ${FUSEKI_HOME_DEFAULT}，或设置 FUSEKI_HOME"
+    return 1
+  fi
+
+  if fuseki_ping && fuseki_dataset_ready; then
+    log "Fuseki 已在运行 (${FUSEKI_URL})"
+    return 0
+  fi
+
+  if native_fuseki_running; then
+    log "Fuseki 进程已在运行 (pid=$(read_native_fuseki_pid))，等待就绪..."
+    wait_fuseki 60
+    return $?
+  fi
+
+  mkdir -p "$FUSEKI_DATA_DIR"
+  local dataset_dir="${FUSEKI_DATA_DIR}/${FUSEKI_DATASET}"
+  mkdir -p "$dataset_dir"
+
+  log "启动本机 Fuseki (port=${FUSEKI_PORT}, dataset=${FUSEKI_DATASET}, home=${FUSEKI_HOME})..."
+  (
+    cd "$FUSEKI_HOME"
+    nohup env FUSEKI_HOME="$FUSEKI_HOME" FUSEKI_BASE="$FUSEKI_DATA_DIR" \
+      ./fuseki-server --port="$FUSEKI_PORT" --update --loc="$dataset_dir" "/${FUSEKI_DATASET}" \
+      >>"$FUSEKI_LOG_FILE" 2>&1 &
+    echo $! >"$FUSEKI_PID_FILE"
+  )
+  wait_fuseki 90
+}
+
+stop_fuseki_native() {
+  local pid
+  pid="$(read_native_fuseki_pid || true)"
+  if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+    log "停止本机 Fuseki (pid=${pid})..."
+    kill "$pid" 2>/dev/null || true
+    sleep 1
+    kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+  fi
+  rm -f "$FUSEKI_PID_FILE"
+}
+
+should_use_docker() {
+  case "$FUSEKI_LAUNCHER" in
+    docker) return 0 ;;
+    native) return 1 ;;
+    auto)
+      if native_fuseki_available; then
+        return 1
+      fi
+      return 0
+      ;;
+    *) return 0 ;;
+  esac
+}
+
 start_fuseki() {
   if fuseki_ping && fuseki_dataset_ready; then
     log "Fuseki 已在运行 (${FUSEKI_URL})"
     return 0
   fi
 
+  if ! should_use_docker; then
+    start_fuseki_native
+    return $?
+  fi
+
   if ! has_docker; then
-    log "未检测到 Docker — 跳过容器启动。"
-    log "请在本机安装并启动 Fuseki，或运行: docker compose up -d fuseki"
+    if native_fuseki_available; then
+      start_fuseki_native
+      return $?
+    fi
+    log "未检测到 Docker，且未找到本机 Fuseki (${FUSEKI_HOME}/fuseki-server)"
     log "FUSEKI_URL 应指向: ${FUSEKI_URL}"
     return 1
   fi
@@ -105,12 +195,11 @@ start_fuseki() {
 }
 
 stop_fuseki() {
-  if ! has_docker; then
-    log "无 Docker / Fuseki 容器；本地 Trig 存储不受影响"
-    return 0
+  stop_fuseki_native
+  if has_docker; then
+    log "停止 Fuseki 容器..."
+    compose stop fuseki 2>/dev/null || true
   fi
-  log "停止 Fuseki 容器..."
-  compose stop fuseki 2>/dev/null || true
   log "Fuseki 已停止"
 }
 
@@ -133,22 +222,29 @@ status_fuseki() {
 }
 
 logs_fuseki() {
-  if ! has_docker; then
-    log "无 Docker，无 Fuseki 日志"
+  if [[ -f "$FUSEKI_LOG_FILE" ]]; then
+    tail -f -n 100 "$FUSEKI_LOG_FILE"
     exit 0
   fi
-  compose logs -f --tail=100 fuseki
+  if has_docker; then
+    compose logs -f --tail=100 fuseki
+    exit 0
+  fi
+  log "无 Fuseki 日志 (${FUSEKI_LOG_FILE})"
+  exit 0
 }
 
 usage() {
   cat <<EOF
 用法: ./scripts/fuseki.sh <start|stop|restart|status|wait|logs>
 
-通过 Docker 启动 Fuseki，或确保 FUSEKI_URL 已指向本地/远程 Fuseki 实例。
+优先使用本机 Fuseki（.run/apache-jena-fuseki-*），否则回退 Docker。
 
 环境变量（.env）:
   FUSEKI_URL=http://localhost:3030
   FUSEKI_DATASET=datalens
+  FUSEKI_HOME=.run/apache-jena-fuseki-6.1.0
+  FUSEKI_LAUNCHER=auto|native|docker
   FUSEKI_IMAGE=stain/jena-fuseki:4.10.0
   FUSEKI_AUTO_START=true
   FUSEKI_FALLBACK_MEMORY=false

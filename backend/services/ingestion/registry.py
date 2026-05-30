@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from models import EvidencePackage
+from models import Document, EvidencePackage, KnowledgeGitSource
 from services.ingestion.evidence import (
     ASSET_LABELS,
     CONNECTOR_LABELS,
@@ -68,11 +68,11 @@ def _dedupe_key(pkg: dict[str, Any]) -> str | None:
     repo = _to_str(source_ref.get("repo") or "")
     branch = _to_str(source_ref.get("branch") or "")
     if connector == "git" and owner and repo:
-        return f"gitrepo:{kb_id}:{owner}:{repo}:{branch}:{asset_kind}"
+        return f"gitrepo:{kb_id}:{owner}:{repo}:{branch}"
 
     git_source_id = source_ref.get("git_source_id")
-    if git_source_id is not None:
-        return f"git:{kb_id}:{git_source_id}:{connector}:{asset_kind}"
+    if git_source_id is not None and connector == "git":
+        return f"git:{kb_id}:{git_source_id}"
 
     datasource_id = source_ref.get("datasource_id")
     databases = _sorted_csv(source_ref.get("database_names") or source_ref.get("databases"))
@@ -143,13 +143,21 @@ def register_package(
 
     row: EvidencePackage | None = None
     if target_key:
-        rows = db.execute(
-            select(EvidencePackage).where(
-                EvidencePackage.knowledge_base_id == kb_id,
-                EvidencePackage.connector == connector,
-                EvidencePackage.asset_kind == asset_kind,
-            )
-        ).scalars().all()
+        if connector == "git":
+            rows = db.execute(
+                select(EvidencePackage).where(
+                    EvidencePackage.knowledge_base_id == kb_id,
+                    EvidencePackage.connector == "git",
+                )
+            ).scalars().all()
+        else:
+            rows = db.execute(
+                select(EvidencePackage).where(
+                    EvidencePackage.knowledge_base_id == kb_id,
+                    EvidencePackage.connector == connector,
+                    EvidencePackage.asset_kind == asset_kind,
+                )
+            ).scalars().all()
         for existed in rows:
             existed_key = _dedupe_key(_row_to_dict(existed))
             if existed_key == target_key:
@@ -183,17 +191,222 @@ def register_package(
     return row
 
 
+def _prefer_evidence_package(current: dict[str, Any], candidate: dict[str, Any]) -> dict[str, Any]:
+    """合并同一来源的重复证据包视图，保留进度更完整的一条。"""
+    if current.get("persistent") and not candidate.get("persistent"):
+        return current
+    if candidate.get("persistent") and not current.get("persistent"):
+        return candidate
+
+    cur_idx = int(current.get("indexed_document_count") or 0)
+    cand_idx = int(candidate.get("indexed_document_count") or 0)
+    if cur_idx != cand_idx:
+        return current if cur_idx > cand_idx else candidate
+
+    state_rank = {
+        "ready_for_extraction": 4,
+        "indexed": 3,
+        "normalized": 2,
+        "registered": 1,
+    }
+    cur_rank = state_rank.get(str(current.get("processing_state") or ""), 0)
+    cand_rank = state_rank.get(str(candidate.get("processing_state") or ""), 0)
+    if cur_rank != cand_rank:
+        return current if cur_rank > cand_rank else candidate
+
+    cur_db = current.get("db_id")
+    cand_db = candidate.get("db_id")
+    if isinstance(cur_db, int) and isinstance(cand_db, int) and cur_db != cand_db:
+        return current if cur_db < cand_db else candidate
+    return current
+
+
 def _dedupe_packages(packages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     deduped: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    seen: dict[str, int] = {}
     for pkg in packages:
         key = _dedupe_key(pkg)
         if key and key in seen:
+            idx = seen[key]
+            deduped[idx] = _prefer_evidence_package(deduped[idx], pkg)
             continue
         if key:
-            seen.add(key)
+            seen[key] = len(deduped)
         deduped.append(pkg)
     return deduped
+
+
+def _resolve_git_source_id(db: Session, kb_id: int, src: dict[str, Any]) -> int | None:
+    """Resolve git_source_id from source_ref, including owner/repo fallback."""
+    git_source_id = src.get("git_source_id")
+    if git_source_id is not None:
+        try:
+            return int(git_source_id)
+        except (TypeError, ValueError):
+            pass
+
+    owner = _to_str(src.get("owner") or "")
+    repo = _to_str(src.get("repo") or "")
+    if not owner or not repo:
+        return None
+
+    gs = db.execute(
+        select(KnowledgeGitSource.id).where(
+            KnowledgeGitSource.knowledge_base_id == kb_id,
+            KnowledgeGitSource.owner == owner,
+            KnowledgeGitSource.repo == repo,
+        ).limit(1)
+    ).scalar_one_or_none()
+    if gs is None:
+        return None
+
+    gid = int(gs)
+    src["git_source_id"] = gid
+    return gid
+
+
+def _hydrate_git_packages(db: Session, kb_id: int, packages: list[dict[str, Any]]) -> None:
+    """Attach git sync / pipeline / entry linkage for persistent git evidence packages."""
+    from services.ingestion.evidence import (
+        _git_file_entry_ids,
+        _git_processing_state,
+        _git_sync_ok,
+        _latest_git_pipeline_status,
+    )
+
+    for pkg in packages:
+        if pkg.get("connector") != "git":
+            continue
+        src = pkg.get("source_ref")
+        if not isinstance(src, dict):
+            continue
+        gid = _resolve_git_source_id(db, kb_id, src)
+        if gid is None:
+            continue
+
+        db_id = pkg.get("db_id")
+        if isinstance(db_id, int) and pkg.get("persistent"):
+            row = db.get(EvidencePackage, db_id)
+            if row is not None and isinstance(row.source_ref, dict):
+                if row.source_ref.get("git_source_id") != gid:
+                    row.source_ref = {**row.source_ref, "git_source_id": gid}
+                    row.updated_at = datetime.utcnow()
+                    db.flush()
+
+        gs = db.get(KnowledgeGitSource, gid)
+        if gs is None or gs.knowledge_base_id != kb_id:
+            continue
+
+        git_entry_ids = _git_file_entry_ids(db, kb_id, gid)
+        if git_entry_ids:
+            pkg["linked_entry_ids"] = git_entry_ids
+
+        pipeline_status = _latest_git_pipeline_status(db, kb_id, gid)
+        pkg["processing_state"] = _git_processing_state(gs.last_sync_status, pipeline_status)
+
+        if not _git_sync_ok(gs.last_sync_status):
+            continue
+
+        entry_ids = pkg.get("linked_entry_ids")
+        if not isinstance(entry_ids, list) or not entry_ids:
+            continue
+
+        docs = db.execute(
+            select(Document).where(
+                Document.knowledge_base_id == kb_id,
+                Document.knowledge_entry_id.in_(entry_ids),
+            )
+        ).scalars().all()
+        if not docs:
+            continue
+        total = len(docs)
+        indexed = sum(1 for d in docs if (d.status or "") == "indexed")
+        failed = sum(1 for d in docs if (d.status or "") == "failed")
+        pkg["document_count"] = total
+        pkg["indexed_document_count"] = indexed
+        pkg["failed_document_count"] = failed
+
+
+def _hydrate_package_document_stats(db: Session, kb_id: int, packages: list[dict[str, Any]]) -> None:
+    """Attach per-package document/index/failed counts for frontend status dots."""
+    if not packages:
+        return
+
+    linked_doc_ids: set[int] = set()
+    linked_entry_ids: set[int] = set()
+
+    for pkg in packages:
+        lid = pkg.get("linked_document_id")
+        if isinstance(lid, int):
+            linked_doc_ids.add(lid)
+
+        entry_ids = pkg.get("linked_entry_ids")
+        if isinstance(entry_ids, list):
+            for eid in entry_ids:
+                if isinstance(eid, int):
+                    linked_entry_ids.add(eid)
+
+        src = pkg.get("source_ref")
+        if isinstance(src, dict) and isinstance(src.get("entry_id"), int):
+            linked_entry_ids.add(int(src["entry_id"]))
+
+    docs_by_id: dict[int, Document] = {}
+    docs_by_entry: dict[int, list[Document]] = {}
+
+    if linked_doc_ids:
+        docs = db.execute(
+            select(Document).where(
+                Document.knowledge_base_id == kb_id,
+                Document.id.in_(linked_doc_ids),
+            )
+        ).scalars().all()
+        docs_by_id = {int(d.id): d for d in docs}
+
+    if linked_entry_ids:
+        docs = db.execute(
+            select(Document).where(
+                Document.knowledge_base_id == kb_id,
+                Document.knowledge_entry_id.in_(linked_entry_ids),
+            )
+        ).scalars().all()
+        for d in docs:
+            if d.knowledge_entry_id is None:
+                continue
+            docs_by_entry.setdefault(int(d.knowledge_entry_id), []).append(d)
+
+    for pkg in packages:
+        matched: dict[int, Document] = {}
+
+        lid = pkg.get("linked_document_id")
+        if isinstance(lid, int):
+            d = docs_by_id.get(lid)
+            if d is not None:
+                matched[int(d.id)] = d
+
+        entry_ids: set[int] = set()
+        raw_entry_ids = pkg.get("linked_entry_ids")
+        if isinstance(raw_entry_ids, list):
+            for eid in raw_entry_ids:
+                if isinstance(eid, int):
+                    entry_ids.add(eid)
+        src = pkg.get("source_ref")
+        if isinstance(src, dict) and isinstance(src.get("entry_id"), int):
+            entry_ids.add(int(src["entry_id"]))
+
+        for eid in entry_ids:
+            for d in docs_by_entry.get(eid, []):
+                matched[int(d.id)] = d
+
+        if not matched:
+            continue
+
+        docs = list(matched.values())
+        total = len(docs)
+        indexed = sum(1 for d in docs if (d.status or "") == "indexed")
+        failed = sum(1 for d in docs if (d.status or "") == "failed")
+        pkg["document_count"] = total
+        pkg["indexed_document_count"] = indexed
+        pkg["failed_document_count"] = failed
 
 
 def list_all_packages(db: Session, kb_id: int) -> list[dict[str, Any]]:
@@ -204,6 +417,8 @@ def list_all_packages(db: Session, kb_id: int) -> list[dict[str, Any]]:
         .order_by(EvidencePackage.id.desc())
     ).scalars().all()
     persistent = _dedupe_packages([_row_to_dict(r) for r in db_rows])
+    _hydrate_git_packages(db, kb_id, persistent)
+    _hydrate_package_document_stats(db, kb_id, persistent)
 
     synthetic = list_synthetic_packages(db, kb_id)
     synthetic = [p for p in synthetic if not (isinstance(p.get("source_ref"), dict) and p["source_ref"].get("document_pipeline"))]

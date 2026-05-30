@@ -24,8 +24,10 @@ export type EvidencePackage = {
   source_ref: Record<string, unknown>;
   processing_state: string;
   linked_entry_ids?: number[];
+  linked_document_id?: number;
   document_count?: number;
   indexed_document_count?: number;
+  failed_document_count?: number;
   created_at?: string | null;
 };
 
@@ -69,6 +71,15 @@ export const CONNECTOR_LABELS: Record<ConnectorKind, string> = {
   manual: "手动条目",
   ttl: "TTL 文件",
 };
+
+export function defaultAssetKindsForConnector(connector: ConnectorKind): AssetKind[] {
+  return ASSETS_BY_CONNECTOR[connector] ?? [];
+}
+
+export function assetKindLabelsForConnector(connector: ConnectorKind): string[] {
+  const kinds = new Set(defaultAssetKindsForConnector(connector));
+  return ASSET_KIND_OPTIONS.filter((a) => kinds.has(a.kind)).map((a) => a.title);
+}
 
 export const PROCESSING_STATE_LABELS: Record<string, string> = {
   registered: "已登记",

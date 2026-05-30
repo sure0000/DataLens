@@ -13,6 +13,7 @@ from models import (
     KnowledgeDatabaseImport,
     KnowledgeEntry,
     KnowledgeGitSource,
+    PipelineRun,
 )
 
 ASSET_LABELS: dict[str, str] = {
@@ -32,6 +33,48 @@ CONNECTOR_LABELS: dict[str, str] = {
     "manual": "手动条目",
     "ttl": "TTL 包",
 }
+
+
+def _git_sync_ok(status: str | None) -> bool:
+    return (status or "").strip().lower() in {"success", "ok"}
+
+
+def _git_processing_state(sync_status: str | None, pipeline_status: str | None) -> str:
+    if not _git_sync_ok(sync_status):
+        return "registered"
+    if pipeline_status == "running":
+        return "ready_for_extraction"
+    if pipeline_status in ("completed", "failed"):
+        return "ready_for_extraction"
+    return "normalized"
+
+
+def _latest_git_pipeline_status(db: Session, kb_id: int, git_source_id: int) -> str | None:
+    run = db.execute(
+        select(PipelineRun.status)
+        .where(
+            PipelineRun.knowledge_base_id == kb_id,
+            PipelineRun.source_id == git_source_id,
+            PipelineRun.source_type.in_(("source:git", "git")),
+        )
+        .order_by(PipelineRun.id.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    return str(run) if run else None
+
+
+def _git_file_entry_ids(db: Session, kb_id: int, git_source_id: int) -> list[int]:
+    from sqlalchemy import cast
+    from sqlalchemy.dialects.postgresql import JSONB
+
+    rows = db.scalars(
+        select(KnowledgeEntry.id).where(
+            KnowledgeEntry.knowledge_base_id == kb_id,
+            cast(KnowledgeEntry.source_meta, JSONB)["kind"].astext == "git_file",
+            cast(KnowledgeEntry.source_meta, JSONB)["git_source_id"].astext == str(git_source_id),
+        )
+    ).all()
+    return [int(r) for r in rows]
 
 
 def _processing_state(doc_indexed: int, doc_total: int, pipeline_status: str | None) -> str:
@@ -67,6 +110,21 @@ def list_evidence_packages(db: Session, kb_id: int) -> list[dict[str, Any]]:
     )
     indexed = int(doc_stats.get("indexed", 0))
     total_docs = sum(int(v) for v in doc_stats.values())
+    per_entry_rows = db.execute(
+        select(Document.knowledge_entry_id, Document.status, func.count(Document.id))
+        .where(
+            Document.knowledge_base_id == kb_id,
+            Document.knowledge_entry_id.isnot(None),
+        )
+        .group_by(Document.knowledge_entry_id, Document.status)
+    ).all()
+    per_entry_doc_stats: dict[int, dict[str, int]] = {}
+    for entry_id, status, cnt in per_entry_rows:
+        if entry_id is None:
+            continue
+        eid = int(entry_id)
+        entry_map = per_entry_doc_stats.setdefault(eid, {})
+        entry_map[str(status)] = int(cnt or 0)
 
     for entry in entries:
         meta = entry.source_meta if isinstance(entry.source_meta, dict) else {}
@@ -91,6 +149,11 @@ def list_evidence_packages(db: Session, kb_id: int) -> list[dict[str, Any]]:
             asset_kind = "semantic_doc"
 
         seq += 1
+        entry_doc_stats = per_entry_doc_stats.get(entry.id, {})
+        entry_doc_total = sum(int(v) for v in entry_doc_stats.values())
+        entry_doc_indexed = int(entry_doc_stats.get("indexed", 0))
+        entry_doc_failed = int(entry_doc_stats.get("failed", 0))
+        entry_pipeline_status = "running" if entry_doc_total > entry_doc_indexed else None
         packages.append(
             {
                 "id": f"entry-{entry.id}",
@@ -102,45 +165,48 @@ def list_evidence_packages(db: Session, kb_id: int) -> list[dict[str, Any]]:
                 "connector_label": CONNECTOR_LABELS.get(connector, connector),
                 "title": entry.title,
                 "source_ref": {"entry_id": entry.id, "kind": kind, **{k: v for k, v in meta.items() if k != "kind"}},
-                "processing_state": "indexed" if total_docs else "registered",
+                "processing_state": _processing_state(entry_doc_indexed, entry_doc_total, entry_pipeline_status),
                 "linked_entry_ids": [entry.id],
-                "document_count": 0,
+                "document_count": entry_doc_total,
+                "indexed_document_count": entry_doc_indexed,
+                "failed_document_count": entry_doc_failed,
                 "created_at": entry.created_at.isoformat() if entry.created_at else None,
             }
         )
 
-    # Git sources → processing_code + relation_lineage virtual packages
+    # Git sources → one package per repo (semantic clean runs on source card)
     git_sources = db.execute(
         select(KnowledgeGitSource).where(KnowledgeGitSource.knowledge_base_id == kb_id)
     ).scalars().all()
     for gs in git_sources:
-        for asset_kind in ("processing_code", "relation_lineage"):
-            seq += 1
-            sync = gs.last_sync_status or "pending"
-            state = "normalized" if sync == "ok" else "registered"
-            packages.append(
-                {
-                    "id": f"git-{gs.id}-{asset_kind}",
-                    "kb_id": kb_id,
-                    "display_id": f"EP-{1000 + seq}",
-                    "asset_kind": asset_kind,
-                    "asset_label": ASSET_LABELS[asset_kind],
-                    "connector": "git",
-                    "connector_label": CONNECTOR_LABELS["git"],
-                    "title": gs.name,
-                    "source_ref": {
-                        "git_source_id": gs.id,
-                        "provider": gs.provider,
-                        "owner": gs.owner,
-                        "repo": gs.repo,
-                        "branch": gs.branch,
-                    },
-                    "processing_state": state,
-                    "linked_entry_ids": [],
-                    "document_count": 0,
-                    "created_at": gs.created_at.isoformat() if gs.created_at else None,
-                }
-            )
+        seq += 1
+        sync = gs.last_sync_status or "pending"
+        git_entry_ids = _git_file_entry_ids(db, kb_id, gs.id)
+        pipeline_status = _latest_git_pipeline_status(db, kb_id, gs.id)
+        state = _git_processing_state(sync, pipeline_status)
+        packages.append(
+            {
+                "id": f"git-{gs.id}",
+                "kb_id": kb_id,
+                "display_id": f"EP-{1000 + seq}",
+                "asset_kind": "processing_code",
+                "asset_label": ASSET_LABELS["processing_code"],
+                "connector": "git",
+                "connector_label": CONNECTOR_LABELS["git"],
+                "title": gs.name,
+                "source_ref": {
+                    "git_source_id": gs.id,
+                    "provider": gs.provider,
+                    "owner": gs.owner,
+                    "repo": gs.repo,
+                    "branch": gs.branch,
+                },
+                "processing_state": state,
+                "linked_entry_ids": git_entry_ids,
+                "document_count": 0,
+                "created_at": gs.created_at.isoformat() if gs.created_at else None,
+            }
+        )
 
     # Database imports → physical_schema
     db_imports = db.execute(
@@ -188,6 +254,7 @@ def list_evidence_packages(db: Session, kb_id: int) -> list[dict[str, Any]]:
                 "linked_entry_ids": [],
                 "document_count": total_docs,
                 "indexed_document_count": indexed,
+                "failed_document_count": int(doc_stats.get("failed", 0)),
                 "created_at": datetime.utcnow().isoformat(),
             },
         )

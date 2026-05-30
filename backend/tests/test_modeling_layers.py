@@ -47,17 +47,24 @@ def test_get_cleaning_results_include_items(mock_counts):
 
 def test_get_modeling_layer_pagination():
     items = [{"s": f"http://ex.org/i{n}", "label": f"L{n}"} for n in range(12)]
+    db = MagicMock()
+    kb = MagicMock()
+    kb.id = 1
+    kb.name = "Test KB"
+    db.get.return_value = kb
 
     with patch.object(ml, "_count_queries", return_value={"vocabulary": 12}):
         with patch.object(ml, "_fetch_layer_items", return_value=items):
-            page0 = ml.get_modeling_layer(1, "vocabulary", limit=5, offset=0)
-            page1 = ml.get_modeling_layer(1, "vocabulary", limit=5, offset=5)
-            last = ml.get_modeling_layer(1, "vocabulary", limit=5, offset=10)
+            with patch.object(ml, "fetch_grounded_sources", return_value={}):
+                page0 = ml.get_modeling_layer(db, 1, "vocabulary", limit=5, offset=0)
+                page1 = ml.get_modeling_layer(db, 1, "vocabulary", limit=5, offset=5)
+                last = ml.get_modeling_layer(db, 1, "vocabulary", limit=5, offset=10)
 
     assert page0["ok"] is True
     assert page0["total"] == 12
     assert len(page0["items"]) == 5
     assert page0["items"][0]["label"] == "L0"
+    assert page0["items"][0]["origin"]["knowledge_base_name"] == "Test KB"
     assert page0["has_more"] is True
     assert page0["offset"] == 0
     assert page0["limit"] == 5
@@ -70,8 +77,30 @@ def test_get_modeling_layer_pagination():
     assert last["has_more"] is False
 
 
+def test_get_modeling_layer_enriches_source_origin():
+    db = MagicMock()
+    kb = MagicMock()
+    kb.id = 3
+    kb.name = "Sales KB"
+    db.get.return_value = kb
+    item = {"s": "http://ex/term/1", "label": "GMV"}
+
+    with patch.object(ml, "_count_queries", return_value={"vocabulary": 1}):
+        with patch.object(ml, "_fetch_layer_items", return_value=[item]):
+            with patch.object(
+                ml,
+                "fetch_grounded_sources",
+                return_value={"http://ex/term/1": {"source_label": "指标手册.pdf", "source_type": "file"}},
+            ):
+                result = ml.get_modeling_layer(db, 3, "vocabulary", limit=10, offset=0)
+
+    assert result["items"][0]["origin"]["knowledge_base_name"] == "Sales KB"
+    assert result["items"][0]["origin"]["source_label"] == "指标手册.pdf"
+    assert result["items"][0]["origin"]["source_type"] == "file"
+
+
 def test_get_modeling_layer_unknown_key():
-    result = ml.get_modeling_layer(1, "not-a-layer")
+    result = ml.get_modeling_layer(MagicMock(), 1, "not-a-layer")
     assert result["ok"] is False
     assert "未知清洗层" in result["error"]
 

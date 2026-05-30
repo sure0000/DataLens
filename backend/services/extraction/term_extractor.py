@@ -77,7 +77,7 @@ async def extract_term_triples(
             slug = concept_slug(name, "term")
             iri = term_iri(kb_id, slug)
             term_type = item.get("type") or "other"
-            definition = item.get("definition") or ""
+            definition = (item.get("definition") or "").strip() or name
             status = "approved" if confidence >= auto_approve_confidence else "draft"
             related_fields = item.get("related_fields") or []
 
@@ -90,8 +90,17 @@ async def extract_term_triples(
                 RawTriple(iri, f"{NS}confidence", str(confidence), False, graph=graph, confidence=confidence),
             ])
 
-            if domain_id is not None:
-                triples.append(RawTriple(iri, f"{NS}belongsToDomain", domain_iri(domain_id), True, graph=graph, confidence=confidence))
+            effective_domain_id = domain_id if domain_id is not None else kb_id
+            triples.append(
+                RawTriple(
+                    iri,
+                    f"{NS}belongsToDomain",
+                    domain_iri(effective_domain_id),
+                    True,
+                    graph=graph,
+                    confidence=confidence,
+                )
+            )
 
             # Synonyms → skos:altLabel
             for syn in (item.get("synonyms") or []):

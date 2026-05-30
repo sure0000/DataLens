@@ -9,7 +9,6 @@ import logging
 import threading
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlencode
 
 import httpx
 from rdflib import Dataset, Graph, URIRef
@@ -151,7 +150,7 @@ class TripleStore:
 
     # ── Fuseki probe ────────────────────────────────────
 
-    def probe_fuseki(self, timeout: float = 3.0) -> bool:
+    def probe_fuseki(self, timeout: float = 3.0, *, log_failure: bool = True) -> bool:
         settings = self._settings
         base = (settings.fuseki_url or "").rstrip("/")
         if not base:
@@ -173,19 +172,20 @@ class TripleStore:
             return True
         except Exception as exc:
             self._fuseki_live = False
-            if settings.fuseki_fallback_memory:
-                _logger.warning(
-                    "Fuseki unreachable at %s (%s); using in-memory RDF (not persisted). "
-                    "Run ./scripts/fuseki.sh start or set FUSEKI_URL.",
-                    base,
-                    exc,
-                )
-            else:
-                _logger.error(
-                    "Fuseki unreachable at %s (%s). RDF writes will fail until Fuseki is up.",
-                    base,
-                    exc,
-                )
+            if log_failure:
+                if settings.fuseki_fallback_memory:
+                    _logger.warning(
+                        "Fuseki unreachable at %s (%s); using in-memory RDF (not persisted). "
+                        "Run ./scripts/fuseki.sh start or set FUSEKI_URL.",
+                        base,
+                        exc,
+                    )
+                else:
+                    _logger.warning(
+                        "Fuseki unreachable at %s (%s). RDF writes will fail until Fuseki is up.",
+                        base,
+                        exc,
+                    )
             return False
 
     async def probe_fuseki_async(self, timeout: float = 3.0) -> bool:
@@ -228,11 +228,13 @@ class TripleStore:
         if limit <= 0:
             return self.probe_fuseki()
         deadline = time.monotonic() + limit
+        logged_failure = False
         while time.monotonic() < deadline:
-            if self.probe_fuseki(timeout=2.0):
+            if self.probe_fuseki(timeout=2.0, log_failure=not logged_failure):
                 return True
+            logged_failure = True
             time.sleep(1.5)
-        return self.probe_fuseki(timeout=2.0)
+        return self.probe_fuseki(timeout=2.0, log_failure=True)
 
     # ── SPARQL operations ───────────────────────────────
 
@@ -271,7 +273,7 @@ class TripleStore:
             with httpx_sync_client(timeout=60.0, for_local=True) as client:
                 resp = client.post(
                     query_url,
-                    data=urlencode({"query": query}),
+                    data={"query": query},
                     headers={"Accept": "application/sparql-results+json"},
                 )
                 resp.raise_for_status()
@@ -304,7 +306,7 @@ class TripleStore:
             async with httpx_async_client(timeout=60.0, for_local=True) as client:
                 resp = await client.post(
                     query_url,
-                    data=urlencode({"query": query}),
+                    data={"query": query},
                     headers={"Accept": "application/sparql-results+json"},
                 )
                 resp.raise_for_status()

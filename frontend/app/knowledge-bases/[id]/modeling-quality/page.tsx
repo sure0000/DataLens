@@ -70,7 +70,7 @@ export default function KnowledgeBaseModelingQualityPage({
     <main className="app-page">
       <PageHeader
         breadcrumbs={[
-          { label: "语义知识库", href: "/knowledge-bases" },
+          { label: "本体清洗", href: "/knowledge-bases" },
           ...(kb ? [{ label: kb.name, href: `/knowledge-bases/${kb.id}` }] : []),
           { label: "建模与质量" },
         ]}

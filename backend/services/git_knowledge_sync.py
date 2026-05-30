@@ -48,10 +48,15 @@ def _trigger_codebase_analysis(knowledge_base_id: int) -> None:
     t.start()
 
 
-def _trigger_semantic_extraction(knowledge_base_id: int) -> None:
+def _trigger_semantic_extraction(knowledge_base_id: int, git_source_id: int) -> None:
     """在后台线程中触发语义提取（术语、指标、血缘），不阻塞同步响应。"""
     from services.semantic_extraction import trigger_semantic_pipeline_background
-    trigger_semantic_pipeline_background(knowledge_base_id, source_type="git")
+
+    trigger_semantic_pipeline_background(
+        knowledge_base_id,
+        source_type="source:git",
+        source_id=git_source_id,
+    )
 
 
 def _plain_excerpt(body: str, max_len: int = 420) -> str:
@@ -512,7 +517,7 @@ def run_git_source_sync(db: Session, source_id: int) -> dict[str, Any]:
 
                 emit("git.sync.completed", kb_id=kb_id, source_id=source_id, files=total)
             except Exception:
-                _trigger_semantic_extraction(kb_id)
+                _trigger_semantic_extraction(kb_id, source_id)
         if total == 0 and deleted == 0:
             if len(existing_entries) == 0 and len(remote_map) == 0:
                 prefix = (src.path_prefix or "").strip() or "/"

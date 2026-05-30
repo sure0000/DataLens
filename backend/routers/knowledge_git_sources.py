@@ -48,6 +48,7 @@ def _mask_row(r: KnowledgeGitSource) -> dict:
         "has_token": bool((r.token or "").strip()),
         "token": "",  # 列表接口永远不返回原始 token，仅通过 has_token 标识是否已配置
         "include_globs": r.include_globs,
+        "extraction_config": r.extraction_config if isinstance(r.extraction_config, dict) else {},
         "max_file_kb": r.max_file_kb,
         "max_files": r.max_files,
         "enable_document_indexing": bool(r.enable_document_indexing),
@@ -60,6 +61,15 @@ def _mask_row(r: KnowledgeGitSource) -> dict:
         "created_at": r.created_at.isoformat() if r.created_at else "",
         "updated_at": r.updated_at.isoformat() if r.updated_at else "",
     }
+
+
+class GitExtractionConfig(BaseModel):
+    extraction_profile: str = Field(default="mixed", description="data_warehouse | mixed")
+    prefer_extensions: list[str] | None = None
+    enable_regex_extractors: bool = True
+    enable_llm_fallback: bool = True
+    min_body_chars: int = Field(default=50, ge=10, le=5000)
+    skip_extensions: list[str] | None = None
 
 
 class GitSourceCreate(BaseModel):
@@ -76,9 +86,10 @@ class GitSourceCreate(BaseModel):
     path_prefix: str = Field(default="", max_length=500)
     token: str = Field(min_length=1, max_length=4000)
     include_globs: str = Field(
-        default="*.md,*.sql,*.py,*.ts,*.tsx,*.java,*.go,*.rs,*.yml,*.yaml,*.json",
+        default="*.sql,*.py,*.yml,*.yaml,*.hql",
         max_length=2000,
     )
+    extraction_config: GitExtractionConfig | None = None
     max_file_kb: int = Field(default=512, ge=8, le=4096)
     max_files: int = Field(default=200, ge=1, le=5000)
     enable_document_indexing: bool = False
@@ -105,6 +116,7 @@ class GitSourceUpdate(BaseModel):
     path_prefix: str | None = Field(default=None, max_length=500)
     token: str | None = Field(default=None, max_length=4000)
     include_globs: str | None = Field(default=None, max_length=2000)
+    extraction_config: GitExtractionConfig | None = None
     max_file_kb: int | None = Field(default=None, ge=8, le=4096)
     max_files: int | None = Field(default=None, ge=1, le=5000)
     enable_document_indexing: bool | None = None
@@ -176,6 +188,7 @@ def create_git_source(kb_id: int, body: GitSourceCreate, db: Session = Depends(g
         path_prefix=(body.path_prefix or "").strip(),
         token=body.token.strip(),
         include_globs=(body.include_globs or "").strip(),
+        extraction_config=body.extraction_config.model_dump() if body.extraction_config else None,
         max_file_kb=body.max_file_kb,
         max_files=body.max_files,
         enable_document_indexing=bool(body.enable_document_indexing),
@@ -246,6 +259,8 @@ def update_git_source(
         row.token = str(body.token).strip()
     if body.include_globs is not None:
         row.include_globs = (body.include_globs or "").strip()
+    if body.extraction_config is not None:
+        row.extraction_config = body.extraction_config.model_dump()
     if body.max_file_kb is not None:
         row.max_file_kb = body.max_file_kb
     if body.max_files is not None:

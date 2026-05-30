@@ -32,6 +32,13 @@ export default function SourceCardGrid({
   cleaningStats,
   ontologyCounts,
 }: SourceCardGridProps) {
+  function apiEntrySourceId(entry: Entry): number | null {
+    const raw = entry.source_meta?.api_source_id;
+    const parsed =
+      typeof raw === "number" || typeof raw === "string" ? Number(raw) : Number.NaN;
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+  }
+
   // Build flat source items list
   const items: SourceItem[] = [];
 
@@ -100,7 +107,7 @@ export default function SourceCardGrid({
   if (totalSources === 0) {
     return (
       <p className="text-sm text-app-muted">
-        暂无导入源。通过「数据接入」上传文件、接入数据库、代码库、API 或手动条目来添加。
+        暂无导入源。通过「本体清洗」上传文件、接入数据库、代码库、API 或手动条目来添加。
       </p>
     );
   }
@@ -121,6 +128,7 @@ export default function SourceCardGrid({
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {items.map((item) => {
+          const apiEntryId = item.kind === "api_entry" ? apiEntrySourceId(item.entry) : null;
           const key =
             item.kind === "git" ? `git-${item.data.id}` :
             item.kind === "api" ? `api-${item.data.id}` :
@@ -133,7 +141,11 @@ export default function SourceCardGrid({
             item.kind === "git" ? importSourceCleaningKey("git", item.data.id) :
             item.kind === "api" ? importSourceCleaningKey("api", item.data.id) :
             item.kind === "database" ? importSourceCleaningKey("database", item.data.id) :
-            item.kind === "api_entry" ? importSourceCleaningKey("api_entry", item.entry.id) :
+            item.kind === "api_entry"
+              ? importSourceCleaningKey(
+                  apiEntryId != null ? "api" : "file",
+                  apiEntryId ?? item.entry.id,
+                ) :
             item.kind === "manual" ? importSourceCleaningKey("manual", item.entry.id) :
             importSourceCleaningKey("file", item.entry.id);
 

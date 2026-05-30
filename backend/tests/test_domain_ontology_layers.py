@@ -58,7 +58,7 @@ def test_domain_layer_detail_enriches_origin():
             side_effect=lambda rows, _kb_filter: rows,
         ),
         patch(
-            "services.ontology.domain_aggregation._fetch_grounded_sources",
+            "services.ontology.domain_aggregation.fetch_grounded_sources",
             return_value={"http://ex/term/1": {"source_label": "指标手册.pdf"}},
         ),
         patch(

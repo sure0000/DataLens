@@ -120,6 +120,17 @@ def create_database_import(kb_id: int, body: DatabaseImportRequest, db: Session 
     except Exception:
         pass
 
+    try:
+        from services.extraction.orchestrator import trigger_extraction_pipeline_background
+
+        trigger_extraction_pipeline_background(
+            kb_id,
+            source_type=f"source:database",
+            source_id=import_row.id,
+        )
+    except Exception:
+        pass
+
     return _to_row(import_row)
 
 

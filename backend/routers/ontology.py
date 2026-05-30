@@ -139,6 +139,19 @@ def import_kb_ontology(kb_id: int, body: TtlImportRequest, db: Session = Depends
         from services.ontology_store import delete_graph
         delete_graph(kb_graph_iri(kb_id))
     insert_graph(kb_graph_iri(kb_id), body.ttl)
+    try:
+        from services.ingestion.connectors import register_evidence_from_import
+
+        register_evidence_from_import(
+            db,
+            kb_id,
+            title="TTL 导入",
+            route_key="ontology/import",
+            source_ref={"ttl_import": True},
+            processing_state="ready_for_extraction",
+        )
+    except Exception:
+        pass
     return {"ok": True, "shacl": report}
 
 
@@ -409,7 +422,7 @@ def get_modeling_layer(
         raise HTTPException(status_code=404, detail="知识库不存在")
     from services.ontology.modeling_layers import get_modeling_layer as _layer
 
-    result = _layer(kb_id, layer_key, limit=limit, offset=offset)
+    result = _layer(db, kb_id, layer_key, limit=limit, offset=offset)
     if not result.get("ok"):
         raise HTTPException(status_code=404, detail=result.get("error", "未知清洗层"))
     return result

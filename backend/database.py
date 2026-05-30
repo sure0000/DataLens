@@ -85,6 +85,7 @@ def _ensure_safety_columns(conn) -> None:
         ("knowledge_git_sources", "category", "TEXT"),
         ("knowledge_git_sources", "tags", "JSON"),
         ("knowledge_git_sources", "enable_document_indexing", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("knowledge_git_sources", "extraction_config", "JSONB"),
         ("document_chunks", "semantic_meta", "JSONB"),
         ("documents", "index_attempts", "INT NOT NULL DEFAULT 0"),
         ("pipeline_runs", "source_id", "INT"),

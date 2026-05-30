@@ -276,8 +276,9 @@ class KnowledgeGitSource(Base):
     include_globs: Mapped[str] = mapped_column(
         Text,
         nullable=False,
-        default="*.md,*.sql,*.py,*.ts,*.tsx,*.java,*.go,*.rs,*.yml,*.yaml,*.json",
+        default="*.sql,*.py,*.yml,*.yaml,*.hql",
     )
+    extraction_config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     max_file_kb: Mapped[int] = mapped_column(Integer, default=512)
     max_files: Mapped[int] = mapped_column(Integer, default=200)
     enable_document_indexing: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -443,7 +444,7 @@ class KnowledgeMcpSource(Base):
 
 
 class EvidencePackage(Base):
-    """导入层证据包 — 登记企业数据接入单元（与连接器实现解耦）。"""
+    """导入层证据包 — 登记企业本体清洗单元（与连接器实现解耦）。"""
 
     __tablename__ = "evidence_packages"
 

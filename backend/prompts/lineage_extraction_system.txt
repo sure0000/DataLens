@@ -19,5 +19,7 @@
 
 规则：
 1. 从 SQL 的 FROM/JOIN、dbt 的 ref()/source()、ORM 的 relationship 等模式识别表依赖
-2. 如果文件不包含表间依赖关系，返回 {"edges": []}
-3. 表名只保留名称部分，去掉 schema 前缀
+2. 也识别 Python 数据工程模式：pd.read_sql / df.to_sql、PySpark spark.sql() / createOrReplaceTempView 链、Airflow PostgresOperator(sql=...)
+3. INSERT INTO ... SELECT、CREATE TABLE ... AS SELECT 视为 source → target 血缘
+4. 如果文件不包含表间依赖关系，返回 {"edges": []}
+5. 表名只保留名称部分，去掉 schema 前缀

@@ -8,6 +8,9 @@ from services.ontology_store import graph_stats, is_fuseki_enabled, load_tbox, w
 
 _logger = logging.getLogger(__name__)
 
+# 启动阶段不应长时间阻塞 uvicorn（Fuseki 未运行时会令 /health 长时间 502）
+_STARTUP_FUSEKI_WAIT_SECONDS = 3
+
 
 def init_ontology() -> dict:
     settings = get_settings()
@@ -16,15 +19,20 @@ def init_ontology() -> dict:
 
     fuseki_ok = False
     if is_fuseki_enabled():
-        fuseki_ok = wait_for_fuseki()
+        fuseki_ok = wait_for_fuseki(max_seconds=_STARTUP_FUSEKI_WAIT_SECONDS)
         if not fuseki_ok and not settings.fuseki_fallback_memory:
+            _logger.warning(
+                "Fuseki not reachable at %s (waited %ss). "
+                "Backend will start; RDF writes require ./scripts/fuseki.sh start "
+                "or FUSEKI_FALLBACK_MEMORY=true for local dev.",
+                settings.fuseki_url,
+                _STARTUP_FUSEKI_WAIT_SECONDS,
+            )
             return {
-                "ok": False,
-                "error": (
-                    f"Fuseki not reachable at {settings.fuseki_url}. "
-                    "Unset FUSEKI_URL and set ONTOLOGY_LOCAL_STORE_ENABLED=true for offline Trig file store, "
-                    "or run ./scripts/fuseki.sh start"
-                ),
+                "ok": True,
+                "skipped": True,
+                "reason": "fuseki_unreachable",
+                "fuseki_live": False,
             }
 
     try:

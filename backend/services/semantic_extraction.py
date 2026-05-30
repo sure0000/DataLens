@@ -316,11 +316,14 @@ async def extract_lineage_from_kb(db: Session, kb_id: int) -> int:
     client, model_name = client_info
 
     # 获取 Git 来源的已索引文档条目
+    from sqlalchemy import cast
+    from sqlalchemy.dialects.postgresql import JSONB
+
     entries_query = (
         select(KnowledgeEntry)
         .where(
             KnowledgeEntry.knowledge_base_id == kb_id,
-            KnowledgeEntry.source_meta["kind"].astext == "git_file",
+            cast(KnowledgeEntry.source_meta, JSONB)["kind"].astext == "git_file",
         )
         .limit(80)
     )

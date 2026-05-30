@@ -1,26 +1,18 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { api, apiForm, ApiError, formatApiError } from "../../lib/api";
 import GitSourceForm, { defaultGitFormData, type GitSourceFormData } from "./GitSourceForm";
 import type { ApiSource } from "./types";
 import {
-  ASSETS_BY_CONNECTOR,
-  ASSET_KIND_OPTIONS,
+  assetKindLabelsForConnector,
   CONNECTOR_LABELS,
-  type AssetKind,
+  defaultAssetKindsForConnector,
   type ConnectorKind,
 } from "./ingestionTypes";
-import { registerEvidencePackage } from "../../lib/registerEvidencePackage";
 
-type WizardStep = "connector" | "asset" | "configure";
-const BACKEND_DEFAULT_ASSET_BY_CONNECTOR: Partial<Record<ConnectorKind, AssetKind>> = {
-  file: "semantic_doc",
-  api: "semantic_doc",
-  git: "processing_code",
-  database: "physical_schema",
-};
+type WizardStep = "connector" | "configure";
 
 interface ImportPickerModalProps {
   open: boolean;
@@ -33,7 +25,6 @@ interface ImportPickerModalProps {
 
 const WIZARD_STEPS: { id: WizardStep; label: string }[] = [
   { id: "connector", label: "连接器" },
-  { id: "asset", label: "资产类型" },
   { id: "configure", label: "配置" },
 ];
 
@@ -46,7 +37,6 @@ export default function ImportPickerModal({
   notifyUser,
 }: ImportPickerModalProps) {
   const [wizardStep, setWizardStep] = useState<WizardStep>("connector");
-  const [selectedAssetKinds, setSelectedAssetKinds] = useState<Set<AssetKind>>(new Set());
   const [connector, setConnector] = useState<ConnectorKind | null>(null);
 
   const [fileKey, setFileKey] = useState(0);
@@ -72,7 +62,6 @@ export default function ImportPickerModal({
   useEffect(() => {
     if (open) {
       setWizardStep("connector");
-      setSelectedAssetKinds(new Set());
       setConnector(null);
       setGitData(defaultGitFormData());
       setDbDatasources([]);
@@ -87,18 +76,8 @@ export default function ImportPickerModal({
 
   const stepIndex = WIZARD_STEPS.findIndex((s) => s.id === wizardStep);
 
-  const availableAssets = useMemo(
-    () =>
-      (connector ? ASSETS_BY_CONNECTOR[connector] : [])
-        .map((kind) => ASSET_KIND_OPTIONS.find((a) => a.kind === kind))
-        .filter((item): item is (typeof ASSET_KIND_OPTIONS)[number] => Boolean(item)),
-    [connector],
-  );
-
   function goBack() {
     if (wizardStep === "configure") {
-      setWizardStep("asset");
-    } else if (wizardStep === "asset") {
       setWizardStep("connector");
     } else {
       onClose();
@@ -107,72 +86,16 @@ export default function ImportPickerModal({
 
   function selectConnector(c: ConnectorKind) {
     setConnector(c);
-    setSelectedAssetKinds((prev) => {
-      const allowed = new Set(ASSETS_BY_CONNECTOR[c]);
-      const next = new Set<AssetKind>();
-      prev.forEach((kind) => {
-        if (allowed.has(kind)) next.add(kind);
-      });
-      return next;
-    });
-    setWizardStep("asset");
-  }
-
-  function toggleAsset(kind: AssetKind) {
-    setSelectedAssetKinds((prev) => {
-      const next = new Set(prev);
-      if (next.has(kind)) next.delete(kind);
-      else next.add(kind);
-      return next;
-    });
-  }
-
-  function proceedToConfigure() {
-    if (!connector || selectedAssetKinds.size === 0) {
-      notifyUser("请至少选择一个资产类型", "error");
-      return;
+    if (c === "database") {
+      void loadDatasourcesForDbImport();
     }
-    if (connector === "database") loadDatasourcesForDbImport();
-    if (connector === "git" && selectedAssetKinds.has("relation_lineage")) {
+    if (c === "git" && defaultAssetKindsForConnector(c).includes("relation_lineage")) {
       setGitData((prev) => ({
         ...prev,
         includeGlobs: "*.sql,*.py,*.yml,*.yaml",
       }));
     }
     setWizardStep("configure");
-  }
-
-  async function registerCurrentPackages(
-    title: string,
-    extra?: { linked_entry_ids?: number[]; source_ref?: Record<string, unknown> },
-  ) {
-    if (!connector || selectedAssetKinds.size === 0) return;
-    const backendDefaultAsset = BACKEND_DEFAULT_ASSET_BY_CONNECTOR[connector];
-    const assetKindsToRegister = Array.from(selectedAssetKinds).filter(
-      (assetKind) => assetKind !== backendDefaultAsset,
-    );
-    if (assetKindsToRegister.length === 0) return;
-
-    for (const assetKind of assetKindsToRegister) {
-      try {
-        const res = await registerEvidencePackage(kbId, {
-          asset_kind: assetKind,
-          connector,
-          title,
-          source_ref: extra?.source_ref,
-          linked_entry_ids: extra?.linked_entry_ids,
-          processing_state: "registered",
-        });
-        const pkgId = res.package?.db_id as number | undefined;
-        if (pkgId) {
-          await api(`/api/knowledge-bases/${kbId}/ingestion/packages/${pkgId}/normalize`, {
-            method: "POST",
-          });
-        }
-      } catch {
-        /* 登记失败不阻断主流程 */
-      }
-    }
   }
 
   async function handleFiles(files: FileList | File[], isTtl = false) {
@@ -187,7 +110,6 @@ export default function ImportPickerModal({
           method: "POST",
           body: JSON.stringify({ ttl: text, kb_id: kbId, replace: false }),
         });
-        await registerCurrentPackages(arr[0].name, { source_ref: { ttl_import: true } });
         notifyUser("TTL 本体已导入", "success");
         onClose();
         onSuccess();
@@ -214,10 +136,6 @@ export default function ImportPickerModal({
       }
     }
     if (successCount > 0) {
-      await registerCurrentPackages(
-        successCount === 1 ? arr[0].name : `${arr[0].name} 等 ${successCount} 个文件`,
-        { source_ref: { file_count: successCount } },
-      );
       notifyUser(`成功导入 ${successCount} 个文件，流水线处理中…`, "success");
       setFileKey((k) => k + 1);
       onClose();
@@ -251,12 +169,15 @@ export default function ImportPickerModal({
           max_file_kb: gitData.maxFileKb,
           max_files: gitData.maxFiles,
           enable_document_indexing: gitData.enableDocumentIndexing,
+          extraction_config: {
+            extraction_profile: gitData.extractionProfile,
+            enable_regex_extractors: true,
+            enable_llm_fallback: true,
+            min_body_chars: 50,
+          },
           cron_expression: gitData.cron.trim() || null,
           enabled: gitData.enabled,
         }),
-      });
-      await registerCurrentPackages(gitData.name.trim(), {
-        source_ref: { owner: gitData.owner, repo: gitData.repo },
       });
       notifyUser("代码源已添加，可点击「立即同步」拉取文件");
       onClose();
@@ -310,10 +231,6 @@ export default function ImportPickerModal({
           database_names: Array.from(dbSelectedNames),
         }),
       });
-      await registerCurrentPackages(
-        `数据源 #${dbSelectedDsId}（${dbSelectedNames.size} 库）`,
-        { source_ref: { datasource_id: dbSelectedDsId, databases: Array.from(dbSelectedNames) } },
-      );
       notifyUser("数据库 Schema 已登记为证据包");
       onClose();
       onSuccess();
@@ -339,9 +256,6 @@ export default function ImportPickerModal({
           body: JSON.stringify({ object_id: objectId.trim() }),
         },
       );
-      await registerCurrentPackages(`API 导入 ${objectId.trim().slice(0, 32)}`, {
-        source_ref: { api_source_id: sourceId, object_id: objectId.trim() },
-      });
       notifyUser(`已导入 ${res.entries_created ?? 0} 个条目`, "success", { persist: true });
       onSuccess();
       onClose();
@@ -364,7 +278,6 @@ export default function ImportPickerModal({
         method: "POST",
         body: JSON.stringify({ title: manualTitle.trim(), body: manualBody.trim() }),
       });
-      await registerCurrentPackages(manualTitle.trim());
       notifyUser("手动条目已登记");
       onClose();
       onSuccess();
@@ -386,7 +299,6 @@ export default function ImportPickerModal({
         method: "POST",
         body: JSON.stringify({ ttl: ttlContent.trim(), kb_id: kbId, replace: false }),
       });
-      await registerCurrentPackages("TTL 粘贴导入", { source_ref: { ttl_paste: true } });
       notifyUser("TTL 本体已导入");
       onClose();
       onSuccess();
@@ -398,10 +310,6 @@ export default function ImportPickerModal({
   }
 
   if (!open) return null;
-
-  const selectedAssetLabels = ASSET_KIND_OPTIONS.filter((a) => selectedAssetKinds.has(a.kind)).map(
-    (a) => a.title,
-  );
 
   return (
     <div className="app-modal-backdrop" role="presentation" onClick={onClose}>
@@ -422,9 +330,9 @@ export default function ImportPickerModal({
                 ← 返回
               </button>
             )}
-            <h2 className="app-section-title">数据接入</h2>
+            <h2 className="app-section-title">本体清洗</h2>
             <p className="text-xs text-app-muted mt-0.5">
-              先选择连接器，再勾选要从该连接器清洗出的资产类型
+              选择连接器并配置；导入完成后由系统自动登记证据包，语义清洗在导入源卡片上触发
             </p>
           </div>
           <button className="app-control-button" onClick={onClose}>
@@ -466,67 +374,19 @@ export default function ImportPickerModal({
                   onClick={() => selectConnector(c)}
                 >
                   <span className="font-semibold text-sm text-app-primary">{CONNECTOR_LABELS[c]}</span>
+                  <span className="mt-1 block text-xs text-app-muted">
+                    {assetKindLabelsForConnector(c).join("、")}
+                  </span>
                 </button>
               ))}
             </div>
           </div>
         )}
 
-        {/* Step 2: Asset kind */}
-        {wizardStep === "asset" && connector && (
-          <div>
-            <p className="text-sm text-app-secondary mb-1">
-              已选连接器：<span className="font-medium text-app-primary">{CONNECTOR_LABELS[connector]}</span>
-            </p>
-            <p className="text-sm text-app-muted mb-4">
-              选择要从该连接器导入数据中清洗出的资产类型（可多选，至少一项）：
-            </p>
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-              {availableAssets.map((item) => {
-                const checked = selectedAssetKinds.has(item.kind);
-                return (
-                  <button
-                    key={item.kind}
-                    type="button"
-                    className={`app-card app-card-interactive flex flex-col items-start gap-2 p-4 text-left ${
-                      checked ? "ring-2 ring-indigo-400" : ""
-                    }`}
-                    onClick={() => toggleAsset(item.kind)}
-                  >
-                    <span className="text-2xl">{item.icon}</span>
-                    <span className="font-semibold text-sm text-app-primary">
-                      {item.title} {checked ? "✓" : ""}
-                    </span>
-                    <span className="text-xs text-app-muted leading-relaxed">{item.desc}</span>
-                  </button>
-                );
-              })}
-            </div>
-            {connector === "manual" && selectedAssetKinds.has("governance") && (
-              <p className="mt-3 text-xs text-app-muted">
-                业务域与组织绑定请在「业务域」页面配置；此处可添加治理说明条目。
-              </p>
-            )}
-            <div className="mt-4 flex items-center justify-between gap-3">
-              <p className="text-xs text-app-muted">已选 {selectedAssetKinds.size} 项资产类型</p>
-              <button
-                type="button"
-                className="app-button"
-                disabled={selectedAssetKinds.size === 0}
-                onClick={proceedToConfigure}
-              >
-                下一步：配置
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* Step 3: Configure */}
+        {/* Step 2: Configure */}
         {wizardStep === "configure" && connector && (
           <div className="space-y-4">
-            <p className="text-sm text-app-muted">
-              {CONNECTOR_LABELS[connector]} · {selectedAssetLabels.join("、")}
-            </p>
+            <p className="text-sm text-app-muted">{CONNECTOR_LABELS[connector]}</p>
 
             {connector === "file" && (
               <>
@@ -582,7 +442,7 @@ export default function ImportPickerModal({
 
             {connector === "git" && (
               <div className="space-y-4">
-                {selectedAssetKinds.has("relation_lineage") && (
+                {defaultAssetKindsForConnector("git").includes("relation_lineage") && (
                   <p className="text-xs text-amber-700 bg-amber-500/10 rounded-lg px-3 py-2">
                     建议 include 模式包含 *.sql；同步后在源卡片触发「语义清洗」以抽取血缘与 JOIN。
                   </p>
@@ -689,6 +549,11 @@ export default function ImportPickerModal({
 
             {connector === "manual" && (
               <div className="space-y-3">
+                {defaultAssetKindsForConnector("manual").includes("governance") && (
+                  <p className="text-xs text-app-muted">
+                    业务域与组织绑定请在「业务域」页面配置；此处可添加治理说明条目。
+                  </p>
+                )}
                 <input
                   className="app-input w-full"
                   placeholder="条目标题"

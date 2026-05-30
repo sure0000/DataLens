@@ -1,4 +1,4 @@
-import type { DocRow } from "./types";
+import type { DocRow, Entry } from "./types";
 import { MAX_AUTO_INDEX_ATTEMPTS } from "./types";
 import type { SourceItem } from "./SourceCard";
 import {
@@ -17,6 +17,17 @@ const IN_PROGRESS_STATUSES = new Set([
 
 export function isDocumentIndexingInProgress(doc?: DocRow): boolean {
   return !!doc?.status && IN_PROGRESS_STATUSES.has(doc.status);
+}
+
+/**
+ * 是否仍有文档索引任务在执行。
+ * 仅依据文档 status 的中间态判断；「有条目无文档」等静态缺口不触发轮询。
+ */
+export function kbHasActiveDocumentIndexing(
+  documents: DocRow[],
+  _entries?: Entry[],
+): boolean {
+  return documents.some((d) => isDocumentIndexingInProgress(d));
 }
 
 export function canRetryDocumentIndex(doc?: DocRow): boolean {

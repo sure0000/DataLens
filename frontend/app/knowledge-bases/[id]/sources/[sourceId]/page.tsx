@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ConfirmDialog from "../../../../../components/ConfirmDialog";
 import PageHeader from "../../../../../components/PageHeader";
 import Toast from "../../../../../components/Toast";
@@ -10,7 +10,6 @@ import { api, ApiError, formatApiError } from "../../../../../lib/api";
 import {
   docMatchesApiSource,
   entryMatchesApiSource,
-  shouldShowApiSourceInKb,
 } from "../../../../../components/knowledge-bases/apiSourceMatching";
 
 import type {
@@ -29,6 +28,18 @@ import {
   canManualDocumentIndex,
   canRetryDocumentIndex,
 } from "../../../../../components/knowledge-bases/documentIndexPolicy";
+import {
+  documentWorkerActiveFingerprint,
+  entriesDocumentsSnapshotFingerprint,
+} from "../../../../../components/knowledge-bases/kbTaskActivity";
+import {
+  useBackgroundTaskPolling,
+  useTaskActivityFlag,
+} from "../../../../../hooks/useBackgroundTaskPolling";
+import {
+  fetchKbEntriesAndDocuments,
+  fetchKbSourcesSnapshot,
+} from "../../../../../lib/knowledgeBaseSources";
 import CodeEditorView from "../../../../../components/CodeEditorView";
 import GitSourceFileTree from "../../../../../components/knowledge-bases/GitSourceFileTree";
 import { docStatusChip, gitSyncStatusChip } from "../../../../../components/knowledge-bases/utils";
@@ -51,7 +62,7 @@ export default function SourceDetailPage({
   const [gitSources, setGitSources] = useState<GitSource[]>([]);
   const [apiSources, setApiSources] = useState<ApiSource[]>([]);
   const [documents, setDocuments] = useState<DocRow[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   // ── Database import detail ──
   const [dbImport, setDbImport] = useState<DatabaseImport | null>(null);
@@ -82,7 +93,7 @@ export default function SourceDetailPage({
   // ── Git 文件树选中 ──
   const [selectedGitPath, setSelectedGitPath] = useState<string | null>(null);
   const [selectedGitEntry, setSelectedGitEntry] = useState<Entry | null>(null);
-  const pollTimerRef = useRef<number | null>(null);
+  const entriesDocsFpRef = useRef("");
 
   // ── Toast ──
   const [message, setMessageText] = useState("");
@@ -106,70 +117,77 @@ export default function SourceDetailPage({
   // Data fetching
   // ═══════════════════════════════════════════════════
 
-  async function loadDocuments() {
-    try {
-      const res = await api<{ documents: DocRow[] }>(`/api/knowledge-bases/${kbId}/documents`);
-      setDocuments(res.documents ?? []);
-    } catch { setDocuments([]); }
-  }
-
-  async function loadDatabaseDetail() {
+  const loadDatabaseDetail = useCallback(async () => {
     setDbDetailLoading(true);
     try {
       const res = await api<{ import: DatabaseImport; tables: DatabaseTableNode[] }>(
-        `/api/knowledge-bases/${kbId}/database-imports/${sourceId}`
+        `/api/knowledge-bases/${kbId}/database-imports/${sourceId}`,
       );
       setDbImport(res.import);
       setDbTables(res.tables ?? []);
     } catch {
       setDbImport(null);
       setDbTables([]);
-    } finally { setDbDetailLoading(false); }
-  }
+    } finally {
+      setDbDetailLoading(false);
+    }
+  }, [kbId, sourceId]);
 
-  async function loadAll() {
+  const applySourcesSnapshot = useCallback(
+    (snap: Awaited<ReturnType<typeof fetchKbSourcesSnapshot>>) => {
+      setKb(snap.kb);
+      setGitSources(snap.gitSources);
+      setApiSources(snap.apiSources);
+      const fp = entriesDocumentsSnapshotFingerprint(snap.entries, snap.documents);
+      entriesDocsFpRef.current = fp;
+      setEntries(snap.entries);
+      setDocuments(snap.documents);
+    },
+    [],
+  );
+
+  const refreshSources = useCallback(async () => {
     if (!Number.isFinite(kbId)) return;
-    setLoading(true);
     try {
-      const [res, gitRes, kbApiRes, globalApiRes, docsRes] = await Promise.all([
-        api<{ knowledge_base: KB; entries: Entry[] }>(`/api/knowledge-bases/${kbId}`),
-        api<{ git_sources: GitSource[] }>(`/api/knowledge-bases/${kbId}/git-sources`).catch(() => ({ git_sources: [] })),
-        api<{ api_sources: ApiSource[] }>(`/api/knowledge-bases/${kbId}/api-sources`).catch(() => ({ api_sources: [] })),
-        api<{ api_sources: ApiSource[] }>(`/api/api-sources`).catch(() => ({ api_sources: [] })),
-        api<{ documents: DocRow[] }>(`/api/knowledge-bases/${kbId}/documents`).catch(() => ({ documents: [] })),
-      ]);
-      setKb(res.knowledge_base);
-      setEntries(res.entries);
-      setGitSources(gitRes.git_sources ?? []);
-      const docs = docsRes.documents ?? [];
-      setDocuments(docs);
-      const mergedApi = [...(kbApiRes.api_sources ?? [])];
-      const seen = new Set(mergedApi.map((s) => s.id));
-      for (const s of globalApiRes.api_sources ?? []) {
-        if (seen.has(s.id)) continue;
-        if (!shouldShowApiSourceInKb(s, res.entries ?? [], docs)) continue;
-        mergedApi.push(s);
-      }
-      setApiSources(mergedApi);
+      const snap = await fetchKbSourcesSnapshot(kbId);
+      applySourcesSnapshot(snap);
       if (sourceType === "database") {
-        loadDatabaseDetail();
+        await loadDatabaseDetail();
       }
     } catch {
-      setKb(null); setEntries([]); setGitSources([]);
-    } finally {
-      setLoading(false);
+      setKb(null);
+      setEntries([]);
+      setGitSources([]);
     }
-  }
+  }, [kbId, sourceType, applySourcesSnapshot, loadDatabaseDetail]);
 
-  useEffect(() => { loadAll(); }, [kbId]);
+  const refreshIndexingSnapshot = useCallback(async () => {
+    if (!Number.isFinite(kbId)) return;
+    try {
+      const { entries: nextEntries, documents: nextDocs } = await fetchKbEntriesAndDocuments(kbId);
+      const fp = entriesDocumentsSnapshotFingerprint(nextEntries, nextDocs);
+      if (fp === entriesDocsFpRef.current) return;
+      entriesDocsFpRef.current = fp;
+      setEntries(nextEntries);
+      setDocuments(nextDocs);
+    } catch {
+      /* 轮询失败保留上一帧 */
+    }
+  }, [kbId]);
+
+  const loadInitial = useCallback(async () => {
+    if (!Number.isFinite(kbId)) return;
+    setInitialLoading(true);
+    try {
+      await refreshSources();
+    } finally {
+      setInitialLoading(false);
+    }
+  }, [kbId, refreshSources]);
 
   useEffect(() => {
-    return () => {
-      if (pollTimerRef.current != null) {
-        window.clearInterval(pollTimerRef.current);
-      }
-    };
-  }, []);
+    void loadInitial();
+  }, [loadInitial]);
 
   // Close settings menu on outside click
   useEffect(() => {
@@ -202,7 +220,11 @@ export default function SourceDetailPage({
           await api(`/api/knowledge-bases/${kbId}/database-imports/${sourceId}`, { method: "DELETE" });
         } else if (sourceType === "api") {
           if (apiSource) {
-            await api(`/api/api-sources/${sourceId}`, { method: "DELETE" });
+            const apiDeleteUrl =
+              apiSource.knowledge_base_id != null
+                ? `/api/knowledge-bases/${kbId}/api-sources/${sourceId}`
+                : `/api/api-sources/${sourceId}`;
+            await api(apiDeleteUrl, { method: "DELETE" });
           } else {
             await api(`/api/knowledge-bases/${kbId}/entries/${sourceId}`, { method: "DELETE" });
           }
@@ -289,7 +311,7 @@ export default function SourceDetailPage({
     try {
       await api(`/api/knowledge-bases/${kbId}/documents/${docId}/retry`, { method: "POST" });
       notifyUser("已重新提交索引", "success");
-      await loadDocuments();
+      await refreshIndexingSnapshot();
     } catch (e: unknown) {
       notifyUser(e instanceof Error ? e.message : "重试失败", "error");
     }
@@ -299,7 +321,7 @@ export default function SourceDetailPage({
     try {
       await api(`/api/knowledge-bases/${kbId}/documents/${docId}/manual-index`, { method: "POST" });
       notifyUser("已提交手动索引", "success");
-      await loadDocuments();
+      await refreshIndexingSnapshot();
     } catch (e: unknown) {
       notifyUser(e instanceof Error ? e.message : "手动索引失败", "error");
     }
@@ -316,7 +338,7 @@ export default function SourceDetailPage({
         { method: "POST" },
       );
       notifyUser(res.message || `同步完成，处理 ${res.files ?? 0} 个文件`, "success");
-      await loadAll();
+      await refreshSources();
     } catch (e: unknown) {
       notifyUser(
         e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "同步失败",
@@ -341,15 +363,7 @@ export default function SourceDetailPage({
       const msg = res.message
         || `已排队 ${res.queued ?? 0} 个条目重新索引${(res.skipped ?? 0) > 0 ? `（跳过 ${res.skipped}）` : ""}`;
       notifyUser(msg, "success");
-      await loadDocuments();
-      if (pollTimerRef.current != null) window.clearInterval(pollTimerRef.current);
-      pollTimerRef.current = window.setInterval(() => { void loadDocuments(); }, 3000);
-      window.setTimeout(() => {
-        if (pollTimerRef.current != null) {
-          window.clearInterval(pollTimerRef.current);
-          pollTimerRef.current = null;
-        }
-      }, 30000);
+      await refreshIndexingSnapshot();
     } catch (e: unknown) {
       notifyUser(
         e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "重新索引失败",
@@ -376,7 +390,7 @@ export default function SourceDetailPage({
         },
       );
       notifyUser(`重新导入已启动，新增 ${res.entries_created ?? 0} 个条目`, "success");
-      await loadAll();
+      await refreshSources();
     } catch (e: unknown) {
       notifyUser(
         e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "重新导入失败",
@@ -400,17 +414,7 @@ export default function SourceDetailPage({
       const msg = res.message
         || `已排队 ${res.queued ?? 0} 个条目重新索引${(res.skipped ?? 0) > 0 ? `（跳过 ${res.skipped}）` : ""}`;
       notifyUser(msg, "success");
-      await loadDocuments();
-      if (pollTimerRef.current != null) window.clearInterval(pollTimerRef.current);
-      pollTimerRef.current = window.setInterval(() => {
-        void loadDocuments();
-      }, 3000);
-      window.setTimeout(() => {
-        if (pollTimerRef.current != null) {
-          window.clearInterval(pollTimerRef.current);
-          pollTimerRef.current = null;
-        }
-      }, 30000);
+      await refreshIndexingSnapshot();
     } catch (e: unknown) {
       notifyUser(
         e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "重新索引失败",
@@ -425,6 +429,23 @@ export default function SourceDetailPage({
   const gitSelectedDoc = selectedGitEntry
     ? sourceDocs.find((d) => d.knowledge_entry_id === selectedGitEntry.id) ?? null
     : null;
+
+  const sourceDocsWorkerFp = useMemo(
+    () => documentWorkerActiveFingerprint(sourceDocs),
+    [sourceDocs],
+  );
+  const sourceTasksActive = useTaskActivityFlag("", sourceDocsWorkerFp);
+  const gitSelectedDocRef = useRef(gitSelectedDoc);
+  gitSelectedDocRef.current = gitSelectedDoc;
+
+  useBackgroundTaskPolling({
+    tasksActive: sourceTasksActive,
+    onTick: refreshIndexingSnapshot,
+    onTasksCompleted: () => {
+      const doc = gitSelectedDocRef.current;
+      if (doc) void loadAllChunks([doc]);
+    },
+  });
 
   // 默认选中第一个 Git 文件
   useEffect(() => {
@@ -508,7 +529,7 @@ export default function SourceDetailPage({
     return <main className="app-page text-app-secondary">无效的参数</main>;
   }
 
-  if (!loading && !kb) {
+  if (!initialLoading && !kb) {
     return (
       <main className="app-page">
         <p className="text-app-secondary">知识库不存在或已删除。</p>
@@ -525,7 +546,7 @@ export default function SourceDetailPage({
     <main className="app-page">
       <PageHeader
         breadcrumbs={[
-          { label: "语义知识库", href: "/knowledge-bases" },
+          { label: "本体清洗", href: "/knowledge-bases" },
           { label: kb?.name || "…", href: `/knowledge-bases/${kbId}` },
           { label: sourceTitle },
         ]}
@@ -648,9 +669,9 @@ export default function SourceDetailPage({
 
       <Toast message={message} tone={messageTone} duration={toastDurationMs} onClose={dismissToast} />
 
-      {loading && <p className="app-text-muted mt-4 text-sm">加载中…</p>}
+      {initialLoading && <p className="app-text-muted mt-4 text-sm">加载中…</p>}
 
-      {!loading && kb && (
+      {kb && (
         <>
           {/* ── Source config info ── */}
           {sourceType === "api" && apiSource && (

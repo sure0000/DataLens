@@ -113,11 +113,51 @@ export function getSourceIndexContext(source: SourceItem): {
 }
 
 export function canSemanticCleanSourceItem(source: SourceItem): boolean {
-  void source;
-  return true;
+  if (source.kind === "git") {
+    return (source.entryCount ?? 0) > 0;
+  }
+  if (source.kind === "database") {
+    return true;
+  }
+  const ctx = getSourceIndexContext(source);
+  if (source.kind === "api") {
+    const summary = ctx.summary;
+    if (!summary || summary.totalEntries === 0) return false;
+    return summary.indexedCount > 0;
+  }
+  const doc = ctx.primaryDoc;
+  if (!doc) return false;
+  return doc.status === "indexed";
 }
 
 export function semanticCleanDisabledReasonForSource(source: SourceItem): string | null {
-  void source;
-  return null;
+  if (source.kind === "git") {
+    if ((source.entryCount ?? 0) === 0) {
+      return "暂无已同步文件，请先在源详情页执行「同步仓库」";
+    }
+    return null;
+  }
+  if (source.kind === "database") {
+    return null;
+  }
+  const ctx = getSourceIndexContext(source);
+  if (source.kind === "api") {
+    return aggregateSemanticCleanDisabledReason(ctx.summary ?? {
+      totalEntries: 0,
+      docCount: 0,
+      indexedCount: 0,
+      failedCount: 0,
+      inProgressCount: 0,
+      pendingIndexCount: 0,
+    });
+  }
+  const doc = ctx.primaryDoc;
+  if (!doc) {
+    return "该源尚无文档索引记录，请等待导入流水线完成或使用「重新索引」";
+  }
+  if (doc.status === "indexed") return null;
+  if (doc.status === "failed") {
+    return doc.error_message || "文档索引失败，请先在详情页重试或重新索引";
+  }
+  return `文档尚未完成索引（当前：${doc.status}），请稍候或先完成索引`;
 }

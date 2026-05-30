@@ -1,0 +1,9 @@
+version: 2
+
+models:
+  - name: fct_orders
+    description: "Fact table for orders"
+    depends_on:
+      ref:
+        - stg_orders
+        - stg_customers

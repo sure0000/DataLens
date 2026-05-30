@@ -1,13 +1,15 @@
 "use client";
 
-import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../../lib/api";
 import type { ModelingStatus } from "../ontology/ModelingPipelineStatus";
 import type { PipelineStepIconStatus } from "../icons";
 import type { EvidencePackage } from "./ingestionTypes";
 import { CONNECTOR_LABELS } from "./ingestionTypes";
-import type { SourceCleaningStat } from "./types";
+import type { DocRow, SourceCleaningStat } from "./types";
 import { evidencePackageCleaningKey } from "./sourceCleaningKey";
+import { indexingStepIconForPackage } from "./packageIndexStatus";
 
 function connectorDisplayLabel(pkg: EvidencePackage): string {
   const fromApi = (pkg.connector_label || "").trim();
@@ -110,20 +112,6 @@ function formatRegisteredAt(iso: string | null | undefined): string {
   return Number.isNaN(d.getTime()) ? "—" : d.toLocaleString();
 }
 
-function modelingProgressForPackage(
-  pkg: EvidencePackage,
-  modeling: ModelingStatus | null,
-): number | null {
-  if (!modeling?.active_run || modeling.pipeline_phase !== "extracting") return null;
-  const pkgKey = evidencePackageCleaningKey(pkg);
-  if (!pkgKey) return null;
-  const { source_type: runType, source_id: runId } = modeling.active_run;
-  if (runId == null || !runType) return null;
-  const runKey = `${runType}:${runId}`;
-  if (runKey !== pkgKey) return null;
-  return modeling.extraction.progress_percent;
-}
-
 function extractionStepForPackage(
   pkg: EvidencePackage,
   modeling: ModelingStatus | null,
@@ -146,6 +134,7 @@ function extractionStepForPackage(
 
 const EXTRACTION_STEP_DEFS: { key: string; label: string }[] = [
   { key: "term_extraction", label: "术语" },
+  { key: "domain_term_extraction", label: "领域" },
   { key: "metric_caliber", label: "指标" },
   { key: "dimension_extraction", label: "维度" },
   { key: "rule_extraction", label: "规则" },
@@ -153,7 +142,43 @@ const EXTRACTION_STEP_DEFS: { key: string; label: string }[] = [
   { key: "hierarchy_building", label: "层级" },
   { key: "data_lineage", label: "血缘" },
   { key: "join_extraction", label: "JOIN" },
+  { key: "ontology_write", label: "入图" },
 ];
+
+function progressPercentFromSourceSteps(
+  steps: SourceCleaningStat["steps"],
+): number | null {
+  if (!steps) return null;
+  let done = 0;
+  for (const { key } of EXTRACTION_STEP_DEFS) {
+    const status = mapRawStepStatus(steps[key]);
+    if (status === "done" || status === "completed" || status === "skipped") {
+      done += 1;
+    }
+  }
+  return EXTRACTION_STEP_DEFS.length > 0
+    ? Math.round((done / EXTRACTION_STEP_DEFS.length) * 100)
+    : null;
+}
+
+function modelingProgressForPackage(
+  pkg: EvidencePackage,
+  sourceStat: SourceCleaningStat | undefined,
+  modeling: ModelingStatus | null,
+): number | null {
+  if (sourceStat?.status === "running") {
+    const fromSteps = progressPercentFromSourceSteps(sourceStat.steps);
+    if (fromSteps != null) return fromSteps;
+  }
+  if (!modeling?.active_run || modeling.pipeline_phase !== "extracting") return null;
+  const pkgKey = evidencePackageCleaningKey(pkg);
+  if (!pkgKey) return null;
+  const { source_type: runType, source_id: runId } = modeling.active_run;
+  if (runId == null || !runType) return null;
+  const runKey = `${runType}:${runId}`;
+  if (runKey !== pkgKey) return null;
+  return modeling.extraction.progress_percent;
+}
 
 function mapRawStepStatus(raw: unknown): string {
   if (typeof raw === "string") return raw;
@@ -189,7 +214,36 @@ const FAILURE_REASON_LABELS: Record<string, string> = {
   already_running: "已有正在运行的抽取任务",
   shacl_blocked: "入图被 SHACL 校验拦截",
   no_triples_written: "入图未写入任何三元组",
+  no_triples:
+    "抽取已完成但未产生可入图三元组。请确认仓库含表间依赖或 JOIN 类逻辑（SQL/dbt/Python/Spark 等），且单文件正文≥50 字符；可在流水线步骤中查看 _git_diagnostics",
+  no_git_entries: "该 Git 源暂无已同步文件",
+  failed: "抽取流水线失败",
+  json_query_error: "导入源筛选条件解析失败（JSON 字段查询异常）",
 };
+
+function resolvePipelineFailureMessage(
+  sourceStat: SourceCleaningStat | undefined,
+): string | undefined {
+  const raw = (sourceStat?.failure_reason || sourceStat?.message || "").trim();
+  if (!raw) return undefined;
+  const lower = raw.toLowerCase();
+  if (lower === "failed" || raw === "抽取流水线失败") {
+    return FAILURE_REASON_LABELS.failed;
+  }
+  if (["skipped", "completed", "running", "pending"].includes(lower)) {
+    return undefined;
+  }
+  if (
+    lower.includes("astext") &&
+    (lower.includes("binaryexpression") || lower.includes("comparator"))
+  ) {
+    return FAILURE_REASON_LABELS.json_query_error;
+  }
+  if (raw.includes("Fuseki") || raw.includes("fuseki")) {
+    return raw;
+  }
+  return humanizeReasonCode(raw) ?? raw;
+}
 
 function humanizeReasonCode(code: string | undefined): string | undefined {
   if (!code) return undefined;
@@ -275,25 +329,57 @@ function stepStateText(icon: PipelineStepIconStatus): string {
   return "未执行";
 }
 
-function indexingStepIcon(pkg: EvidencePackage): PipelineStepIconStatus {
-  const total = pkg.document_count ?? 0;
-  const indexed = pkg.indexed_document_count ?? 0;
-  if (total > 0 && indexed >= total) return "ok";
-  if (pkg.processing_state === "ready_for_extraction" || pkg.processing_state === "indexed") return "ok";
-  if (total > 0 && indexed > 0 && indexed < total) return "running";
-  return "pending";
-}
-
 function extractionStepIconsForPackage(
   pkg: EvidencePackage,
   sourceStat: SourceCleaningStat | undefined,
   modeling: ModelingStatus | null,
 ): { label: string; icon: PipelineStepIconStatus; reason?: string }[] {
   if (sourceStat?.status === "completed") {
-    return EXTRACTION_STEP_DEFS.map((s) => ({ label: s.label, icon: "ok", reason: undefined }));
+    const rawSteps = sourceStat.steps ?? null;
+    return EXTRACTION_STEP_DEFS.map(({ key, label }) => {
+      const rawStep = rawSteps ? rawSteps[key] : undefined;
+      const icon = rawSteps ? stepIconForStatus(mapRawStepStatus(rawStep)) : "ok";
+      const reason = buildStepFailureDetail(rawStep, undefined);
+      return { label, icon, reason: icon === "fail" ? reason : undefined };
+    });
+  }
+
+  if (sourceStat?.status === "failed") {
+    const pipelineReason = resolvePipelineFailureMessage(sourceStat);
+    const rawSteps = sourceStat.steps ?? null;
+    const mapped = EXTRACTION_STEP_DEFS.map(({ key, label }) => {
+      const rawStep = rawSteps ? rawSteps[key] : undefined;
+      const icon = rawSteps ? stepIconForStatus(mapRawStepStatus(rawStep)) : "pending";
+      const reason = buildStepFailureDetail(rawStep, pipelineReason);
+      return { label, icon, reason: icon === "fail" ? reason : undefined };
+    });
+    const writeFailed = rawSteps && mapRawStepStatus(rawSteps.ontology_write) === "failed";
+    if (pipelineReason && !mapped.some((s) => s.icon === "fail") && !writeFailed) {
+      mapped[mapped.length - 1] = {
+        ...mapped[mapped.length - 1],
+        icon: "fail",
+        reason: pipelineReason,
+      };
+    }
+    return mapped;
   }
 
   const runningPkgKey = evidencePackageCleaningKey(pkg);
+
+  if (sourceStat?.status === "running" && sourceStat.steps) {
+    const rawSteps = sourceStat.steps;
+    return EXTRACTION_STEP_DEFS.map(({ key, label }) => {
+      const rawStep = rawSteps[key];
+      const icon = stepIconForStatus(mapRawStepStatus(rawStep));
+      const fallbackReason =
+        sourceStat.status === "failed"
+          ? (sourceStat.message || sourceStat.failure_reason || "").trim() || undefined
+          : undefined;
+      const reason = buildStepFailureDetail(rawStep, fallbackReason);
+      return { label, icon, reason: icon === "fail" ? reason : undefined };
+    });
+  }
+
   const isActiveRunningSource =
     sourceStat?.status === "running" &&
     runningPkgKey &&
@@ -325,21 +411,52 @@ function extractionStepIconsForPackage(
   });
 }
 
+function gitDiagnosticsFromSteps(steps: SourceCleaningStat["steps"] | undefined): Record<string, unknown> | null {
+  if (!steps || typeof steps !== "object") return null;
+  const raw = (steps as Record<string, unknown>)["_git_diagnostics"];
+  return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : null;
+}
+
+function formatGitDiagnostics(diag: Record<string, unknown>): string {
+  const lines: string[] = [];
+  const add = (label: string, val: unknown) => {
+    if (val == null) return;
+    if (typeof val === "object") {
+      lines.push(`${label}：${JSON.stringify(val)}`);
+    } else {
+      lines.push(`${label}：${String(val)}`);
+    }
+  };
+  add("总条目", diag.total_entries);
+  add("已处理", diag.processed_entries);
+  add("正文达标", diag.eligible_body_ge_min);
+  add("扩展名分布", diag.by_ext);
+  add("规则命中", diag.regex_hits);
+  add("单表引用", diag.single_table_refs);
+  add("样例路径", diag.sample_paths);
+  return lines.join("\n");
+}
+
 function mergedStatusChip(
   pkg: EvidencePackage,
   cleaningStats: Record<string, SourceCleaningStat> | null,
   modeling: ModelingStatus | null,
+  documents: DocRow[],
 ): {
   detail?: string;
+  gitDiagnostics?: Record<string, unknown> | null;
   steps: { label: string; icon: PipelineStepIconStatus; reason?: string }[];
 } {
   const cleanKey = evidencePackageCleaningKey(pkg);
   const sourceStat = cleanKey && cleaningStats ? cleaningStats[cleanKey] : undefined;
   const extractionSteps = extractionStepIconsForPackage(pkg, sourceStat, modeling);
-  const steps = [{ label: "索引", icon: indexingStepIcon(pkg), reason: undefined }, ...extractionSteps];
+  const steps = [
+    { label: "索引", icon: indexingStepIconForPackage(pkg, documents), reason: undefined },
+    ...extractionSteps,
+  ];
 
   if (sourceStat?.status === "running") {
-    const pct = modelingProgressForPackage(pkg, modeling);
+    const pct = modelingProgressForPackage(pkg, sourceStat, modeling);
     const activeStep = extractionStepForPackage(pkg, modeling);
     return {
       detail: activeStep
@@ -355,6 +472,8 @@ function mergedStatusChip(
   }
   if (sourceStat?.status === "failed") {
     return {
+      detail: resolvePipelineFailureMessage(sourceStat),
+      gitDiagnostics: gitDiagnosticsFromSteps(sourceStat.steps),
       steps,
     };
   }
@@ -371,21 +490,64 @@ function mergedStatusChip(
   return { steps };
 }
 
+const FAIL_LOG_TOOLTIP_EST_HEIGHT = 260;
+const FAIL_LOG_VIEWPORT_PAD = 12;
+const FAIL_LOG_GAP = 8;
+
+type FailLogTooltipState = {
+  label: string;
+  reason: string;
+  x: number;
+  y: number;
+  placement: "above" | "below";
+  maxHeight: number;
+};
+
+function computeFailLogTooltipPosition(rect: DOMRect): Omit<FailLogTooltipState, "label" | "reason"> {
+  const maxWidth = Math.min(460, window.innerWidth * 0.8);
+  const half = maxWidth / 2;
+  const pad = FAIL_LOG_VIEWPORT_PAD;
+  const centerX = rect.left + rect.width / 2;
+  const clampedX = Math.min(
+    Math.max(centerX, pad + half),
+    Math.max(pad + half, window.innerWidth - pad - half),
+  );
+  const spaceBelow = window.innerHeight - rect.bottom - FAIL_LOG_GAP - pad;
+  const spaceAbove = rect.top - FAIL_LOG_GAP - pad;
+  const placeAbove =
+    spaceBelow < FAIL_LOG_TOOLTIP_EST_HEIGHT && spaceAbove >= spaceBelow;
+
+  if (placeAbove) {
+    return {
+      x: clampedX,
+      y: rect.top - FAIL_LOG_GAP,
+      placement: "above",
+      maxHeight: Math.max(96, Math.min(280, spaceAbove)),
+    };
+  }
+  return {
+    x: clampedX,
+    y: rect.bottom + FAIL_LOG_GAP,
+    placement: "below",
+    maxHeight: Math.max(96, Math.min(280, spaceBelow)),
+  };
+}
+
 const EvidencePackageRow = memo(function EvidencePackageRow({
   pkg,
   statusDetail,
+  gitDiagnostics,
   statusSteps,
 }: {
   pkg: EvidencePackage;
   statusDetail?: string;
+  gitDiagnostics?: Record<string, unknown> | null;
   statusSteps: { label: string; icon: PipelineStepIconStatus; reason?: string }[];
 }) {
-  const [stepTooltip, setStepTooltip] = useState<{
-    label: string;
-    reason: string;
-    x: number;
-    y: number;
-  } | null>(null);
+  const [showGitDiag, setShowGitDiag] = useState(false);
+  const [stepTooltip, setStepTooltip] = useState<FailLogTooltipState | null>(null);
+  const [pinnedLog, setPinnedLog] = useState<{ label: string; reason: string } | null>(null);
+  const pinnedLogRef = useRef<HTMLDivElement | null>(null);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const clearCloseTimer = useCallback(() => {
@@ -406,21 +568,28 @@ const EvidencePackageRow = memo(function EvidencePackageRow({
     (event: React.MouseEvent<HTMLElement>, label: string, reason: string) => {
       clearCloseTimer();
       const rect = event.currentTarget.getBoundingClientRect();
-      const maxWidth = Math.min(460, window.innerWidth * 0.8);
-      const pad = 12;
-      const half = maxWidth / 2;
-      const centerX = rect.left + rect.width / 2;
-      const clampedX = Math.min(
-        Math.max(centerX, pad + half),
-        Math.max(pad + half, window.innerWidth - pad - half),
-      );
-      const top = rect.bottom + 8;
-      setStepTooltip({ label, reason, x: clampedX, y: top });
+      setStepTooltip({ label, reason, ...computeFailLogTooltipPosition(rect) });
     },
     [clearCloseTimer],
   );
 
+  const togglePinnedLog = useCallback((label: string, reason: string) => {
+    clearCloseTimer();
+    setStepTooltip(null);
+    setPinnedLog((prev) => (prev?.label === label ? null : { label, reason }));
+  }, [clearCloseTimer]);
+
   useEffect(() => () => clearCloseTimer(), [clearCloseTimer]);
+
+  useEffect(() => {
+    if (!pinnedLog) return;
+    const el = pinnedLogRef.current;
+    if (!el) return;
+    const t = window.setTimeout(() => {
+      el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }, 0);
+    return () => window.clearTimeout(t);
+  }, [pinnedLog]);
 
   return (
     <tr className="hover:bg-app-hover">
@@ -431,27 +600,39 @@ const EvidencePackageRow = memo(function EvidencePackageRow({
       <td className="px-3 py-2 max-w-[180px]">
         <ConnectorCell pkg={pkg} />
       </td>
-      <td className="px-3 py-2 max-w-[180px]">
-        <span className="truncate text-app-primary">{pkg.asset_label}</span>
-      </td>
       <td className="px-3 py-2">
         {statusSteps.length > 0 && (
           <div className="flex flex-wrap items-start gap-2">
             {statusSteps.map((s) => (
               <span
                 key={s.label}
-                className="inline-flex flex-col items-center gap-0.5"
+                className={`inline-flex flex-col items-center gap-0.5 ${
+                  s.icon === "fail" && s.reason ? "cursor-pointer" : ""
+                }`}
                 aria-label={
                   s.icon === "fail" && s.reason
                     ? `${s.label}：失败，${s.reason}`
                     : `${s.label}：${stepStateText(s.icon)}`
                 }
-                onMouseEnter={
+                title={
                   s.icon === "fail" && s.reason
+                    ? `${s.reason}\n（点击查看完整日志）`
+                    : undefined
+                }
+                onMouseEnter={
+                  s.icon === "fail" && s.reason && !pinnedLog
                     ? (e) => openFailTooltip(e, s.label, s.reason as string)
                     : undefined
                 }
-                onMouseLeave={s.icon === "fail" && s.reason ? closeTooltipSoon : undefined}
+                onMouseLeave={s.icon === "fail" && s.reason && !pinnedLog ? closeTooltipSoon : undefined}
+                onClick={
+                  s.icon === "fail" && s.reason
+                    ? (e) => {
+                        e.stopPropagation();
+                        togglePinnedLog(s.label, s.reason as string);
+                      }
+                    : undefined
+                }
               >
                 <span className={`inline-block h-2.5 w-2.5 rounded-full ${stepDotClass(s.icon)}`} />
                 <span className="text-[10px] leading-none text-app-muted">{s.label}</span>
@@ -464,23 +645,76 @@ const EvidencePackageRow = memo(function EvidencePackageRow({
             ))}
           </div>
         )}
-        {stepTooltip && (
+        {pinnedLog && (
           <div
-            className="fixed z-[9999] w-[min(460px,80vw)] rounded-md border border-red-200 bg-white p-2 text-[11px] leading-relaxed text-red-700 shadow-lg select-text"
-            style={{ left: stepTooltip.x, top: stepTooltip.y, transform: "translateX(-50%)" }}
-            onMouseEnter={clearCloseTimer}
-            onMouseLeave={closeTooltipSoon}
+            ref={pinnedLogRef}
+            className="mt-2 w-full min-w-[12rem] max-w-[min(520px,100%)] rounded-md border border-red-200 bg-red-50 p-2 text-[11px] leading-relaxed text-red-800 shadow-sm"
           >
-            <p className="mb-1 font-medium text-red-800">{stepTooltip.label} 失败日志</p>
-            <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px]">
-              {stepTooltip.reason}
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <p className="font-medium text-red-900">{pinnedLog.label} 失败日志</p>
+              <button
+                type="button"
+                className="shrink-0 text-[10px] text-red-600 hover:text-red-800 underline"
+                onClick={() => setPinnedLog(null)}
+              >
+                收起
+              </button>
+            </div>
+            <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] text-red-700 select-text">
+              {pinnedLog.reason}
             </pre>
           </div>
         )}
+        {stepTooltip &&
+          !pinnedLog &&
+          typeof document !== "undefined" &&
+          createPortal(
+            <div
+              role="tooltip"
+              className="fixed z-[9999] w-[min(460px,80vw)] rounded-md border border-red-200 bg-white p-2 text-[11px] leading-relaxed text-red-700 shadow-lg select-text pointer-events-auto"
+              style={{
+                left: stepTooltip.x,
+                top: stepTooltip.y,
+                maxHeight: stepTooltip.maxHeight,
+                transform:
+                  stepTooltip.placement === "above"
+                    ? "translate(-50%, -100%)"
+                    : "translateX(-50%)",
+              }}
+              onMouseEnter={clearCloseTimer}
+              onMouseLeave={closeTooltipSoon}
+            >
+              <p className="mb-1 font-medium text-red-800">{stepTooltip.label} 失败日志</p>
+              <pre
+                className="overflow-auto whitespace-pre-wrap break-words font-mono text-[11px]"
+                style={{ maxHeight: Math.max(64, stepTooltip.maxHeight - 36) }}
+              >
+                {stepTooltip.reason}
+              </pre>
+              <p className="mt-1 text-[10px] text-red-500/80">点击圆点可在行内固定查看</p>
+            </div>,
+            document.body,
+          )}
         {statusDetail && (
           <p className="mt-1 max-w-xs text-[11px] leading-snug text-app-muted line-clamp-2" title={statusDetail}>
             {statusDetail}
           </p>
+        )}
+        {gitDiagnostics && (
+          <div className="mt-1 max-w-xs">
+            <button
+              type="button"
+              className="text-[10px] text-app-muted underline hover:text-app-primary"
+              onClick={() => setShowGitDiag((v) => !v)}
+            >
+              {showGitDiag ? "收起 Git 诊断" : "查看 _git_diagnostics"}
+            </button>
+            {showGitDiag && (
+              <pre className="mt-1 max-h-32 overflow-auto rounded border border-app-border bg-[var(--app-surface)] p-1.5 text-[10px] leading-snug text-app-secondary whitespace-pre-wrap">
+                {formatGitDiagnostics(gitDiagnostics)}
+              </pre>
+            )}
+          </div>
         )}
       </td>
       <td className="px-3 py-2 whitespace-nowrap text-xs text-app-secondary">
@@ -493,9 +727,17 @@ const EvidencePackageRow = memo(function EvidencePackageRow({
 export default function EvidencePackageList({
   kbId,
   cleaningStats: cleaningStatsProp = null,
+  documents = [],
+  modeling: modelingProp = undefined,
+  refreshSeq = 0,
 }: {
   kbId: number;
   cleaningStats?: Record<string, SourceCleaningStat> | null;
+  documents?: DocRow[];
+  /** 父组件轮询提供的建模状态；传入后不再单独拉取 */
+  modeling?: ModelingStatus | null;
+  /** 父组件递增以触发证据包列表静默刷新（不整表 loading） */
+  refreshSeq?: number;
 }) {
   function packageOrderId(pkg: EvidencePackage): number {
     if (typeof pkg.db_id === "number") return pkg.db_id;
@@ -506,13 +748,14 @@ export default function EvidencePackageList({
 
   const [packages, setPackages] = useState<EvidencePackage[]>([]);
   const [localCleaningStats, setLocalCleaningStats] = useState<Record<string, SourceCleaningStat> | null>(null);
-  const [modeling, setModeling] = useState<ModelingStatus | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [localModeling, setLocalModeling] = useState<ModelingStatus | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
   const cleaningStats = cleaningStatsProp ?? localCleaningStats;
+  const modeling = modelingProp !== undefined ? modelingProp : localModeling;
   const statsFromParent = cleaningStatsProp != null;
-
-  const loadPackages = useCallback(async () => {
-    setLoading(true);
+  const modelingFromParent = modelingProp !== undefined;
+  const loadPackages = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setInitialLoading(true);
     try {
       const pkgRes = await api<{ packages: EvidencePackage[] }>(
         `/api/knowledge-bases/${kbId}/ingestion/packages`,
@@ -524,7 +767,7 @@ export default function EvidencePackageList({
     } catch {
       setPackages([]);
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setInitialLoading(false);
     }
   }, [kbId]);
 
@@ -532,7 +775,7 @@ export default function EvidencePackageList({
     const modelingRes = await api<ModelingStatus>(
       `/api/ontology/knowledge-bases/${kbId}/modeling/status`,
     ).catch(() => null);
-    setModeling(modelingRes);
+    setLocalModeling(modelingRes);
   }, [kbId]);
 
   const refreshLocalCleaningStats = useCallback(async () => {
@@ -545,62 +788,58 @@ export default function EvidencePackageList({
   useEffect(() => {
     void (async () => {
       await loadPackages();
-      await refreshModeling();
+      if (!modelingFromParent) {
+        await refreshModeling();
+      }
       if (!statsFromParent) {
         await refreshLocalCleaningStats();
       }
     })();
-    // 仅 kb 切换时重拉列表；清洗状态由 props / 轮询单独更新
+    // 仅 kb 切换时重拉列表；清洗/建模状态由 props / 父级轮询单独更新
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kbId]);
 
-  const anySourceRunning =
-    cleaningStats != null && Object.values(cleaningStats).some((s) => s.status === "running");
-
   useEffect(() => {
-    if (!anySourceRunning) return;
-    const t = setInterval(() => {
+    if (refreshSeq <= 0) return;
+    void loadPackages({ silent: true });
+    if (!modelingFromParent) {
       void refreshModeling();
-      if (!statsFromParent) {
-        void refreshLocalCleaningStats();
-      }
-    }, 5000);
-    return () => clearInterval(t);
-  }, [kbId, anySourceRunning, statsFromParent, refreshModeling, refreshLocalCleaningStats]);
+    }
+  }, [refreshSeq, loadPackages, refreshModeling, modelingFromParent]);
 
-  if (loading) {
+  if (initialLoading) {
     return <p className="text-sm text-app-muted">加载证据包…</p>;
   }
 
   if (packages.length === 0) {
     return (
       <p className="text-sm text-app-muted">
-        暂无证据包。点击「数据接入」导入企业数据，系统将自动登记为证据包。
+        暂无证据包。点击「本体清洗」导入企业数据，系统将自动登记为证据包。
       </p>
     );
   }
 
   return (
-    <div className="overflow-x-auto overflow-y-visible rounded-xl border border-app-border bg-[var(--app-card-bg)]">
+    <div className="overflow-x-auto rounded-xl border border-app-border bg-[var(--app-card-bg)]">
       <table className="app-table text-sm">
         <thead>
           <tr>
             <th className="px-3 py-2 text-left">证据包</th>
             <th className="px-3 py-2 text-left">标题</th>
             <th className="px-3 py-2 text-left">连接器</th>
-            <th className="px-3 py-2 text-left">资产类型</th>
             <th className="px-3 py-2 text-left">状态</th>
             <th className="px-3 py-2 text-left whitespace-nowrap">登记时间</th>
           </tr>
         </thead>
         <tbody>
           {packages.map((pkg) => {
-            const status = mergedStatusChip(pkg, cleaningStats, modeling);
+            const status = mergedStatusChip(pkg, cleaningStats, modeling, documents);
             return (
               <EvidencePackageRow
                 key={pkg.id}
                 pkg={pkg}
                 statusDetail={status.detail}
+                gitDiagnostics={status.gitDiagnostics}
                 statusSteps={status.steps}
               />
             );
