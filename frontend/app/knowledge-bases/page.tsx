@@ -3,7 +3,9 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import PageHeader from "../../components/PageHeader";
+import EmptyState from "../../components/EmptyState";
 import Toast from "../../components/Toast";
+import { useBusinessDomain } from "../../hooks/useBusinessDomain";
 import { useToast } from "../../hooks/useToast";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { api, ApiError, formatApiError } from "../../lib/api";
@@ -32,7 +34,9 @@ export default function KnowledgeBasesPage() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  const activeDomainId = useBusinessDomain();
+
+  useEffect(() => { load(); }, [activeDomainId]);
 
   useEscapeKey(() => setIsCreateOpen(false), isCreateOpen);
 
@@ -56,7 +60,7 @@ export default function KnowledgeBasesPage() {
   }
 
   return (
-    <main className="app-page">
+    <div className="app-page">
       <PageHeader
         title="语义知识库"
         subtitle="文档经过清洗、分块、向量化后进入语义索引，支持混合检索（向量 + 关键词），供 Copilot 和 RAG 引用。"
@@ -79,8 +83,14 @@ export default function KnowledgeBasesPage() {
       {loading && <p className="app-text-muted mt-6 text-sm">加载中…</p>}
 
       {!loading && list.length === 0 && (
-        <div className="mt-10 text-center">
-          <p className="app-text-muted text-sm">还没有知识库，点击「新建知识库」开始。</p>
+        <div className="mt-10">
+          <EmptyState
+            title="还没有知识库"
+            description="点击「新建知识库」开始收录文档，经清洗与向量化后供 Copilot 与 RAG 引用。"
+            illustration="default"
+            actionLabel="新建知识库"
+            onAction={() => setIsCreateOpen(true)}
+          />
         </div>
       )}
 
@@ -109,9 +119,9 @@ export default function KnowledgeBasesPage() {
 
       {/* 新建知识库 Modal */}
       {isCreateOpen && (
-        <div className="app-modal-backdrop" role="presentation" onClick={() => setIsCreateOpen(false)}>
+        <div className="app-modal-backdrop app-modal-backdrop--front" role="presentation" onClick={() => setIsCreateOpen(false)}>
           <div
-            className="app-card w-full max-w-lg max-h-[85vh] overflow-auto p-5"
+            className="app-modal-surface w-full max-w-lg max-h-[85vh] overflow-auto p-5"
             role="dialog"
             aria-modal="true"
             aria-labelledby="create-kb-title"
@@ -140,6 +150,6 @@ export default function KnowledgeBasesPage() {
           </div>
         </div>
       )}
-    </main>
+    </div>
   );
 }

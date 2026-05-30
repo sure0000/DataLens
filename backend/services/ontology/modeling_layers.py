@@ -262,6 +262,7 @@ def _fetch_layer_items(kb_id: int, layer_key: str) -> list[dict[str, str]]:
             SELECT
                 ?s
                 (SAMPLE(?label0) AS ?label)
+                (SAMPLE(?definition0) AS ?definition)
                 (SAMPLE(?entityType0) AS ?entityType)
                 (GROUP_CONCAT(DISTINCT STR(?neighbor); separator=" | ") AS ?neighbors)
             WHERE {{
@@ -269,6 +270,7 @@ def _fetch_layer_items(kb_id: int, layer_key: str) -> list[dict[str, str]]:
                     ?s rdf:type ?entityType0 .
                     FILTER(?entityType0 IN ({entity_types}))
                     OPTIONAL {{ ?s skos:prefLabel ?label0 }}
+                    OPTIONAL {{ ?s skos:definition ?definition0 }}
                     OPTIONAL {{
                         {{
                             ?s skos:broader|skos:narrower ?neighbor .

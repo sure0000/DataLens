@@ -88,11 +88,11 @@ export default function SemanticTab({
         </div>
       ) : !hasSemanticConnections ? (
         <div className="mt-6 flex flex-col items-center gap-4 rounded-2xl border border-dashed border-app-border bg-app-hover/30 px-4 py-10">
-          <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-amber-100/80 text-amber-700">
+          <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-app-border bg-app-surfaceMuted text-app-secondary">
             <IconColumns className="h-7 w-7" />
           </div>
           <p className="text-center text-sm text-app-secondary">尚未配置可用大模型，请先新增一条接入。</p>
-          <button type="button" className="app-button rounded-xl px-4 py-2 text-sm font-medium" onClick={onAdd}>
+          <button type="button" className="app-button" onClick={onAdd}>
             新增接入
           </button>
         </div>
@@ -123,7 +123,7 @@ export default function SemanticTab({
             </label>
             <button
               type="button"
-              className="app-button shrink-0 rounded-xl px-4 py-2.5 text-sm font-medium"
+              className="app-button shrink-0"
               disabled={saving}
               onClick={onSave}
             >

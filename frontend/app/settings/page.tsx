@@ -9,6 +9,7 @@ import Toast from "../../components/Toast";
 import AppearanceTab from "../../components/settings/AppearanceTab";
 import ApiSourcesTab from "../../components/settings/ApiSourcesTab";
 import BusinessDomainsTab from "../../components/settings/BusinessDomainsTab";
+import ChatModelTab from "../../components/settings/ChatModelTab";
 import ModelsTab from "../../components/settings/ModelsTab";
 import SemanticTab from "../../components/settings/SemanticTab";
 import { api } from "../../lib/api";
@@ -180,10 +181,21 @@ function IconEyeOff({ className = "h-4 w-4" }: { className?: string }) {
   );
 }
 
+function IconSpark({ className = "h-4 w-4" }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.75" aria-hidden>
+      <path d="M12 2l1.5 5.5L19 9l-5.5 1.5L12 16l-1.5-5.5L5 9l5.5-1.5z" strokeLinejoin="round" />
+      <circle cx="6" cy="19" r="2.2" />
+    </svg>
+  );
+}
+
 export default function SettingsPage() {
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [cfg, setCfg] = useState<LlmConfig | null>(null);
-  const [activeTab, setActiveTab] = useState<"models" | "semantic" | "api_sources" | "appearance" | "business_domains">("models");
+  const [activeTab, setActiveTab] = useState<
+    "models" | "semantic" | "chat_model" | "api_sources" | "appearance" | "business_domains"
+  >("models");
   const [connections, setConnections] = useState<LlmConnPublic[]>([]);
   const [semantic, setSemantic] = useState("auto");
   const [savedSemantic, setSavedSemantic] = useState("");
@@ -253,8 +265,8 @@ export default function SettingsPage() {
     const mapped =
       raw === "business_domains" || raw === "domains"
         ? "business_domains"
-        : raw === "models" || raw === "semantic" || raw === "api_sources" || raw === "appearance"
-          ? raw
+        : raw === "models" || raw === "semantic" || raw === "chat_model" || raw === "copilot" || raw === "api_sources" || raw === "appearance"
+          ? raw === "copilot" ? "chat_model" : raw
           : null;
     if (mapped) setActiveTab(mapped);
   }, []);
@@ -415,7 +427,7 @@ export default function SettingsPage() {
       <div className="app-breadcrumb-strip">
         <Breadcrumbs items={[{ label: "首页", href: "/" }, { label: "设置" }]} />
       </div>
-      <PageHeader title="设置" subtitle="集中管理模型接入、语义策略、业务域与界面偏好。" />
+      <PageHeader title="设置" subtitle="集中管理模型接入、语义策略、Copilot 对话模型、业务域与界面偏好。" />
 
       <div className="mx-auto mt-8 max-w-6xl pb-20">
         <div className="grid gap-6 lg:grid-cols-[13rem_minmax(0,1fr)]">
@@ -450,6 +462,19 @@ export default function SettingsPage() {
             >
               <IconColumns className="h-4 w-4 shrink-0" />
               语义策略
+            </button>
+            <button
+              role="tab"
+              aria-selected={activeTab === "chat_model"}
+              onClick={() => setActiveTab("chat_model")}
+              className={`flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-medium text-left transition-colors ${
+                activeTab === "chat_model"
+                  ? "bg-app-activeBg text-app-primary border border-app-primary/20"
+                  : "text-app-secondary hover:bg-app-hover hover:text-app-ink"
+              }`}
+            >
+              <IconSpark className="h-4 w-4 shrink-0" />
+              Copilot 对话模型
             </button>
             <button
               role="tab"
@@ -511,6 +536,15 @@ export default function SettingsPage() {
                 onAdd={() => openAddModal()}
                 onView={(id) => { void openViewConnection(id); }}
                 onDelete={setDeleteConnId}
+              />
+            )}
+
+            {activeTab === "chat_model" && (
+              <ChatModelTab
+                loading={loading}
+                catalog={catalog}
+                hasConnections={hasSemanticConnections}
+                onAdd={() => openAddModal()}
               />
             )}
 
@@ -607,7 +641,7 @@ export default function SettingsPage() {
                   />
                 </label>
                 {addVendor.presetBaseUrl ? (
-                  <button type="button" className="app-button-secondary rounded-lg px-3 py-1.5 text-xs" onClick={applyVendorPresetInModal}>
+                  <button type="button" className="app-button-secondary app-button-xs" onClick={applyVendorPresetInModal}>
                     填入推荐 Base URL
                   </button>
                 ) : null}

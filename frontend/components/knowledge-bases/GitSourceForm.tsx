@@ -134,9 +134,9 @@ export default function GitSourceForm({ data, onChange, disabled, isEditing }: G
 
       <label className="app-form-label sm:col-span-2">
         <span>访问令牌 {isEditing ? "（留空则不修改）" : ""}</span>
-        <div className="relative">
+        <div className="app-field">
           <input
-            className="app-input font-mono text-sm pr-9"
+            className="app-input app-input--adorn-end font-mono text-sm"
             type={showToken ? "text" : "password"}
             autoComplete="off"
             placeholder={data.provider === "gitlab" ? "glpat-… 或 Private Token" : "ghp_… 或 fine-grained PAT"}
@@ -146,7 +146,7 @@ export default function GitSourceForm({ data, onChange, disabled, isEditing }: G
           />
           <button
             type="button"
-            className="absolute right-2 top-1/2 -translate-y-1/2 text-app-muted hover:text-app-primary"
+            className="app-field__action text-app-muted hover:text-app-primary"
             tabIndex={-1}
             onClick={() => setShowToken((v) => !v)}
             aria-label={showToken ? "隐藏令牌" : "显示令牌"}

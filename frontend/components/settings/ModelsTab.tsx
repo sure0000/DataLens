@@ -40,10 +40,10 @@ export default function ModelsTab({ loading, connections, onAdd, onView, onDelet
           </span>
           <div>
             <h2 className="app-card-title text-base">大模型接入</h2>
-            <p className="mt-1 text-[11px] text-app-muted">新增后写入数据库，并出现在下方「可用大模型」与语义分析/Copilot 可选列表中。</p>
+            <p className="mt-1 text-[11px] text-app-muted">新增后写入数据库，并出现在「语义策略」与「Copilot 对话模型」可选列表中。</p>
           </div>
         </div>
-        <button type="button" className="app-button shrink-0 rounded-xl px-4 py-2 text-sm font-medium" onClick={onAdd}>
+        <button type="button" className="app-button shrink-0" onClick={onAdd}>
           新增接入
         </button>
       </div>
@@ -79,14 +79,14 @@ export default function ModelsTab({ loading, connections, onAdd, onView, onDelet
                   <div className="flex shrink-0 flex-wrap gap-2">
                     <button
                       type="button"
-                      className="app-button-secondary rounded-lg px-3 py-1.5 text-xs font-medium"
+                      className="app-button-secondary app-button-xs"
                       onClick={() => onView(row.id)}
                     >
                       查看
                     </button>
                     <button
                       type="button"
-                      className="rounded-lg border border-[var(--app-card-border)] bg-[var(--app-card-bg)] px-3 py-1.5 text-xs font-medium app-text-danger hover:bg-[var(--app-surface-hover)]"
+                      className="app-button-danger app-button-xs"
                       onClick={() => onDelete(row.id)}
                     >
                       删除

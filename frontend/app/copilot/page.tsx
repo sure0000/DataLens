@@ -3,7 +3,8 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api, ApiError, formatApiError } from "../../lib/api";
-import { readUserPreferences, writeUserPreferences } from "../../lib/userPreferences";
+import { readUserPreferences } from "../../lib/userPreferences";
+import { chatModelForAsk } from "../../lib/llmPreference";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import CopilotMessageThread from "../../components/copilot/CopilotMessageThread";
 import SessionList from "../../components/copilot/SessionList";
@@ -31,34 +32,7 @@ import {
 } from "../../lib/chatSessions";
 import type { AskPayload, AskResponse } from "../../lib/copilotStream";
 import { getActiveBusinessDomainId, setActiveBusinessDomainId } from "../../lib/businessDomain";
-
-type LlmCatalog = {
-  auto_id: string;
-  auto_label: string;
-  auto_resolved: string;
-  auto_resolved_label?: string;
-  models: {
-    id: string;
-    label: string;
-    provider: string;
-    kind_label: string;
-    connection_name: string;
-    model_id: string;
-    model_short_label?: string;
-    model_family?: string;
-  }[];
-  has_llm: boolean;
-};
-
-/** 对话模型下拉：仅展示接入自定义名与模型 ID（与偏好设置中的命名一致） */
-function formatPreferenceModelDisplay(m: LlmCatalog["models"][number]): string {
-  const name = (m.connection_name || "").trim();
-  const mid = (m.model_id || "").trim();
-  if (name && mid) return `${name} · ${mid}`;
-  if (name) return name;
-  if (mid) return mid;
-  return m.label;
-}
+import { useBusinessDomain } from "../../hooks/useBusinessDomain";
 
 const PENDING_PROJECT_QUESTION_KEY = "chatbi_pending_project_question_v1";
 const QUICK_QUESTIONS = [
@@ -90,13 +64,12 @@ function CopilotPageContent() {
   } | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
   const [pendingDeleteSessionId, setPendingDeleteSessionId] = useState<string | null>(null);
-  const [llmCatalog, setLlmCatalog] = useState<LlmCatalog | null>(null);
-  const [chatModelSelect, setChatModelSelect] = useState("auto");
   const projectIdFromUrl = searchParams.get("project") || "";
   const sessionIdFromUrl = searchParams.get("session") || "";
   const tableIdFromUrl = searchParams.get("table");
   const bottomAnchorRef = useRef<HTMLDivElement | null>(null);
   const chatScrollRef = useRef<HTMLElement | null>(null);
+  const activeDomainId = useBusinessDomain();
   const questionInputRef = useRef<HTMLTextAreaElement | null>(null);
 
   function loadSessionsFromStorage() {
@@ -145,7 +118,7 @@ function CopilotPageContent() {
       window.removeEventListener(updateEvent, onUpdate);
       window.removeEventListener("storage", onUpdate);
     };
-  }, [updateEvent]);
+  }, [updateEvent, activeDomainId]);
 
   /** 表详情「去 Copilot」常用 /copilot?table=…，未带 session 时会沿用上次打开的对话骨架。与侧栏「新聊天」对齐：聚焦未归类空槽并写入 session + project + table。 */
   useLayoutEffect(() => {
@@ -160,43 +133,6 @@ function CopilotPageContent() {
       `/copilot?project=__unassigned__&session=${encodeURIComponent(state.activeSessionId)}&table=${encodeURIComponent(String(tid))}`
     );
   }, [tableIdFromUrl, sessionIdFromUrl, router]);
-
-  /** 与偏好设置「可选模型」一致：仅用户新增的接入，不含环境变量内置的 DeepSeek/OpenAI 条目 */
-  const preferenceChatModels = useMemo(() => {
-    if (!llmCatalog?.has_llm) return [];
-    return llmCatalog.models.filter((m) => m.model_family === "custom" || m.id.startsWith("conn:"));
-  }, [llmCatalog]);
-
-  const chatModelChoiceIds = useMemo(() => {
-    if (!llmCatalog) return new Set<string>();
-    return new Set([llmCatalog.auto_id, ...preferenceChatModels.map((m) => m.id)]);
-  }, [llmCatalog, preferenceChatModels]);
-
-  useEffect(() => {
-    api<LlmCatalog>("/api/llm/catalog")
-      .then((c) => {
-        setLlmCatalog(c);
-        const pref = readUserPreferences().chatModel;
-        const ids = new Set([
-          c.auto_id,
-          ...c.models.filter((m) => m.model_family === "custom" || m.id.startsWith("conn:")).map((m) => m.id)
-        ]);
-        setChatModelSelect(ids.has(pref) ? pref : c.auto_id);
-      })
-      .catch(() => setLlmCatalog(null));
-  }, []);
-
-  useEffect(() => {
-    const onPrefs = () => {
-      const pref = readUserPreferences().chatModel;
-      setChatModelSelect((prev) => {
-        if (!llmCatalog) return pref;
-        return chatModelChoiceIds.has(pref) ? pref : llmCatalog.auto_id;
-      });
-    };
-    window.addEventListener("datalens-user-prefs-updated", onPrefs);
-    return () => window.removeEventListener("datalens-user-prefs-updated", onPrefs);
-  }, [llmCatalog, chatModelChoiceIds]);
 
   activeAskRef.current = activeAsk;
 
@@ -315,7 +251,7 @@ function CopilotPageContent() {
       question: content,
       table_id: Number.isFinite(tableParamNum) ? tableParamNum : null,
       business_domain_id: sessionDomainId,
-      chat_model: chatModelSelect === "auto" ? null : chatModelSelect
+      chat_model: chatModelForAsk(readUserPreferences().chatModel)
     };
     settlingSessionRef.current = sessionAfterUser.id;
     setActiveAsk({
@@ -553,9 +489,9 @@ function CopilotPageContent() {
             </section>
 
             <section className="pointer-events-none absolute inset-x-0 bottom-0 z-10 bg-gradient-to-t from-app-main via-app-main/95 to-transparent px-4 pb-4 pt-6 sm:px-6">
-              <div className="pointer-events-auto mx-auto max-w-3xl space-y-1">
+              <div className="pointer-events-auto mx-auto max-w-3xl">
                 <CopilotGenerationDockStatus />
-                <div className="flex items-end gap-2 rounded-2xl border border-app-border bg-app-card p-2 shadow-sm">
+                <div className="mt-1 flex items-end gap-2 rounded-2xl border border-app-border bg-app-card p-2 shadow-sm">
                   <textarea
                     ref={questionInputRef}
                     rows={2}
@@ -574,35 +510,12 @@ function CopilotPageContent() {
                   />
                   <button
                     type="button"
-                    className="app-button shrink-0 rounded-xl px-4 py-2 text-sm disabled:opacity-40"
+                    className="app-button shrink-0 disabled:opacity-40"
                     disabled={!!activeAsk || !question.trim()}
                     onClick={() => submit()}
                   >
                     发送
                   </button>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-app-muted">
-                  {llmCatalog?.has_llm ? (
-                    <label className="flex items-center gap-1">
-                      <span className="shrink-0">模型</span>
-                      <select
-                        className="app-input max-w-[12rem] py-1 text-xs"
-                        disabled={!!activeAsk}
-                        value={chatModelSelect}
-                        onChange={(e) => {
-                          setChatModelSelect(e.target.value);
-                          writeUserPreferences({ chatModel: e.target.value });
-                        }}
-                      >
-                        <option value={llmCatalog.auto_id}>自动</option>
-                        {preferenceChatModels.map((m) => (
-                          <option key={m.id} value={m.id}>
-                            {formatPreferenceModelDisplay(m)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  ) : null}
                 </div>
               </div>
             </section>

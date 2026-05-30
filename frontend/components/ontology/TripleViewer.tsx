@@ -76,14 +76,14 @@ export default function TripleViewer({ triples, compact = false }: TripleViewerP
           )}
           {expanded ? "收起" : "展开"} ({triples.length})
         </button>
-        <div className="relative flex-1 max-w-[240px]">
-          <Icon name="search" className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-app-muted" />
+        <div className="app-field max-w-[240px] flex-1">
+          <Icon name="search" className="app-field__adorn app-field__adorn--start h-3 w-3" />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="搜索三元组…"
-            className="w-full rounded-lg border border-app-border bg-app-fill-input py-1 pl-7 pr-2 text-xs text-app-primary placeholder:text-app-placeholder focus:outline-none focus:border-app-active-border"
+            className="app-input app-input--adorn-start w-full py-1 text-xs"
           />
         </div>
         <button

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { buildGitFileTree, getGitTreeMatchingPaths, type GitFileTreeNode } from "./knowledge-bases/gitFileTree";
 import { useEscapeKey } from "../hooks/useEscapeKey";
+import SearchField from "./SearchField";
 
 type Entry = {
   id: number;
@@ -255,30 +256,11 @@ export default function GitFileBrowser({ source, entries, onClose, onViewEntry }
 
         {/* Search */}
         <div className="px-4 py-3 border-b border-app-border shrink-0">
-          <div className="relative">
-            <svg
-              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-app-muted pointer-events-none"
-              width="14"
-              height="14"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <circle cx="11" cy="11" r="8" />
-              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-            </svg>
-            <input
-              className="app-input pl-8 text-sm"
-              placeholder="搜索文件名…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              autoFocus
-            />
-          </div>
+          <SearchField
+            placeholder="搜索文件名…"
+            value={search}
+            onChange={setSearch}
+          />
         </div>
 
         {/* Tree */}

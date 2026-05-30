@@ -2,14 +2,12 @@
 
 import { Suspense, useEffect, useState } from "react";
 import PageHeader from "../PageHeader";
+import { useBusinessDomain } from "../../hooks/useBusinessDomain";
 import DomainOntologyWorkspace from "./DomainOntologyWorkspace";
 import { api } from "../../lib/api";
-import {
-  getActiveBusinessDomainId,
-  getBusinessDomainUpdatedEventName,
-} from "../../lib/businessDomain";
 
 function DomainOntologyPageInner() {
+  const activeDomainId = useBusinessDomain();
   const [domainId, setDomainId] = useState<number | null>(null);
   const [domainName, setDomainName] = useState<string>("");
   const [loading, setLoading] = useState(true);
@@ -21,7 +19,7 @@ function DomainOntologyPageInner() {
     async function load() {
       setLoading(true);
       setNoDomain(false);
-      const resolvedId = getActiveBusinessDomainId();
+      const resolvedId = activeDomainId;
       if (!resolvedId) {
         if (!cancelled) {
           setDomainId(null);
@@ -48,38 +46,32 @@ function DomainOntologyPageInner() {
     }
 
     void load();
-
-    const onDomainUpdated = () => {
-      void load();
-    };
-    window.addEventListener(getBusinessDomainUpdatedEventName(), onDomainUpdated);
     return () => {
       cancelled = true;
-      window.removeEventListener(getBusinessDomainUpdatedEventName(), onDomainUpdated);
     };
-  }, []);
+  }, [activeDomainId]);
 
   if (loading) {
     return (
-      <main className="app-page">
+      <div className="app-page">
         <p className="text-sm text-app-muted">加载语义资产…</p>
-      </main>
+      </div>
     );
   }
 
   if (noDomain || domainId == null) {
     return (
-      <main className="app-page">
+      <div className="app-page">
         <PageHeader breadcrumbs={[{ label: "语义资产" }]} title="语义资产" />
         <div className="app-card mt-4 p-8 text-center">
           <p className="text-sm text-app-secondary">请先在侧栏选择当前业务域。</p>
         </div>
-      </main>
+      </div>
     );
   }
 
   return (
-    <main className="app-page flex min-h-0 flex-col">
+    <div className="app-page flex min-h-0 flex-col">
       <PageHeader
         breadcrumbs={[{ label: "语义资产" }]}
         title="语义资产"
@@ -88,13 +80,13 @@ function DomainOntologyPageInner() {
       <div className="mt-4 flex min-h-0 flex-1 flex-col">
         <DomainOntologyWorkspace domainId={domainId} domainName={domainName} />
       </div>
-    </main>
+    </div>
   );
 }
 
 export default function DomainOntologyPageShell() {
   return (
-    <Suspense fallback={<main className="app-page text-sm text-app-muted">加载中…</main>}>
+    <Suspense fallback={<div className="app-page text-sm text-app-muted">加载中…</div>}>
       <DomainOntologyPageInner />
     </Suspense>
   );

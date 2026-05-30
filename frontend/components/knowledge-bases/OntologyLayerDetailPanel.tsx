@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Icon } from "../AppIcons";
+import SearchField from "../SearchField";
 import { api, ApiError, formatApiError } from "../../lib/api";
 import { shortenIri } from "../../lib/shortenIri";
 import type { OntologyLayerDetail } from "./types";
@@ -31,6 +32,7 @@ const LAYER_COLUMNS: Record<string, ColumnDef[]> = {
   ],
   "entity-concept": [
     { key: "label", label: "名称" },
+    { key: "definition", label: "说明", wrap: true },
     { key: "entityType", label: "实体类型", render: (r) => shortenIri(r.entityType ?? "") },
     { key: "neighbors", label: "层级邻居", wrap: true, render: (r) => r.neighbors || "—" },
     { key: "s", label: "IRI", render: (r) => shortenIri(r.s ?? "") },
@@ -139,20 +141,13 @@ export default function OntologyLayerDetailPanel({
           </span>
         </div>
 
-        <div className="relative max-w-md">
-          <Icon
-            name="search"
-            className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-app-muted"
-          />
-          <input
-            type="search"
-            className="app-input w-full pl-8 text-sm"
-            placeholder="在当前页筛选…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            disabled={loading || total === 0}
-          />
-        </div>
+        <SearchField
+          className="max-w-md"
+          placeholder="在当前页筛选…"
+          value={search}
+          onChange={setSearch}
+          disabled={loading || total === 0}
+        />
       </div>
 
       <div className="space-y-3 px-4 py-4 sm:px-5">

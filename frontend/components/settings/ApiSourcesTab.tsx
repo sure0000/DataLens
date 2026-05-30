@@ -182,7 +182,7 @@ export default function ApiSourcesTab() {
               <p className="mt-1 text-[11px] text-app-muted">全局 API 源，可在各个知识库中复用导入。配置与导入分离，支持重复使用。</p>
             </div>
           </div>
-          <button type="button" className="app-button shrink-0 rounded-xl px-4 py-2 text-sm font-medium" onClick={openApiCreateModal}>
+          <button type="button" className="app-button shrink-0" onClick={openApiCreateModal}>
             新增 API 源
           </button>
         </div>
@@ -213,12 +213,12 @@ export default function ApiSourcesTab() {
                   </p>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
-                  <button type="button" className="app-button-secondary rounded-lg px-3 py-1.5 text-xs font-medium" onClick={() => openApiEditModal(s)}>
+                  <button type="button" className="app-button-secondary app-button-xs" onClick={() => openApiEditModal(s)}>
                     编辑
                   </button>
                   <button
                     type="button"
-                    className="rounded-lg border border-[var(--app-card-border)] bg-[var(--app-card-bg)] px-3 py-1.5 text-xs font-medium app-text-danger hover:bg-[var(--app-surface-hover)]"
+                    className="app-button-danger app-button-xs"
                     onClick={() => setApiDeleteId(s.id)}
                   >
                     删除
@@ -265,9 +265,9 @@ export default function ApiSourcesTab() {
               {apiIntegration === "notion" && (
                 <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
                   Integration Token
-                  <div className="relative">
+                  <div className="app-field">
                     <input
-                      className="app-input rounded-xl px-3 py-2 text-sm font-mono pr-9"
+                      className="app-input app-input--adorn-end rounded-xl px-3 py-2 text-sm font-mono"
                       type={apiShowKey ? "text" : "password"}
                       autoComplete="off"
                       placeholder="secret_…"
@@ -277,7 +277,7 @@ export default function ApiSourcesTab() {
                     />
                     <button
                       type="button"
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-app-muted hover:text-app-ink"
+                      className="app-field__action text-app-muted hover:text-app-ink"
                       tabIndex={-1}
                       onClick={() => void toggleApiKeyVisibility()}
                       disabled={apiKeyLoading}
@@ -299,9 +299,9 @@ export default function ApiSourcesTab() {
                 <>
                   <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
                     API Token
-                    <div className="relative">
+                    <div className="app-field">
                       <input
-                        className="app-input rounded-xl px-3 py-2 text-sm font-mono pr-9"
+                        className="app-input app-input--adorn-end rounded-xl px-3 py-2 text-sm font-mono"
                         type={apiShowKey ? "text" : "password"}
                         autoComplete="off"
                         placeholder="Confluence API Token"
@@ -311,7 +311,7 @@ export default function ApiSourcesTab() {
                       />
                       <button
                         type="button"
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-app-muted hover:text-app-ink"
+                        className="app-field__action text-app-muted hover:text-app-ink"
                         tabIndex={-1}
                         onClick={() => void toggleApiKeyVisibility()}
                         disabled={apiKeyLoading}
@@ -344,9 +344,9 @@ export default function ApiSourcesTab() {
                 <>
                   <label className="flex flex-col gap-1.5 text-xs font-medium text-app-secondary">
                     App Secret
-                    <div className="relative">
+                    <div className="app-field">
                       <input
-                        className="app-input rounded-xl px-3 py-2 text-sm font-mono pr-9"
+                        className="app-input app-input--adorn-end rounded-xl px-3 py-2 text-sm font-mono"
                         type={apiShowKey ? "text" : "password"}
                         autoComplete="off"
                         placeholder="飞书应用 Secret"
@@ -356,7 +356,7 @@ export default function ApiSourcesTab() {
                       />
                       <button
                         type="button"
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-app-muted hover:text-app-ink"
+                        className="app-field__action text-app-muted hover:text-app-ink"
                         tabIndex={-1}
                         onClick={() => void toggleApiKeyVisibility()}
                         disabled={apiKeyLoading}

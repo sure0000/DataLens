@@ -76,7 +76,6 @@ export function ontologyUrl(options?: {
   tab?: OntologyBrowseTab;
   layer?: string;
   entitySub?: "concept" | "dimension";
-  conceptView?: "list" | "tree";
 }): string {
   if (options?.domainId != null && Number.isFinite(options.domainId)) {
     return domainOntologyUrl(options.domainId, {
@@ -84,7 +83,6 @@ export function ontologyUrl(options?: {
       tab: options.tab,
       layer: options.layer,
       entitySub: options.entitySub,
-      conceptView: options.conceptView,
     });
   }
   const params = new URLSearchParams();
@@ -99,9 +97,6 @@ export function ontologyUrl(options?: {
   if (options?.entitySub && options.entitySub !== "concept") {
     params.set("entity", options.entitySub);
   }
-  if (options?.conceptView && options.conceptView !== "list") {
-    params.set("view", options.conceptView);
-  }
   const q = params.toString();
   return q ? `/ontology?${q}` : "/ontology";
 }
@@ -113,7 +108,6 @@ export function domainOntologyUrl(
     tab?: OntologyBrowseTab;
     layer?: string;
     entitySub?: "concept" | "dimension";
-    conceptView?: "list" | "tree";
   },
 ): string {
   const params = new URLSearchParams();
@@ -127,9 +121,6 @@ export function domainOntologyUrl(
   }
   if (options?.entitySub && options.entitySub !== "concept") {
     params.set("entity", options.entitySub);
-  }
-  if (options?.conceptView && options.conceptView !== "list") {
-    params.set("view", options.conceptView);
   }
   const q = params.toString();
   const base = `/business-domains/${domainId}/ontology`;

@@ -1,10 +1,12 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Icon } from "../AppIcons";
+import { Icon, type NavIcon } from "../AppIcons";
+import SearchField from "../SearchField";
 import Toast from "../Toast";
-import ConceptHierarchyPanel from "../knowledge-bases/ConceptHierarchyPanel";
+import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { useToast } from "../../hooks/useToast";
 import { api, ApiError, formatApiError } from "../../lib/api";
 import {
@@ -22,22 +24,22 @@ import {
   OntologyProvenance,
 } from "../../lib/ontologyTypes";
 import { shortenIri } from "../../lib/shortenIri";
+import { chipWarning } from "../../lib/themeClasses";
 import OntologyStatusBadge from "./OntologyStatusBadge";
 
-const LAYER_ICONS: Record<string, string> = {
-  vocabulary: "📖",
-  rule: "📐",
-  "entity-concept": "🏷️",
-  relation: "🔗",
-  attribute: "📋",
-  dimension: "📊",
+const LAYER_ICON_NAMES: Record<string, NavIcon> = {
+  vocabulary: "bookOpen",
+  rule: "functionSquare",
+  "entity-concept": "layers",
+  relation: "network",
+  attribute: "listTree",
+  dimension: "database",
 };
 
 const RULE_PAGE_SIZE = 10;
 const DEFAULT_PAGE_SIZE = 20;
 
 type EntitySubView = "concept" | "dimension";
-type ConceptViewMode = "list" | "tree";
 
 type ColumnDef = {
   key: string;
@@ -46,60 +48,42 @@ type ColumnDef = {
   wrap?: boolean;
 };
 
-const ORIGIN_COLUMNS: ColumnDef[] = [
-  {
-    key: "origin_kb",
-    label: "来源知识库",
-    render: (r) => r.origin?.knowledge_base_name || "—",
-  },
-  {
-    key: "origin_source",
-    label: "导入来源",
-    render: (r) => r.origin?.source_label || "—",
-    wrap: true,
-  },
-];
-
+/** 列表列：不含溯源字段，溯源仅在详情弹窗展示 */
 const LAYER_COLUMNS: Record<string, ColumnDef[]> = {
   vocabulary: [
     { key: "label", label: "名称" },
     { key: "definition", label: "定义", wrap: true },
     { key: "status", label: "状态" },
     { key: "s", label: "IRI", render: (r) => shortenIri(r.s ?? "") },
-    ...ORIGIN_COLUMNS,
   ],
   rule: [
     { key: "label", label: "名称" },
     { key: "ruleExpression", label: "口径/表达式", wrap: true },
     { key: "formula", label: "公式", wrap: true },
     { key: "status", label: "状态" },
-    ...ORIGIN_COLUMNS,
   ],
   "entity-concept": [
     { key: "label", label: "名称" },
+    { key: "definition", label: "说明", wrap: true },
     { key: "entityType", label: "实体类型", render: (r) => shortenIri(r.entityType ?? "") },
     { key: "neighbors", label: "层级邻居", wrap: true, render: (r) => r.neighbors || "—" },
     { key: "s", label: "IRI", render: (r) => shortenIri(r.s ?? "") },
-    ...ORIGIN_COLUMNS,
   ],
   dimension: [
     { key: "label", label: "名称" },
     { key: "definition", label: "定义", wrap: true },
     { key: "dimType", label: "维度类型" },
     { key: "status", label: "状态" },
-    ...ORIGIN_COLUMNS,
   ],
   relation: [
     { key: "s", label: "主体", render: (r) => shortenIri(r.s ?? "") },
     { key: "p", label: "谓词", render: (r) => shortenIri(r.p ?? "") },
     { key: "o", label: "客体", render: (r) => shortenIri(r.o ?? "") },
-    ...ORIGIN_COLUMNS,
   ],
   attribute: [
     { key: "s", label: "主体", render: (r) => shortenIri(r.s ?? "") },
     { key: "p", label: "属性", render: (r) => shortenIri(r.p ?? "") },
     { key: "o", label: "值" },
-    ...ORIGIN_COLUMNS,
   ],
 };
 
@@ -127,7 +111,6 @@ export default function DomainFiveLayerBrowse({ domainId }: Props) {
   const [summaryLoading, setSummaryLoading] = useState(true);
   const [selectedLayer, setSelectedLayer] = useState<SemanticAssetLayer>("entity-concept");
   const [entitySubView, setEntitySubView] = useState<EntitySubView>("concept");
-  const [conceptViewMode, setConceptViewMode] = useState<ConceptViewMode>("list");
   const [detail, setDetail] = useState<DomainOntologyLayerDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [detailError, setDetailError] = useState<string | null>(null);
@@ -135,7 +118,6 @@ export default function DomainFiveLayerBrowse({ domainId }: Props) {
   const [search, setSearch] = useState("");
   const [selectedRow, setSelectedRow] = useState<DomainLayerItem | null>(null);
   const [provenance, setProvenance] = useState<OntologyProvenance | null>(null);
-  const [hierarchyKbId, setHierarchyKbId] = useState<number | null>(null);
 
   const kbQuery = kbFilter != null ? `&kb=${kbFilter}` : "";
   const pageSize = selectedLayer === "rule" ? RULE_PAGE_SIZE : DEFAULT_PAGE_SIZE;
@@ -148,40 +130,28 @@ export default function DomainFiveLayerBrowse({ domainId }: Props) {
   }, [selectedLayer, entitySubView]);
 
   const replaceUrl = useCallback(
-    (next: {
-      layer?: SemanticAssetLayer;
-      entitySub?: EntitySubView;
-      conceptView?: ConceptViewMode;
-    }) => {
+    (next: { layer?: SemanticAssetLayer; entitySub?: EntitySubView }) => {
       router.replace(
         ontologyUrl({
           kbId: kbFilter ?? undefined,
           layer: next.layer ?? selectedLayer,
           entitySub: (next.entitySub ?? entitySubView) === "concept" ? undefined : next.entitySub ?? entitySubView,
-          conceptView:
-            (next.conceptView ?? conceptViewMode) === "list" ? undefined : next.conceptView ?? conceptViewMode,
         }),
         { scroll: false },
       );
     },
-    [router, kbFilter, selectedLayer, entitySubView, conceptViewMode],
+    [router, kbFilter, selectedLayer, entitySubView],
   );
 
   useEffect(() => {
     const layerParam = normalizeModelingLayerKey(searchParams.get("layer"));
     const entityParam = searchParams.get("entity");
-    const viewParam = searchParams.get("view");
     if (layerParam === "dimension") {
       setSelectedLayer("entity-concept");
       setEntitySubView("dimension");
     } else if (layerParam && SEMANTIC_ASSET_LAYERS.includes(layerParam as SemanticAssetLayer)) {
       setSelectedLayer(layerParam as SemanticAssetLayer);
       setEntitySubView(entityParam === "dimension" ? "dimension" : "concept");
-    }
-    if (viewParam === "tree") {
-      setConceptViewMode("tree");
-    } else {
-      setConceptViewMode("list");
     }
   }, [searchParams]);
 
@@ -203,27 +173,7 @@ export default function DomainFiveLayerBrowse({ domainId }: Props) {
     void loadSummary();
   }, [loadSummary]);
 
-  useEffect(() => {
-    if (hierarchyKbId != null) return;
-    let cancelled = false;
-    api<{ knowledge_bases?: { knowledge_base_id: number }[] }>(
-      `/api/business-domains/${domainId}/ontology/overview`,
-    )
-      .then((overview) => {
-        if (cancelled) return;
-        const first = overview.knowledge_bases?.[0]?.knowledge_base_id;
-        if (first) setHierarchyKbId(first);
-      })
-      .catch(() => {});
-    return () => {
-      cancelled = true;
-    };
-  }, [domainId, hierarchyKbId]);
-
   const loadDetail = useCallback(async () => {
-    if (selectedLayer === "entity-concept" && conceptViewMode === "tree") {
-      return;
-    }
     setDetailLoading(true);
     setDetailError(null);
     try {
@@ -237,7 +187,7 @@ export default function DomainFiveLayerBrowse({ domainId }: Props) {
     } finally {
       setDetailLoading(false);
     }
-  }, [domainId, activeDetailKey, offset, pageSize, kbQuery, selectedLayer, conceptViewMode]);
+  }, [domainId, activeDetailKey, offset, pageSize, kbQuery]);
 
   useEffect(() => {
     setOffset(0);
@@ -300,8 +250,7 @@ export default function DomainFiveLayerBrowse({ domainId }: Props) {
   const selectLayer = (layer: SemanticAssetLayer) => {
     setSelectedLayer(layer);
     setEntitySubView("concept");
-    setConceptViewMode("list");
-    replaceUrl({ layer, entitySub: "concept", conceptView: "list" });
+    replaceUrl({ layer, entitySub: "concept" });
   };
 
   const allEmpty =
@@ -339,11 +288,11 @@ export default function DomainFiveLayerBrowse({ domainId }: Props) {
                   : "border-app-border text-app-secondary hover:bg-app-hover"
               }`}
             >
-              <span aria-hidden>{LAYER_ICONS[key]}</span>
+              <Icon name={LAYER_ICON_NAMES[key] ?? "layers"} className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
               <span>{meta?.label ?? key}</span>
               <span className="rounded-full bg-app-surfaceMuted px-2 py-0.5 text-xs tabular-nums">{count}</span>
               {key === "entity-concept" && dimensionTotal > 0 ? (
-                <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-700">
+                <span className={`${chipWarning} px-1.5 py-0.5 text-[10px]`}>
                   +{dimensionTotal}维
                 </span>
               ) : null}
@@ -382,134 +331,40 @@ export default function DomainFiveLayerBrowse({ domainId }: Props) {
               维度 ({dimensionTotal})
             </button>
           ) : null}
-          {entitySubView === "concept" ? (
-            <>
-              <span className="text-app-muted">|</span>
-              <button
-                type="button"
-                className={`rounded-lg px-3 py-1.5 text-xs ${
-                  conceptViewMode === "list"
-                    ? "bg-app-activeBg font-medium text-app-primary"
-                    : "text-app-secondary hover:bg-app-hover"
-                }`}
-                onClick={() => {
-                  setConceptViewMode("list");
-                  replaceUrl({ conceptView: "list" });
-                }}
-              >
-                列表
-              </button>
-              <button
-                type="button"
-                className={`rounded-lg px-3 py-1.5 text-xs ${
-                  conceptViewMode === "tree"
-                    ? "bg-app-activeBg font-medium text-app-primary"
-                    : "text-app-secondary hover:bg-app-hover"
-                }`}
-                onClick={() => {
-                  setConceptViewMode("tree");
-                  replaceUrl({ conceptView: "tree" });
-                }}
-              >
-                树形
-              </button>
-            </>
-          ) : null}
         </div>
       ) : null}
 
-      <div className={`flex min-h-0 flex-1 gap-4 ${selectedRow ? "lg:flex-row" : ""}`}>
-        <div className="min-h-0 min-w-0 flex-1">
-          {selectedLayer === "entity-concept" && conceptViewMode === "tree" && entitySubView === "concept" ? (
-            <div className="app-card p-4">
-              <p className="mb-3 text-xs text-app-muted">概念层级为只读浏览。</p>
-              {hierarchyKbId ? (
-                <div className="space-y-3">
-                  {summary && summary.knowledge_base_count > 1 ? (
-                    <label className="text-xs text-app-muted">
-                      选择知识库：
-                      <HierarchyKbSelect domainId={domainId} value={hierarchyKbId} onChange={setHierarchyKbId} />
-                    </label>
-                  ) : null}
-                  <ConceptHierarchyPanel kbId={hierarchyKbId} />
-                </div>
-              ) : (
-                <p className="text-sm text-app-muted">暂无知识库</p>
-              )}
-            </div>
-          ) : (
-            <LayerDetailTable
-              layerLabel={activeMeta?.label ?? detail?.label ?? activeDetailKey}
-              layerDescription={activeMeta?.description ?? detail?.description}
-              loading={summaryLoading || detailLoading}
-              error={detailError}
-              total={total}
-              pageStart={pageStart}
-              pageEnd={pageEnd}
-              canPrev={canPrev}
-              canNext={canNext}
-              search={search}
-              onSearchChange={setSearch}
-              onPrev={() => setOffset((o) => Math.max(0, o - pageSize))}
-              onNext={() => setOffset((o) => o + pageSize)}
-              columns={columns}
-              items={filteredItems}
-              selectedRow={selectedRow}
-              onSelectRow={setSelectedRow}
-            />
-          )}
-        </div>
-
-        {selectedRow ? (
-          <aside className="w-full shrink-0 lg:w-80">
-            <ProvenancePanel row={selectedRow} provenance={provenance} onClose={() => setSelectedRow(null)} />
-          </aside>
-        ) : null}
+      <div className="min-h-0 min-w-0 flex-1">
+        <LayerDetailTable
+          layerLabel={activeMeta?.label ?? detail?.label ?? activeDetailKey}
+          layerDescription={activeMeta?.description ?? detail?.description}
+          loading={summaryLoading || detailLoading}
+          error={detailError}
+          total={total}
+          pageStart={pageStart}
+          pageEnd={pageEnd}
+          canPrev={canPrev}
+          canNext={canNext}
+          search={search}
+          onSearchChange={setSearch}
+          onPrev={() => setOffset((o) => Math.max(0, o - pageSize))}
+          onNext={() => setOffset((o) => o + pageSize)}
+          columns={columns}
+          items={filteredItems}
+          selectedRow={selectedRow}
+          onSelectRow={setSelectedRow}
+        />
       </div>
+
+      {selectedRow ? (
+        <ProvenanceDetailModal
+          row={selectedRow}
+          provenance={provenance}
+          columns={columns}
+          onClose={() => setSelectedRow(null)}
+        />
+      ) : null}
     </div>
-  );
-}
-
-function HierarchyKbSelect({
-  domainId,
-  value,
-  onChange,
-}: {
-  domainId: number;
-  value: number;
-  onChange: (id: number) => void;
-}) {
-  const [options, setOptions] = useState<{ id: number; name: string }[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    api<{ knowledge_bases: { knowledge_base_id: number; knowledge_base_name: string }[] }>(
-      `/api/business-domains/${domainId}/ontology/overview`,
-    )
-      .then((res) => {
-        if (cancelled) return;
-        setOptions(
-          (res.knowledge_bases || []).map((kb) => ({
-            id: kb.knowledge_base_id,
-            name: kb.knowledge_base_name,
-          })),
-        );
-      })
-      .catch(() => {
-        if (!cancelled) setOptions([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [domainId]);
-
-  return (
-    <select className="app-input ml-2 w-auto" value={value} onChange={(e) => onChange(Number(e.target.value))}>
-      {options.map((opt) => (
-        <option key={opt.id} value={opt.id}>
-          {opt.name}
-        </option>
-      ))}
-    </select>
   );
 }
 
@@ -531,7 +386,6 @@ function LayerDetailTable({
   items,
   selectedRow,
   onSelectRow,
-  pageSize,
 }: {
   layerLabel: string;
   layerDescription?: string;
@@ -564,17 +418,13 @@ function LayerDetailTable({
             {total > 0 && <span className="ml-1">· 第 {pageStart}–{pageEnd} 条</span>}
           </span>
         </div>
-        <div className="relative max-w-md">
-          <Icon name="search" className="absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-app-muted" />
-          <input
-            type="search"
-            className="app-input w-full pl-8 text-sm"
-            placeholder="在当前页筛选…"
-            value={search}
-            onChange={(e) => onSearchChange(e.target.value)}
-            disabled={loading || total === 0}
-          />
-        </div>
+        <SearchField
+          className="max-w-md"
+          placeholder="在当前页筛选…"
+          value={search}
+          onChange={onSearchChange}
+          disabled={loading || total === 0}
+        />
       </div>
 
       <div className="space-y-3 px-4 py-4 sm:px-5">
@@ -615,7 +465,7 @@ function LayerDetailTable({
                           className={`cursor-pointer border-b border-app-border last:border-0 hover:bg-app-hover ${
                             active ? "bg-app-activeBg" : ""
                           }`}
-                          onClick={() => onSelectRow(active ? null : row)}
+                          onClick={() => onSelectRow(row)}
                         >
                           {columns.map((col) => (
                             <td
@@ -645,7 +495,7 @@ function LayerDetailTable({
               <p className="text-[11px] text-app-muted">
                 {search.trim()
                   ? `当前页筛选后 ${items.length} 条（服务端分页，翻页后需重新筛选）`
-                  : "点击行查看溯源；翻页加载更多记录"}
+                  : "点击行查看详情与溯源；翻页加载更多记录"}
               </p>
               <div className="flex items-center gap-1">
                 <button
@@ -675,74 +525,148 @@ function LayerDetailTable({
   );
 }
 
-function ProvenancePanel({
+function ProvenanceDetailModal({
   row,
   provenance,
+  columns,
   onClose,
 }: {
   row: DomainLayerItem;
   provenance: OntologyProvenance | null;
+  columns: ColumnDef[];
   onClose: () => void;
 }) {
+  useEscapeKey(onClose, true);
+
   const origin = row.origin;
   const title = row.label || shortenIri(row.s ?? "记录");
+  const provenanceLoading = Boolean(row.s && origin?.knowledge_base_id && !provenance);
 
-  return (
-    <div className="app-card flex h-full max-h-[calc(100vh-12rem)] flex-col p-4 lg:sticky lg:top-4">
-      <div className="flex items-start justify-between gap-2 border-b border-app-border pb-3">
-        <div className="min-w-0">
-          <p className="text-xs text-app-muted">溯源</p>
-          <h3 className="text-base font-semibold text-app-primary break-words">{title}</h3>
-          {row.status ? (
-            <div className="mt-2">
-              <OntologyStatusBadge status={row.status} />
-            </div>
-          ) : null}
+  const modal = (
+    <div className="app-modal-backdrop app-modal-backdrop--front" role="presentation" onClick={onClose}>
+      <div
+        className="app-modal-surface flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden p-5 sm:p-6"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="provenance-modal-title"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex shrink-0 items-start justify-between gap-3 border-b border-app-border pb-4">
+          <div className="min-w-0">
+            <p className="text-xs text-app-muted">语义资产详情</p>
+            <h2 id="provenance-modal-title" className="mt-1 text-base font-semibold text-app-primary break-words">
+              {title}
+            </h2>
+            {row.status ? (
+              <div className="mt-2">
+                <OntologyStatusBadge status={row.status} />
+              </div>
+            ) : null}
+          </div>
+          <button type="button" className="app-control-button shrink-0" onClick={onClose} aria-label="关闭">
+            <Icon name="close" className="h-4 w-4" />
+          </button>
         </div>
-        <button type="button" className="app-control-button shrink-0" onClick={onClose}>
-          关闭
-        </button>
-      </div>
-      <div className="mt-4 flex-1 space-y-4 overflow-y-auto text-sm">
-        {origin ? (
-          <OriginBlock origin={origin} />
-        ) : (
-          <p className="text-xs text-app-muted">暂无来源信息</p>
-        )}
-        {row.s ? (
-          <div>
-            <p className="text-xs font-medium text-app-muted">IRI</p>
-            <p className="mt-1 break-all font-mono text-xs text-app-secondary">{row.s}</p>
-          </div>
-        ) : null}
-        {provenance?.has_provenance ? (
-          <div>
-            <p className="text-xs font-medium text-app-muted mb-2">溯源链</p>
-            {provenance.documents?.map((d) => (
-              <p key={d.id} className="text-xs text-app-secondary">
-                文档：{d.title}
+
+        <div className="mt-4 min-h-0 flex-1 space-y-5 overflow-y-auto text-sm">
+          <section>
+            <p className="text-xs font-medium text-app-muted">属性</p>
+            <dl className="mt-2 divide-y divide-app-border rounded-lg border border-app-border">
+              {columns.map((col) => {
+                const value = col.key === "status" && row.status ? null : cellValue(row, col);
+                if (col.key === "status" && row.status) {
+                  return (
+                    <div key={col.key} className="flex gap-3 px-3 py-2 text-xs">
+                      <dt className="w-24 shrink-0 text-app-muted">{col.label}</dt>
+                      <dd className="min-w-0 flex-1 text-app-primary">
+                        <OntologyStatusBadge status={row.status} />
+                      </dd>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={col.key} className="flex gap-3 px-3 py-2 text-xs">
+                    <dt className="w-24 shrink-0 text-app-muted">{col.label}</dt>
+                    <dd className="min-w-0 flex-1 break-words text-app-primary">{value}</dd>
+                  </div>
+                );
+              })}
+            </dl>
+          </section>
+
+          <section>
+            <p className="text-xs font-medium text-app-muted">来源</p>
+            {origin ? (
+              <div className="mt-2">
+                <OriginBlock origin={origin} />
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-app-muted">暂无来源信息</p>
+            )}
+          </section>
+
+          {row.s ? (
+            <section>
+              <p className="text-xs font-medium text-app-muted">IRI</p>
+              <p className="mt-2 break-all rounded-lg border border-app-border bg-app-surfaceMuted px-3 py-2 font-mono text-xs text-app-secondary">
+                {row.s}
               </p>
-            ))}
-            {provenance.evidence_packages?.map((p) => (
-              <p key={p.display_id} className="text-xs text-app-secondary">
-                证据包 {p.display_id}：{p.title}
-              </p>
-            ))}
-            {provenance.chunks?.map((c) => (
-              <p key={c.iri} className="text-xs text-app-secondary">
-                分块 {shortenIri(c.iri)}
-                {c.content_preview
-                  ? `：${c.content_preview.slice(0, 120)}${c.content_preview.length > 120 ? "…" : ""}`
-                  : ""}
-              </p>
-            ))}
-          </div>
-        ) : row.s && origin?.knowledge_base_id ? (
-          <p className="text-xs text-app-muted">加载溯源链…</p>
-        ) : null}
+            </section>
+          ) : null}
+
+          <section>
+            <p className="text-xs font-medium text-app-muted">溯源链</p>
+            {provenance?.has_provenance ? (
+              <ul className="mt-2 space-y-2">
+                {provenance.documents?.map((d) => (
+                  <li
+                    key={d.id}
+                    className="rounded-lg border border-app-border px-3 py-2 text-xs text-app-secondary"
+                  >
+                    <span className="text-app-muted">文档 · </span>
+                    {d.title}
+                  </li>
+                ))}
+                {provenance.evidence_packages?.map((p) => (
+                  <li
+                    key={p.display_id}
+                    className="rounded-lg border border-app-border px-3 py-2 text-xs text-app-secondary"
+                  >
+                    <span className="text-app-muted">证据包 {p.display_id} · </span>
+                    {p.title}
+                  </li>
+                ))}
+                {provenance.chunks?.map((c) => (
+                  <li
+                    key={c.iri}
+                    className="rounded-lg border border-app-border px-3 py-2 text-xs text-app-secondary"
+                  >
+                    <span className="font-mono text-app-muted">{shortenIri(c.iri)}</span>
+                    {c.content_preview
+                      ? `：${c.content_preview.slice(0, 160)}${c.content_preview.length > 160 ? "…" : ""}`
+                      : ""}
+                  </li>
+                ))}
+              </ul>
+            ) : provenanceLoading ? (
+              <p className="mt-2 text-xs text-app-muted">加载溯源链…</p>
+            ) : (
+              <p className="mt-2 text-xs text-app-muted">暂无溯源链记录</p>
+            )}
+          </section>
+        </div>
+
+        <div className="mt-4 shrink-0 border-t border-app-border pt-4">
+          <button type="button" className="app-button-secondary w-full sm:ml-auto sm:w-auto" onClick={onClose}>
+            关闭
+          </button>
+        </div>
       </div>
     </div>
   );
+
+  if (typeof document === "undefined") return null;
+  return createPortal(modal, document.body);
 }
 
 function OriginBlock({ origin }: { origin: OntologyEntityOrigin }) {

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, type CSSProperties } from "react";
 import { Icon } from "../../components/AppIcons";
 import { api, ApiError, formatApiError } from "../../lib/api";
+import { useBusinessDomain } from "../../hooks/useBusinessDomain";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import ConfirmDialog from "../../components/ConfirmDialog";
 import { alertError, alertInfo } from "../../lib/themeClasses";
@@ -180,9 +181,11 @@ export default function DataSourcesPage() {
     }
   }
 
+  const activeDomainId = useBusinessDomain();
+
   useEffect(() => {
     load();
-  }, []);
+  }, [activeDomainId]);
 
   useEffect(() => {
     setPage(1);
@@ -368,7 +371,7 @@ export default function DataSourcesPage() {
   const pagedDatasources = filteredDatasources.slice(start, start + pageSize);
 
   return (
-    <main className="app-page">
+    <div className="app-page">
       <PageHeader
         title="数据源管理"
         subtitle="统一维护连接配置：关系型（MySQL / MariaDB / PostgreSQL / Greenplum / SQL Server / SQLite）与分析型（ClickHouse / Doris / StarRocks / Trino / Hive）。"
@@ -615,11 +618,10 @@ export default function DataSourcesPage() {
                 </label>
                 <label className="app-form-label sm:col-span-2">
                   <span>Password</span>
-                  <div className="relative">
-                    {/* 不用 type=password：Chrome 等对脚本回填的受控密码框常表现为完全空白（无圆点无明文）。改用 text + WebKit 圆点遮罩。 */}
+                  <div className="app-field">
                     <input
                       key={editingId ? `ds-pw-edit-${editingId}` : "ds-pw-create"}
-                      className="app-input w-full pr-11 text-sm text-app-primary"
+                      className="app-input app-input--adorn-end w-full text-sm text-app-primary"
                       placeholder="输入连接密码"
                       type="text"
                       spellCheck={false}
@@ -636,7 +638,7 @@ export default function DataSourcesPage() {
                     />
                     <button
                       type="button"
-                      className="app-control-button absolute right-1.5 top-1/2 h-9 w-9 min-h-0 shrink-0 -translate-y-1/2 rounded-lg border border-transparent p-0 text-app-muted hover:text-app-secondary"
+                      className="app-control-button app-field__action h-8 w-8 min-h-0 shrink-0 rounded-lg border border-transparent p-0 text-app-muted hover:text-app-secondary"
                       aria-label={showDatasourcePassword ? "以圆点隐藏" : "显示为明文"}
                       aria-pressed={showDatasourcePassword}
                       onClick={() => setShowDatasourcePassword((v) => !v)}
@@ -690,6 +692,6 @@ export default function DataSourcesPage() {
         onCancel={() => setConfirmState(null)}
         onConfirm={handleConfirm}
       />
-    </main>
+    </div>
   );
 }

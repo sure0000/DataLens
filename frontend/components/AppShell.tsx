@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Icon, type NavIcon } from "./AppIcons";
+import BusinessDomainSelect from "./BusinessDomainSelect";
 import ConfirmDialog from "./ConfirmDialog";
 import { useEscapeKey } from "../hooks/useEscapeKey";
 import { ontologyUrl } from "../lib/ontologyRoutes";
@@ -354,6 +355,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
     setSidebarGroupSessionsFull((prev) => ({ ...prev, [treeKey]: !prev[treeKey] }));
   }
 
+  /** 文件夹行：子会话已选中时不再高亮父级，避免双重选中 */
+  function sidebarFolderRowClass(projectId: string, sessions: ChatSession[]): string {
+    const hasActiveChild = sessions.some((s) => s.id === activeSessionId);
+    if (hasActiveChild) return "hover:bg-[var(--app-surface-hover)]";
+    if (activeProjectId === projectId) return "bg-[var(--app-active-bg)]";
+    return "hover:bg-[var(--app-surface-hover)]";
+  }
+
   function renderSidebarSessionBlock(list: ChatSession[], treeKey: string) {
     if (!list.length || !isSidebarGroupOpen(treeKey)) return null;
     const full = isSidebarGroupSessionsFull(treeKey);
@@ -502,31 +511,23 @@ export default function AppShell({ children }: { children: ReactNode }) {
               title="数据源"
               aria-label="数据源"
             >
-              <Icon name="database" />
-            </Link>
-            <Link
-              href="/"
-              className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${pathname === "/" ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
-              title="首页"
-              aria-label="首页"
-            >
-              <Icon name="domain" />
+              <Icon name="database" className="h-4 w-4" />
             </Link>
             <Link
               href="/knowledge-bases"
               className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isActive(pathname, "/knowledge-bases") ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
-              title="语义知识库"
-              aria-label="语义知识库"
+              title="数据接入"
+              aria-label="数据接入"
             >
-              <Icon name="book" />
+              <Icon name="book" className="h-4 w-4" />
             </Link>
             <Link
               href={ontologyNavHref}
               className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isOntologyBrowseNav ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
-              title="语义资产：查看当前业务域已入图的术语、指标、表与关系"
+              title="语义资产"
               aria-label="语义资产"
             >
-              <Icon name="layers" />
+              <Icon name="layers" className="h-4 w-4" />
             </Link>
             <Link
               href="/copilot"
@@ -534,8 +535,14 @@ export default function AppShell({ children }: { children: ReactNode }) {
               title="助手"
               aria-label="打开 DataLens 助手"
             >
-              <Icon name="spark" />
+              <Icon name="spark" className="h-4 w-4" />
             </Link>
+            <BusinessDomainSelect
+              compact
+              domains={businessDomains}
+              value={activeBusinessDomainId}
+              onChange={setActiveBusinessDomainId}
+            />
           </div>
         )}
 
@@ -544,69 +551,36 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <div className="space-y-1 pb-3">
               <label className="mb-2 block px-2 text-xs text-app-muted">
                 <span className="text-[11px] font-medium tracking-wide text-app-muted">当前业务域</span>
-                <div className="app-domain-select-wrap mt-1">
-                  <Icon
-                    name="domain"
-                    className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-app-muted"
-                  />
-                  <select
-                    className="app-domain-select w-full"
-                    value={activeBusinessDomainId ?? ""}
-                    onChange={(e) => {
-                      const value = e.target.value ? Number(e.target.value) : null;
-                      setActiveBusinessDomainId(value);
-                      setActiveBusinessDomainIdState(value);
-                      if (typeof window !== "undefined") {
-                        window.location.reload();
-                      }
-                    }}
-                  >
-                    {businessDomains.map((d) => (
-                      <option key={d.id} value={d.id}>
-                        {d.name}
-                      </option>
-                    ))}
-                  </select>
-                  <Icon
-                    name="chevronDown"
-                    className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-app-muted"
-                  />
-                </div>
+                <BusinessDomainSelect
+                  domains={businessDomains}
+                  value={activeBusinessDomainId}
+                  onChange={setActiveBusinessDomainId}
+                />
               </label>
               <button className="app-nav-item w-full rounded-lg" onClick={createCopilotSession}>
-                <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md">
-                  <Icon name="plus" className="h-4 w-4" />
-                </span>
+                <Icon name="plus" className="h-4 w-4 shrink-0" />
                 <span>新聊天</span>
               </button>
               <button className="app-nav-item w-full rounded-lg" onClick={focusSessionSearch}>
-                <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md">
-                  <Icon name="search" className="h-4 w-4" />
-                </span>
+                <Icon name="search" className="h-4 w-4 shrink-0" />
                 <span>搜索聊天</span>
               </button>
               <Link href="/datasources" className={`app-nav-item rounded-lg ${isActive(pathname, "/datasources") ? "is-active" : ""}`}>
-                <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
-                  <Icon name="database" />
-                </span>
+                <Icon name="database" className="h-4 w-4 shrink-0" />
                 <span>数据源</span>
               </Link>
             <Link
               href="/knowledge-bases"
               className={`app-nav-item rounded-lg ${isActive(pathname, "/knowledge-bases") ? "is-active" : ""}`}
             >
-              <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
-                <Icon name="book" />
-              </span>
+              <Icon name="book" className="h-4 w-4 shrink-0" />
               <span>数据接入</span>
             </Link>
             <Link
               href={ontologyNavHref}
               className={`app-nav-item rounded-lg ${isOntologyBrowseNav ? "is-active" : ""}`}
             >
-              <span className="app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs">
-                <Icon name="layers" />
-              </span>
+              <Icon name="layers" className="h-4 w-4 shrink-0" />
               <span>语义资产</span>
             </Link>
             </div>
@@ -657,9 +631,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                     <div className="app-project-sidebar-tree mt-1 space-y-3">
                       <div className="app-project-sidebar-group">
                         <div
-                          className={`app-project-sidebar-folder group/unassigned flex items-center gap-0.5 rounded-[10px] pr-1 transition-colors ${
-                            activeProjectId === "__unassigned__" ? "bg-[var(--app-active-bg)]" : "hover:bg-[var(--app-surface-hover)]"
-                          }`}
+                          className={`app-project-sidebar-folder group/unassigned flex items-center gap-0.5 rounded-[10px] pr-1 transition-colors ${sidebarFolderRowClass("__unassigned__", unassignedSessionsSidebar)}`}
                         >
                           <button
                             type="button"
@@ -714,9 +686,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                               />
                             ) : (
                               <div
-                                className={`app-project-sidebar-folder group/proj relative flex items-center gap-0.5 rounded-[10px] pr-1 transition-colors ${
-                                  activeProjectId === project.id ? "bg-[var(--app-active-bg)]" : "hover:bg-[var(--app-surface-hover)]"
-                                }`}
+                                className={`app-project-sidebar-folder group/proj relative flex items-center gap-0.5 rounded-[10px] pr-1 transition-colors ${sidebarFolderRowClass(project.id, projSessions)}`}
                               >
                                 <button
                                   type="button"
@@ -757,7 +727,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
                                 </button>
                                 {menuProjectId === project.id && (
                                   <div
-                                    className="app-dropdown-surface absolute right-0 top-[calc(100%-2px)] z-20 min-w-[140px] rounded-lg p-1"
+                                    className="app-dropdown-surface absolute right-0 top-full z-20 mt-1 min-w-[140px] rounded-lg p-1"
                                     data-menu-root="1"
                                   >
                                     <button
@@ -822,14 +792,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
             title="设置"
             aria-label="设置"
           >
-            <span
-              className={
-                sidebarCollapsed
-                  ? "inline-flex items-center justify-center"
-                  : "app-text-primary inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-xs"
-              }
-            >
-              <Icon name="settings" />
+            <span className={sidebarCollapsed ? "inline-flex items-center justify-center" : "shrink-0"}>
+              <Icon name="settings" className="h-4 w-4" />
             </span>
             {!sidebarCollapsed ? <span>设置</span> : null}
           </Link>
