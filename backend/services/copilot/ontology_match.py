@@ -102,25 +102,19 @@ def _build_mapping_sentence(
     maps_to: str = "",
     question_phrase: str = "",
 ) -> str:
-    """生成一条可读映射说明。"""
-    qbit = (question_phrase or question or "").strip()
-    if len(qbit) > 80:
-        qbit = qbit[:80] + "…"
+    """Generate a compact, scannable mapping description.
+
+    Format: 本体指标「label」：definition → 物理表：t1、t2
+    No longer repeats the full question in every entry.
+    """
     asset = f"本体{_kind_label(kind)}「{label}」"
-    parts: list[str] = []
-    if qbit:
-        parts.append(f"您的问题「{qbit}」")
-    else:
-        parts.append("您的问题")
-    parts.append(f"对应到{asset}")
+    parts: list[str] = [asset]
     if definition:
-        def_short = definition if len(definition) <= 120 else definition[:120] + "…"
-        parts.append(f"（{def_short}）")
+        def_short = definition if len(definition) <= 80 else definition[:80] + "…"
+        parts.append(f"：{def_short}")
     if maps_to:
-        parts.append(f"，并关联物理表：{maps_to}")
-    else:
-        parts.append("；当前未登记到具体物理表")
-    return "".join(parts) + "。"
+        parts.append(f" → 物理表：{maps_to}")
+    return "".join(parts)
 
 
 def _format_mapping_item(concept: dict[str, Any], linked_tables: list[dict[str, Any]]) -> dict[str, Any]:
@@ -141,6 +135,62 @@ def _format_mapping_item(concept: dict[str, Any], linked_tables: list[dict[str, 
         "iri": concept.get("iri"),
         "type": concept.get("type"),
     }
+
+
+def _deduplicate_concepts_for_display(
+    concepts: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Collapse concepts whose labels are substrings of another matched label.
+
+    Example: when both "电量" and "用电量" match, "电量" is fully contained
+    within "用电量" — keep only "用电量" for display.  This prevents users from
+    seeing a dozen near-identical "XXX电量" entries.
+
+    This only affects the display set.  The full concept list is preserved
+    for ontology_context_text (LLM SQL prompt context).
+    """
+    if len(concepts) <= 1:
+        return list(concepts)
+
+    # Process longest-label-first so containment checks are stable
+    sorted_c = sorted(
+        concepts,
+        key=lambda c: (-len(str(c.get("label", ""))), -float(c.get("match_score", 0))),
+    )
+
+    keep: list[dict[str, Any]] = []
+    keep_labels: list[str] = []
+
+    for c in sorted_c:
+        label = str(c.get("label", "")).strip().lower()
+        if not label:
+            keep.append(c)
+            continue
+
+        # Drop if this label is fully contained within a kept label
+        if any(label in kept for kept in keep_labels):
+            continue
+
+        # If this label contains a previously-kept shorter label, replace it
+        # (only if the score isn't drastically worse)
+        replaced = False
+        for i, kept_label in enumerate(keep_labels):
+            if kept_label in label:
+                old_score = float(keep[i].get("match_score", 0))
+                new_score = float(c.get("match_score", 0))
+                if new_score >= old_score * 0.7:
+                    keep[i] = c
+                    keep_labels[i] = label
+                replaced = True
+                break
+
+        if not replaced:
+            keep.append(c)
+            keep_labels.append(label)
+
+    # Restore score-descending order
+    keep.sort(key=lambda c: -float(c.get("match_score", 0)))
+    return keep
 
 
 def run_ontology_match(
@@ -216,7 +266,9 @@ def run_ontology_match(
 
         query_vector: list[float] | None = None
         try:
-            query_vector = _embed([q])[0]
+            # Use q_for_routing (dimension values removed) so the embedding
+            # search isn't skewed by person names, dates, IDs, etc.
+            query_vector = _embed([q_for_routing])[0]
         except Exception:
             query_vector = None
 
@@ -237,23 +289,81 @@ def run_ontology_match(
     ontology_trace: list[dict[str, Any]] = []
     items: list[dict[str, Any]] = []
     mappings: list[dict[str, Any]] = []
-    context_parts: list[str] = []
     q_preview = q if len(q) <= 200 else q[:200] + "…"
 
     concept_iris = [c.get("iri") for c in concepts if c.get("iri")]
-    tables_by_concept: dict[str, list[dict[str, Any]]] = {iri: [] for iri in concept_iris if iri}
+    tables_by_concept: dict[str, list[dict[str, Any]]] = {}
     for t in tables:
-        # tables from route_tables are linked to any matched concept; attach to all for display
-        for iri in concept_iris:
-            tables_by_concept.setdefault(iri, []).append(t)
+        src_iri = str(t.get("source_concept_iri") or "")
+        if src_iri and src_iri in concept_iris:
+            tables_by_concept.setdefault(src_iri, []).append(t)
+
+    # Fallback: ensure every concept has at least an empty list
+    for iri in concept_iris:
+        tables_by_concept.setdefault(iri, [])
+
+    # ---- Pass 1: ontology_context_text from ALL concepts (for LLM) ----
+    context_metric_lines: list[str] = []
+    context_term_lines: list[str] = []
 
     for c in concepts:
+        label = str(c.get("label") or "").strip()
+        if not label:
+            continue
+        ctype = str(c.get("type") or "")
+        definition = str(c.get("definition") or "").strip()
+        kind = _concept_kind(ctype)
+        iri = str(c.get("iri") or "")
+        linked = tables_by_concept.get(iri, [])
+        table_names = [
+            str(t.get("name") or t.get("platform_id") or "").strip()
+            for t in linked
+            if str(t.get("name") or t.get("platform_id") or "").strip()
+        ]
+        maps_to = "、".join(dict.fromkeys(table_names)) if table_names else ""
+        table_ref = f" → {maps_to}" if maps_to else ""
+        if kind == "metric":
+            context_metric_lines.append(
+                f"- **{label}**" + (f"：{definition}" if definition else "") + table_ref
+            )
+        elif kind == "term":
+            context_term_lines.append(
+                f"- **{label}**" + (f"：{definition}" if definition else "") + table_ref
+            )
+        else:
+            context_term_lines.append(
+                f"- **{label}**" + (f"：{definition}" if definition else "")
+            )
+
+    context_table_lines: list[str] = []
+    for t in tables:
+        name = str(t.get("name") or t.get("platform_id") or "").strip()
+        if not name:
+            continue
+        tbl_summary = str(t.get("summary") or "").strip()
+        context_table_lines.append(
+            f"- **{name}**" + (f"：{tbl_summary}" if tbl_summary else "")
+        )
+
+    context_blocks: list[str] = []
+    if context_metric_lines:
+        context_blocks.append("### 指标口径\n" + "\n".join(context_metric_lines))
+    if context_term_lines:
+        context_blocks.append("### 业务术语\n" + "\n".join(context_term_lines))
+    if context_table_lines:
+        context_blocks.append("### 关联物理表\n" + "\n".join(context_table_lines))
+    ontology_context_text = "\n\n".join(context_blocks)[:12000]
+
+    # ---- Pass 2: mappings and items from DEDUPED concepts (for display) ----
+    display_concepts = _deduplicate_concepts_for_display(concepts)
+
+    for c in display_concepts:
         iri = str(c.get("iri") or "")
         label = str(c.get("label") or "").strip()
         if not label:
             continue
         ctype = str(c.get("type") or "")
-        linked = tables_by_concept.get(iri, tables) if iri else tables
+        linked = tables_by_concept.get(iri, [])
         item = _format_mapping_item(c, linked)
         items.append(item)
         definition = str(item.get("definition") or "").strip()
@@ -291,22 +401,6 @@ def run_ontology_match(
             "maps_to": item.get("maps_to") or "",
             "match_type": match_type,
         })
-        if item["kind"] == "metric":
-            line = f"指标「{label}」"
-            if definition:
-                line += f"：{definition}"
-            if item.get("maps_to"):
-                line += f" → 物理表 {item['maps_to']}"
-            context_parts.append(line)
-        elif item["kind"] == "term":
-            line = f"术语「{label}」"
-            if definition:
-                line += f"：{definition}"
-            if item.get("maps_to"):
-                line += f" → 物理表 {item['maps_to']}"
-            context_parts.append(line)
-        else:
-            context_parts.append(f"概念「{label}」" + (f"：{definition}" if definition else ""))
 
     for t in tables:
         name = str(t.get("name") or t.get("platform_id") or "").strip()
@@ -333,7 +427,6 @@ def run_ontology_match(
                 "type": "table",
                 "source": "sparql",
             })
-            context_parts.append(f"物理表「{name}」")
 
     matched = bool(items or tables)
     if matched:
@@ -369,7 +462,7 @@ def run_ontology_match(
         mappings=mappings,
         items=items,
         ontology_trace=ontology_trace,
-        ontology_context_text="\n".join(dict.fromkeys(context_parts))[:12000],
+        ontology_context_text=ontology_context_text,
         concepts=concepts,
         tables=tables,
     )

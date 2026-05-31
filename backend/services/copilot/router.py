@@ -69,7 +69,7 @@ class OntologyRouter:
         sparql = f"""
         PREFIX dl: <{ns}>
         PREFIX skos: <{skos}>
-        SELECT DISTINCT ?table ?tableName ?summary ?platformId WHERE {{
+        SELECT DISTINCT ?concept ?table ?tableName ?summary ?platformId WHERE {{
           FILTER({concept_filters})
           {' UNION '.join(graph_blocks)}
         }}
@@ -88,6 +88,7 @@ class OntologyRouter:
                 "name": str(r.get("tableName", "")),
                 "summary": str(r.get("summary", "")),
                 "platform_id": str(r.get("platformId", "")),
+                "source_concept_iri": str(r.get("concept", "")),
             }
             for r in rows
         ]

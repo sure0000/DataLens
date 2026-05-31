@@ -877,6 +877,8 @@ def build_priority_context(
         else []
     )
     schema_lines = []
+    onto_cols: list[str] = []
+    other_cols: list[str] = []
     for c in cols:
         qm = c.quality_metrics if isinstance(c.quality_metrics, dict) else {}
         em = qm.get("enum") if isinstance(qm, dict) else None
@@ -890,9 +892,43 @@ def build_priority_context(
                     joined += ",…"
                 enum_tail = f" | enum_values={joined}"
         agg_tail = f" | aggregation={agg_hint}" if agg_hint else ""
-        schema_lines.append(
+        col_line = (
             f"{c.table_id}.{c.column_name} | {c.data_type or ''} | semantic={c.semantic_type or ''} | desc={c.semantic_desc or ''}{enum_tail}{agg_tail}"
         )
+        if c.table_id in onto_table_ids:
+            onto_cols.append(f"[本体] {col_line}")
+        else:
+            other_cols.append(col_line)
+    if onto_cols:
+        schema_lines.append("## ONTOLOGY-LINKED TABLES — 本体映射推荐表（必须优先使用）")
+        # 获取本体表名用于分组提示
+        onto_table_names: dict[int, str] = {}
+        for t in selected_tables:
+            if t.id in onto_table_ids:
+                onto_table_names[t.id] = f"{t.database_name}.{t.table_name}"
+        current_tid = None
+        for line in onto_cols:
+            # 提取 table_id 用于分组
+            tid = int(line.split(".")[0].replace("[本体] ", ""))
+            if tid != current_tid and tid in onto_table_names:
+                current_tid = tid
+                schema_lines.append(f"### {onto_table_names[tid]} [本体]")
+            schema_lines.append(line)
+    if other_cols:
+        if onto_cols:
+            schema_lines.append("")  # blank separator
+        schema_lines.append("## OTHER CANDIDATE TABLES — 其他候选表（若本体表不包含所需字段时参考）")
+        other_table_names: dict[int, str] = {}
+        for t in selected_tables:
+            if t.id not in onto_table_ids:
+                other_table_names[t.id] = f"{t.database_name}.{t.table_name}"
+        current_tid = None
+        for line in other_cols:
+            tid = int(line.split(".")[0])
+            if tid != current_tid and tid in other_table_names:
+                current_tid = tid
+                schema_lines.append(f"### {other_table_names[tid]}")
+            schema_lines.append(line)
 
     context_text = domain_header + "\n".join(context_lines)
     if onto_table_ids:

@@ -293,12 +293,8 @@ async def answer(
             else nlp_hint
         )
 
-    if onto.ontology_context_text:
-        knowledge_text = (
-            (onto.ontology_context_text + "\n\n" + knowledge_text).strip()
-            if knowledge_text.strip()
-            else onto.ontology_context_text
-        )
+    # 注：本体映射文本现在通过 SqlCopilotContext.ontology_text 独立传递，
+    # 不再混入 knowledge_text，以保持本体语义锚点的突出性。
 
     # -------- SQL 查询分支 --------
     await trace_row("reasoning_2", "4. 确认拿到的上下文信息", reasoning_2_detail, links=reasoning_2_links)
@@ -311,6 +307,7 @@ async def answer(
         datasource_priority=priority_context.strip(),
         schema=schema.strip(),
         few_shot_json=few_shot,
+        ontology_text=onto.ontology_context_text.strip() if onto and onto.ontology_context_text else "",
     )
     result = await generate_sql(question, summary_text, db, chat_model, copilot_context=copilot_context)
 

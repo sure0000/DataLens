@@ -29,21 +29,36 @@ SQL_REPAIR_SYSTEM = _load_prompt("sql_repair_system")
 
 @dataclass(frozen=True)
 class SqlCopilotContext:
-    """分层 Prompt 的业务侧块（对齐语义上下文引擎：Business + Few-shot）。"""
+    """分层 Prompt 的业务侧块（本体优先：Ontology → Schema → Knowledge → Few-shot）。"""
 
     knowledge: str
     datasource_priority: str
     schema: str
     few_shot_json: str
+    ontology_text: str = ""
+
+    def _ontology_section(self) -> str:
+        """本体映射 — 最精确的语义锚点，放在最前面。"""
+        if not self.ontology_text.strip():
+            return ""
+        return (
+            "## ONTOLOGY MAPPING — 本体映射（最高优先级语义锚点）\n"
+            "以下是系统通过语义图谱（SPARQL + 向量嵌入）从问题中识别到的业务概念及其定义。"
+            "你必须优先使用这些指标口径和术语定义来推导 SQL 的聚合逻辑、过滤条件和表选择。\n\n"
+            f"{self.ontology_text.strip()}"
+        )
 
     def business_sections(self) -> str:
         parts: list[str] = []
-        if self.knowledge.strip():
-            parts.append(f"## BUSINESS CONTEXT — 知识库与业务口径\n{self.knowledge.strip()}")
+        ontology_section = self._ontology_section()
+        if ontology_section:
+            parts.append(ontology_section)
         parts.append(
             f"## BUSINESS CONTEXT — 数据源与表分析（优先采信）\n{self.datasource_priority.strip()}"
         )
-        parts.append(f"## BUSINESS CONTEXT — 结构化字段\n{self.schema.strip()}")
+        parts.append(f"## SCHEMA — 结构化字段\n{self.schema.strip()}")
+        if self.knowledge.strip():
+            parts.append(f"## BUSINESS CONTEXT — 知识库与业务口径\n{self.knowledge.strip()}")
         return "\n\n".join(parts)
 
     def few_shot_section(self) -> str:
@@ -51,11 +66,22 @@ class SqlCopilotContext:
 
 
 def _sql_generation_user_message(question: str, summary: str, ctx: SqlCopilotContext) -> str:
+    """构建 SQL 生成 user message，USER QUESTION 最先出现以让 LLM 聚焦目标。
+
+    上下文顺序（语义优先级降序）：
+    1. USER QUESTION — LLM 立即聚焦目标
+    2. ONTOLOGY MAPPING — 本体映射（最精确的语义锚点）
+    3. SCHEMA — 表结构（本体关联表前置）
+    4. BUSINESS CONTEXT — 数据源与表分析
+    5. BUSINESS CONTEXT — 知识库业务口径
+    6. FEW-SHOT — 历史相似问答（仅上下文不足时参考）
+    7. TABLE SUMMARY
+    """
     return (
+        f"## USER QUESTION\n{question.strip()}\n\n"
         f"{ctx.business_sections()}\n\n"
         f"{ctx.few_shot_section()}\n\n"
-        f"## TABLE SUMMARY（表级摘要聚合）\n{summary.strip()}\n\n"
-        f"## USER QUESTION\n{question.strip()}"
+        f"## TABLE SUMMARY（表级摘要聚合）\n{summary.strip()}"
     )
 
 _async_clients: dict[str, AsyncOpenAI] = {}
@@ -691,8 +717,17 @@ async def repair_failed_sql(
             "reason": "无可用对话模型，仅执行基础SQL清洗。",
         }
 
+    # 本体映射信息前置，帮助修复时保持语义一致性
+    onto_block = ""
+    if copilot_context.ontology_text.strip():
+        onto_block = (
+            "## ONTOLOGY MAPPING（修复时必须参照的语义约束）\n"
+            "以下指标口径和术语定义定义了原始查询的语义，修复后的 SQL 必须仍然匹配这些约束：\n\n"
+            f"{copilot_context.ontology_text.strip()}\n\n"
+        )
     ctx_block = _sql_generation_user_message(question, table_summary, copilot_context)
     user_content = (
+        f"{onto_block}"
         f"{ctx_block}\n\n"
         f"## FAILED SQL\n{sanitized_failed_sql}\n\n"
         f"## DATABASE ERROR\n{error_message.strip()}\n\n"

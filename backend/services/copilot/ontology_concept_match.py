@@ -17,10 +17,10 @@ _logger = logging.getLogger(__name__)
 
 MIN_LABEL_LEN = 2
 EMBED_PROBE_TOP_K = 24
-MIN_EMBED_SIMILARITY = 0.40
-MIN_KEYWORD_SCORE = 0.35
+MIN_EMBED_SIMILARITY = 0.50
+MIN_KEYWORD_SCORE = 0.42
 # 保持与 MIN_KEYWORD_SCORE 一致，避免 keyword 有效匹配被误杀
-MIN_MERGED_SCORE = 0.35
+MIN_MERGED_SCORE = 0.42
 
 
 def iri_to_embedding_ref_id(iri: str) -> int:
@@ -61,6 +61,32 @@ def keyword_score(label: str, question: str, *, definition: str = "") -> float:
     q_tokens = _token_set(q_l)
     overlap = len(name_tokens & q_tokens) / len(name_tokens)
     return overlap * 0.55
+
+
+def _sparql_specificity_score(label: str, question: str) -> float:
+    """Score SPARQL substring matches by label length.
+
+    SPARQL CONTAINS is high-precision for Chinese text: if a concept label
+    appears as a literal substring of the question, it is almost always
+    relevant.  We use a high base score (0.60) plus a per-character bonus
+    to reward longer / more specific labels while ensuring even short
+    labels survive the merge threshold (MIN_MERGED_SCORE=0.42).
+
+    Scale: len=2 → 0.68, len=3 → 0.72, len=4 → 0.76,
+           len=5 → 0.80, ..., len=10 → 1.00
+
+    altLabel / definition matches (no exact substring) get a neutral 0.35
+    score, which indicates they came from SPARQL but may need support from
+    keyword or embedding to survive the merge.
+    """
+    label_l = (label or "").strip().lower()
+    q_l = (question or "").strip().lower()
+    if not label_l or not q_l:
+        return 0.35
+    if label_l in q_l:
+        return round(min(0.60 + len(label_l) * 0.04, 1.0), 4)
+    # altLabel or definition matched instead of the label itself
+    return 0.35
 
 
 def build_concept_embedding_text(
@@ -300,7 +326,7 @@ def route_concepts_sparql(
             "definition": str(r.get("definition", "")),
             "confidence": float(r.get("confidence", 0) or 0),
             "status": str(r.get("status", "")),
-            "match_score": 1.0,
+            "match_score": _sparql_specificity_score(str(r.get("label", "")), query_text),
             "match_source": "sparql_substring",
         }
         for r in rows
@@ -356,7 +382,13 @@ def merge_concept_candidates(
     *candidate_lists: list[dict[str, Any]],
     top_k: int = 10,
 ) -> list[dict[str, Any]]:
-    """Merge by IRI, keep best match_score."""
+    """Merge by IRI, keep best match_score.
+
+    SPARQL substring matches (CONTAINS label in question) are authoritative
+    and are NOT subject to the MIN_MERGED_SCORE threshold — if the concept
+    label literally appears in the user's question, it's relevant.  Only
+    embedding and keyword matches are filtered by MIN_MERGED_SCORE.
+    """
     by_iri: dict[str, dict[str, Any]] = {}
     for lst in candidate_lists:
         for c in lst:
@@ -371,7 +403,17 @@ def merge_concept_candidates(
         by_iri.values(),
         key=lambda x: (-float(x.get("match_score") or 0), -float(x.get("confidence") or 0), str(x.get("iri") or "")),
     )
-    return [c for c in merged if float(c.get("match_score") or 0) >= MIN_MERGED_SCORE][:top_k]
+    kept: list[dict[str, Any]] = []
+    for c in merged:
+        source = str(c.get("match_source") or "")
+        score = float(c.get("match_score") or 0)
+        # SPARQL substring matches are authoritative — preserve regardless of score
+        if source == "sparql_substring":
+            kept.append(c)
+        elif score >= MIN_MERGED_SCORE:
+            kept.append(c)
+        # else: drop low-score embedding/keyword candidates
+    return kept[:top_k]
 
 
 def hybrid_route_concepts(
