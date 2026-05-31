@@ -62,6 +62,41 @@ def test_lineage_expansion_adds_neighbor():
     assert isinstance(new_sources, dict)
 
 
+def test_sql_review_partial_out_of_domain_does_not_block():
+    db = MagicMock()
+    ds = SimpleNamespace(id=1, source_type="postgresql")
+    in_domain = SimpleNamespace(id=1, database_name="sales", table_name="orders")
+    out_domain = SimpleNamespace(id=99, database_name="other", table_name="t")
+
+    def _resolve(_db, datasource_id, default_database, db_part, table_name):
+        if table_name == "orders":
+            return in_domain
+        if table_name == "t":
+            return out_domain
+        return None
+
+    with patch("services.routing.sql_post_validation.extract_table_refs_from_sql", return_value=[
+        ("table", "sales", "orders"),
+        ("table", "other", "t"),
+    ]):
+        with patch("services.routing.sql_post_validation.resolve_table_meta_for_trace", side_effect=_resolve):
+            with patch(
+                "services.routing.sql_post_validation.tables_from_business_domain",
+                return_value=[in_domain],
+            ):
+                review = evaluate_sql_execution_review(
+                    db,
+                    sql_text="select * from sales.orders join other.t",
+                    business_domain_id=5,
+                    candidate_table_ids=[1],
+                    table_id=None,
+                    ds_anchor=ds,
+                    default_db="sales",
+                )
+    assert review["review_required"] is False
+    assert 99 in review["out_of_domain_table_ids"]
+
+
 def test_sql_review_flags_out_of_domain():
     db = MagicMock()
     ds = SimpleNamespace(id=1, source_type="postgresql")

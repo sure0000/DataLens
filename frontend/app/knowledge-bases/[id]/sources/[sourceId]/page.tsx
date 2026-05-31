@@ -42,6 +42,10 @@ import {
 } from "../../../../../lib/knowledgeBaseSources";
 import CodeEditorView from "../../../../../components/CodeEditorView";
 import GitSourceFileTree from "../../../../../components/knowledge-bases/GitSourceFileTree";
+import {
+  databaseImportDisplaySubtitle,
+  databaseImportDisplayTitle,
+} from "../../../../../components/knowledge-bases/pipelineDisplay";
 import { docStatusChip, gitSyncStatusChip } from "../../../../../components/knowledge-bases/utils";
 
 export default function SourceDetailPage({
@@ -89,6 +93,7 @@ export default function SourceDetailPage({
   const [confirmLoading, setConfirmLoading] = useState(false);
   const [settingsActionLoading, setSettingsActionLoading] = useState(false);
   const [gitSyncing, setGitSyncing] = useState(false);
+  const [dbSchemaSyncing, setDbSchemaSyncing] = useState(false);
 
   // ── Git 文件树选中 ──
   const [selectedGitPath, setSelectedGitPath] = useState<string | null>(null);
@@ -402,6 +407,27 @@ export default function SourceDetailPage({
     }
   }
 
+  async function syncDatabaseSchema() {
+    if (sourceType !== "database" || !Number.isFinite(sourceId)) return;
+    setDbSchemaSyncing(true);
+    notifyUser("正在触发语义清洗（表结构入本体）…", "info");
+    try {
+      await api(
+        `/api/knowledge-bases/${kbId}/sources/${sourceId}/clean?source_type=database`,
+        { method: "POST" },
+      );
+      notifyUser("语义清洗已启动，可在「建模与质量 → 五层结果 → 属性层」查看", "success");
+    } catch (e: unknown) {
+      notifyUser(
+        e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "语义清洗失败",
+        "error",
+      );
+    } finally {
+      setDbSchemaSyncing(false);
+      setSettingsMenuOpen(false);
+    }
+  }
+
   async function reindexApiSourceEntries() {
     if (!apiSource) return;
     setSettingsActionLoading(true);
@@ -482,8 +508,8 @@ export default function SourceDetailPage({
     sourceSubtitle = `${gitSource.provider === "gitlab" ? "GitLab" : "GitHub"} · ${gitSource.owner}/${gitSource.repo}`;
     statusChip = gitSyncStatusChip(gitSource.last_sync_status);
   } else if (sourceType === "database") {
-    sourceTitle = dbImport?.datasource_name || "数据库导入";
-    sourceSubtitle = dbImport ? `${dbImport.database_names.length} 个数据库：${dbImport.database_names.join(", ")}` : "";
+    sourceTitle = dbImport ? databaseImportDisplayTitle(dbImport) : "数据库导入";
+    sourceSubtitle = dbImport ? databaseImportDisplaySubtitle(dbImport) : "";
   } else if (sourceType === "api") {
     if (apiSource) {
       const integrationLabel =
@@ -546,7 +572,7 @@ export default function SourceDetailPage({
     <main className="app-page">
       <PageHeader
         breadcrumbs={[
-          { label: "本体清洗", href: "/knowledge-bases" },
+          { label: "本体知识库", href: "/knowledge-bases" },
           { label: kb?.name || "…", href: `/knowledge-bases/${kbId}` },
           { label: sourceTitle },
         ]}
@@ -618,6 +644,17 @@ export default function SourceDetailPage({
                         重新索引
                       </button>
                     </>
+                  )}
+                  {sourceType === "database" && dbImport && (
+                    <button
+                      className="block w-full px-4 py-2 text-left text-sm hover:bg-[var(--app-bg-hover)] disabled:opacity-50"
+                      type="button"
+                      disabled={dbSchemaSyncing}
+                      title="将已分析表结构与字段语义写入本体属性层"
+                      onClick={() => void syncDatabaseSchema()}
+                    >
+                      {dbSchemaSyncing ? "清洗中…" : "语义清洗"}
+                    </button>
                   )}
                   {(() => {
                     if (sourceType === "git") return null;

@@ -130,8 +130,14 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
                 </div>
               ) : null}
 
-              {!isGeneralQa && queryResult.ok && queryResult.columns.length > 0 && (
+              {!isGeneralQa && queryResult.ok && queryResult.columns.length > 0 ? (
                 <div className="mt-3 max-w-full overflow-x-auto rounded-lg border border-app-border">
+                  <p className="border-b border-app-subtle px-2 py-1.5 text-xs text-app-muted">
+                    查询结果：
+                    {(queryResult.row_count ?? queryResult.rows.length) === 0
+                      ? "0 行（条件未命中数据，请核对姓名、账期与表名）"
+                      : `${queryResult.row_count ?? queryResult.rows.length} 行`}
+                  </p>
                   <table className="w-full min-w-0 table-auto border-collapse text-xs">
                     <thead>
                       <tr>
@@ -143,22 +149,42 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
                       </tr>
                     </thead>
                     <tbody>
-                      {queryResult.rows.slice(0, 20).map((row, idx) => (
-                        <tr key={idx} className="odd:bg-transparent even:bg-app-hover/50">
-                          {queryResult.columns.map((c) => (
-                            <td key={`${idx}-${c}`} className="border-b border-app-subtle px-2 py-1.5 text-app-primary">
-                              {String(row[c] ?? "")}
-                            </td>
-                          ))}
+                      {queryResult.rows.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={Math.max(1, queryResult.columns.length)}
+                            className="px-2 py-4 text-center text-app-muted"
+                          >
+                            （无数据行）
+                          </td>
                         </tr>
-                      ))}
+                      ) : (
+                        queryResult.rows.slice(0, 20).map((row, idx) => (
+                          <tr key={idx} className="odd:bg-transparent even:bg-app-hover/50">
+                            {queryResult.columns.map((c) => (
+                              <td key={`${idx}-${c}`} className="border-b border-app-subtle px-2 py-1.5 text-app-primary">
+                                {String(row[c] ?? "")}
+                              </td>
+                            ))}
+                          </tr>
+                        ))
+                      )}
                     </tbody>
                   </table>
-                  <div className="flex justify-end border-t border-app-subtle px-2 py-1">
-                    <CsvExportButton result={queryResult} />
-                  </div>
+                  {queryResult.rows.length > 0 ? (
+                    <div className="flex justify-end border-t border-app-subtle px-2 py-1">
+                      <CsvExportButton result={queryResult} />
+                    </div>
+                  ) : null}
                 </div>
-              )}
+              ) : null}
+
+              {!isGeneralQa && queryResult.ok && (m.sql_review?.review_required || queryResult.review_required) ? (
+                <p className={`mt-2 text-xs ${alertWarning}`}>
+                  已执行 SQL，但存在表范围或路由风险提示，请核对结果。
+                  {m.sql_review?.reasons?.length ? ` ${m.sql_review.reasons.join("；")}` : ""}
+                </p>
+              ) : null}
 
               {!isGeneralQa && !queryResult.ok && m.sql && (
                 <p className={`mt-2 text-sm ${textDanger}`}>{queryResult.error || "查询未成功"}</p>

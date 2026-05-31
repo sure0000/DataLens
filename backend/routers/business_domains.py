@@ -265,10 +265,9 @@ def get_domain_detail(domain_id: int, db: Session = Depends(get_db)) -> dict:
         unique_rows[key] = row
     sorted_rows = sorted(unique_rows.values(), key=lambda r: (r["database_name"], r["table_name"]))
 
-    kb_link_rows = (
-        db.execute(select(BusinessDomainKnowledgeBase).where(BusinessDomainKnowledgeBase.domain_id == domain_id)).scalars().all()
-    )
-    kb_ids = [r.knowledge_base_id for r in kb_link_rows]
+    from services.context_builder import kb_ids_for_business_domain
+
+    kb_ids = kb_ids_for_business_domain(db, domain_id)
     kb_rows = (
         db.execute(select(KnowledgeBase).where(KnowledgeBase.id.in_(kb_ids)).order_by(KnowledgeBase.name.asc())).scalars().all()
         if kb_ids

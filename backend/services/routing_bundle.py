@@ -70,7 +70,9 @@ async def build_routing_search_bundle(
         from services.routing.ontology_router import search_ontology_metrics_and_terms
 
         if get_settings().ontology_enabled:
-            onto_text, onto_tables, onto_bonuses = search_ontology_metrics_and_terms(db, q, kb_ids)
+            onto_text, onto_tables, onto_bonuses = search_ontology_metrics_and_terms(
+                db, q, kb_ids, query_vector=bundle.query_vector
+            )
             if onto_text:
                 bundle.metric_term_text = (bundle.metric_term_text + "\n" + onto_text).strip()
             bundle.metric_bound_table_ids |= onto_tables

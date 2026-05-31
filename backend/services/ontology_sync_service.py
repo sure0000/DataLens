@@ -38,7 +38,8 @@ def sync_linked_physical_tables(db: Session, kb_id: int) -> dict[str, int]:
     lines = 0
     for tid in table_ids:
         try:
-            lines += sync_physical_table_to_ontology(db, int(tid), kb_id)
+            out = sync_physical_table_to_ontology(db, int(tid), kb_id)
+            lines += int(out.get("written") or 0)
         except Exception:
             _logger.warning("Physical table ontology sync failed table=%s kb=%s", tid, kb_id, exc_info=True)
     return {"tables": len(table_ids), "triple_lines": lines}
@@ -111,5 +112,17 @@ def refresh_kb_pg_semantic_cache(db: Session, kb_id: int) -> dict[str, int]:
         replace_knowledge_entry_embedding(db, entry.id, entry.title, entry.body, entry.summary)
         refreshed_entries += 1
 
+    refreshed_concepts = 0
+    try:
+        from services.copilot.ontology_concept_match import refresh_kb_ontology_concept_embeddings
+
+        refreshed_concepts = refresh_kb_ontology_concept_embeddings(db, kb_id, commit=False)
+    except Exception:
+        _logger.warning("Ontology concept embedding refresh failed kb=%s", kb_id, exc_info=True)
+
     db.commit()
-    return {"tables": refreshed_tables, "entries": refreshed_entries}
+    return {
+        "tables": refreshed_tables,
+        "entries": refreshed_entries,
+        "ontology_concepts": refreshed_concepts,
+    }

@@ -58,6 +58,26 @@ export function normalizeModelingLayerKey(key: string | null | undefined): strin
   return null;
 }
 
+/** Pick the first layer chip that has data; database schema sync usually only fills attribute. */
+export function pickDefaultModelingLayer(
+  layers: Record<string, { total?: number } | undefined> | null | undefined,
+): ModelingDisplayLayer {
+  if (!layers) return "vocabulary";
+  const semanticTotal =
+    (layers.vocabulary?.total ?? 0) +
+    (layers.rule?.total ?? 0) +
+    (layers["entity-concept"]?.total ?? 0) +
+    (layers.relation?.total ?? 0);
+  const attributeTotal = layers.attribute?.total ?? 0;
+  if (attributeTotal > 0 && semanticTotal === 0) {
+    return "attribute";
+  }
+  for (const key of MODELING_DISPLAY_LAYERS) {
+    if ((layers[key]?.total ?? 0) > 0) return key;
+  }
+  return "vocabulary";
+}
+
 export function normalizeQualitySubTab(value: string | null | undefined): QualitySubTab | null {
   if (!value) return null;
   return QUALITY_SUB_TABS.has(value as QualitySubTab) ? (value as QualitySubTab) : null;

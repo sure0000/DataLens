@@ -6,6 +6,7 @@ import {
   buildModelingHash,
   normalizeModelingLayerKey,
   parseModelingHash,
+  pickDefaultModelingLayer,
   type ModelingDisplayLayer,
 } from "../../lib/ontologyRoutes";
 import type { OntologyCleaningResults } from "./types";
@@ -92,6 +93,24 @@ export default function OntologyCleanResultCards({
 
   const layers = results?.layers ?? {};
   const dimensionTotal = layers.dimension?.total ?? 0;
+  const attributeTotal = layers.attribute?.total ?? 0;
+  const semanticLayerTotal =
+    (layers.vocabulary?.total ?? 0) +
+    (layers.rule?.total ?? 0) +
+    (layers["entity-concept"]?.total ?? 0) +
+    (layers.relation?.total ?? 0);
+  const databaseSchemaOnly = attributeTotal > 0 && semanticLayerTotal === 0;
+
+  useEffect(() => {
+    if (!results?.layers || controlledLayer) return;
+    if (typeof window !== "undefined") {
+      const { layer } = parseModelingHash(window.location.hash);
+      if (layer) return;
+    }
+    const next = pickDefaultModelingLayer(results.layers);
+    setInternalLayer(next);
+    onLayerChange?.(next);
+  }, [results, controlledLayer, onLayerChange]);
 
   const activeDetailKey = useMemo(() => {
     if (selectedChip === "entity-concept" && entitySubView === "dimension") {
@@ -114,7 +133,17 @@ export default function OntologyCleanResultCards({
   }
 
   if (!results || !results.layers || Object.keys(results.layers).length === 0) {
-    return null;
+    return (
+      <section className="space-y-4">
+        <h2 className="app-section-title">五层清洗结果</h2>
+        <div className="app-card space-y-1 p-4 text-sm text-app-muted">
+          <p>暂无五层统计数据。</p>
+          <p>
+            若已完成语义清洗仍无数据，请刷新页面；或在导入源卡片再次触发「语义清洗」后查看属性层。
+          </p>
+        </div>
+      </section>
+    );
   }
 
   const allEmpty = Object.values(layers).every((l) => (l?.total ?? 0) === 0);
@@ -124,10 +153,17 @@ export default function OntologyCleanResultCards({
       <section className="space-y-4">
         <h2 className="app-section-title">五层清洗结果</h2>
         <div className="app-card space-y-1 p-4 text-sm text-app-muted">
-          <p>暂无清洗结果，请先在导入源上点击「语义清洗」触发处理。</p>
+          <p>暂无入图数据。</p>
+          <p>
+            若已导入数据源：请确认表在「数据源管理」中已完成 AI 分析，并在知识库「设置 → 语义清洗」或导入源卡片上触发；成功后请切换到
+            「属性层」查看 businessSummary、semanticDescription 等表/字段语义（数据库源通常不会填充词汇/规则层）。
+          </p>
+          <p>
+            若已导入文档或代码库：请在导入源上触发「语义清洗」以抽取术语、指标与关系。
+          </p>
           {results.last_cleaning_at && (
             <p>
-              若抽取已结束仍为空，请到「流水线」查看入图步骤是否失败（常见原因：SHACL 校验拦截）。
+              若抽取已结束仍为空，请到「质量与隔离」查看 SHACL 拦截或隔离区记录。
             </p>
           )}
         </div>
@@ -185,13 +221,26 @@ export default function OntologyCleanResultCards({
                   <p className={`text-xs font-medium ${isActive ? "text-app-primary" : "text-app-secondary"}`}>
                     {layer?.label ?? key}
                   </p>
-                  <p className="text-lg font-semibold tabular-nums text-app-primary">{total}</p>
+                  <p className="text-lg font-semibold tabular-nums text-app-primary">
+                    {total}
+                    {key === "attribute" && (layer?.physical_total ?? 0) > 0 && (
+                      <span className="ml-1 text-[10px] font-normal text-app-muted">
+                        表{layer?.physical_total}
+                      </span>
+                    )}
+                  </p>
                 </div>
               </button>
             );
           })}
         </div>
       </div>
+
+      {databaseSchemaOnly && selectedChip !== "attribute" && (
+        <p className="text-sm text-app-muted">
+          当前知识库的数据源语义清洗结果在「属性层」（{attributeTotal} 条）。请点击上方属性层芯片查看表/字段摘要。
+        </p>
+      )}
 
       {selectedChip === "entity-concept" && (
         <div className="app-card flex flex-wrap items-center gap-2 p-3">
@@ -273,6 +322,7 @@ export default function OntologyCleanResultCards({
           layerLabel={activeMeta?.label}
           layerDescription={activeMeta?.description}
           expectedTotal={activeMeta?.total}
+          physicalAttributeTotal={layers.attribute?.physical_total ?? 0}
         />
       )}
     </section>

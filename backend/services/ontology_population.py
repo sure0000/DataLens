@@ -17,9 +17,13 @@ from models import (
 from ontology import (
     NS,
     chunk_iri,
+    column_iri,
     concept_iri,
     concept_slug,
+    datasource_iri,
     kb_graph_iri,
+    legacy_column_iri,
+    legacy_table_iri,
     metric_iri,
     table_iri,
     term_iri,
@@ -136,37 +140,95 @@ def populate_from_document(
     return persist_clean_result(result, kb_id)
 
 
-def sync_physical_table_to_ontology(db: Session, table_id: int, kb_id: int) -> int:
-    """Write PhysicalTable / Column semantics from analyze results."""
+def _purge_physical_table_subjects(db: Session, table_id: int, kb_id: int) -> None:
+    """Remove prior PhysicalTable/Column assertions (incl. legacy wrong IRI prefix)."""
+    from services.source_cascade_cleanup import _purge_rdf_subjects
+
+    subjects: list[str] = [table_iri(table_id), legacy_table_iri(table_id)]
+    col_names = db.execute(
+        select(ColumnMeta.column_name).where(ColumnMeta.table_id == table_id)
+    ).scalars().all()
+    for name in col_names:
+        cn = str(name)
+        subjects.append(column_iri(table_id, cn))
+        subjects.append(legacy_column_iri(table_id, cn))
+    _purge_rdf_subjects(kb_id, subjects)
+
+
+def sync_physical_table_to_ontology(
+    db: Session,
+    table_id: int,
+    kb_id: int,
+    *,
+    datasource_id: int | None = None,
+) -> dict[str, Any]:
+    """Write PhysicalTable / Column semantics from analyze results (clean → SHACL → production graph)."""
     table = db.get(TableMeta, table_id)
     if table is None:
-        return 0
+        return {"written": 0, "shacl_blocked": False, "literal_count": 0}
+
+    _purge_physical_table_subjects(db, table_id, kb_id)
+
     graph = kb_graph_iri(kb_id)
     ti = table_iri(table_id)
-    lines = [
-        f"<{ti}> <{RDF_TYPE}> <{NS}PhysicalTable> .",
-        f'<{ti}> <{NS}platformId> "{table_id}" .',
+    triples: list[RawTriple] = [
+        RawTriple(ti, RDF_TYPE, f"{NS}PhysicalTable", True, graph=graph),
+        RawTriple(ti, f"{NS}platformId", str(table_id), False, graph=graph),
+        RawTriple(ti, f"{NS}sensitivityLevel", "internal", False, graph=graph),
     ]
+    if table.datasource_id:
+        ds_id = int(table.datasource_id)
+    elif datasource_id is not None:
+        ds_id = int(datasource_id)
+    else:
+        ds_id = None
+    if ds_id is not None:
+        triples.append(
+            RawTriple(
+                ti,
+                f"{NS}belongsToDataSource",
+                datasource_iri(ds_id),
+                True,
+                graph=graph,
+            )
+        )
+    table_label = (table.table_name or "").strip() or f"table_{table_id}"
+    triples.append(RawTriple(ti, SKOS_PREF, table_label, False, lang="zh", graph=graph))
+    if table.row_count is not None and table.row_count > 0:
+        triples.append(RawTriple(ti, f"{NS}rowCount", str(int(table.row_count)), False, graph=graph))
+
     summary = db.execute(
         select(TableSummary).where(TableSummary.table_id == table_id).order_by(TableSummary.generated_at.desc())
     ).scalars().first()
     if summary and summary.summary:
-        esc = _ttl_string_literal(summary.summary, max_len=8000)
-        lines.append(f'<{ti}> <{NS}businessSummary> "{esc}"@zh .')
+        triples.append(
+            RawTriple(ti, f"{NS}businessSummary", summary.summary[:8000], False, lang="zh", graph=graph)
+        )
 
     cols = db.execute(select(ColumnMeta).where(ColumnMeta.table_id == table_id)).scalars().all()
     for col in cols:
-        ci = f"{NS.rstrip('/')}/data/table/{table_id}/column/{col.column_name}"
-        lines.append(f"<{ci}> <{RDF_TYPE}> <{NS}PhysicalColumn> .")
-        lines.append(f"<{ci}> <https://schema.org/isPartOf> <{ti}> .")
-        if col.semantic_desc:
-            esc = _ttl_string_literal(col.semantic_desc)
-            lines.append(f'<{ci}> <{NS}semanticDescription> "{esc}"@zh .')
+        ci = column_iri(table_id, col.column_name)
+        triples.append(RawTriple(ci, RDF_TYPE, f"{NS}PhysicalColumn", True, graph=graph))
+        triples.append(RawTriple(ci, "https://schema.org/isPartOf", ti, True, graph=graph))
+        triples.append(RawTriple(ci, SKOS_PREF, col.column_name, False, lang="zh", graph=graph))
+        if col.data_type:
+            triples.append(RawTriple(ci, f"{NS}dataType", col.data_type, False, graph=graph))
+        if col.comment:
+            triples.append(RawTriple(ci, f"{NS}semanticDescription", col.comment, False, lang="zh", graph=graph))
+        elif col.semantic_desc:
+            triples.append(RawTriple(ci, f"{NS}semanticDescription", col.semantic_desc, False, lang="zh", graph=graph))
         if col.semantic_type:
-            lines.append(f'<{ci}> <{NS}semanticType> "{col.semantic_type}" .')
+            triples.append(RawTriple(ci, f"{NS}semanticType", col.semantic_type, False, graph=graph))
 
-    insert_graph(graph, "\n".join(lines))
-    return len(lines)
+    cleaned = clean_triples(triples, kb_id=kb_id)
+    persisted = persist_clean_result(cleaned, kb_id)
+    literal_count = sum(1 for t in cleaned.production if not t.object_is_uri)
+    return {
+        "written": int(persisted.get("written") or 0),
+        "shacl_blocked": bool(persisted.get("shacl_blocked")),
+        "literal_count": literal_count,
+        "quarantined": int(persisted.get("quarantined") or 0),
+    }
 
 
 def migrate_legacy_entities_to_triples(db: Session, kb_id: int, domain_id: int = 0) -> list[RawTriple]:

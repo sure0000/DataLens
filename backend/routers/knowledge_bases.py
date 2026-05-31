@@ -11,7 +11,7 @@ from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, get_db
-from models import Document, KnowledgeBase, KnowledgeEntry
+from models import Document, KnowledgeBase, KnowledgeEntry, BusinessDomainKnowledgeBase
 from services.business_domain_scope import resolve_scope_domain
 from services.embedding_service import (
     KNOWLEDGE_EMBEDDING_REF,
@@ -179,6 +179,13 @@ def create_knowledge_base(body: KnowledgeBaseCreate, request: Request, db: Sessi
         business_domain_id=scope_domain.id,
     )
     db.add(kb)
+    db.flush()
+    db.add(
+        BusinessDomainKnowledgeBase(
+            domain_id=scope_domain.id,
+            knowledge_base_id=kb.id,
+        )
+    )
     db.commit()
     db.refresh(kb)
     return {"id": kb.id, **_kb_row(kb)}

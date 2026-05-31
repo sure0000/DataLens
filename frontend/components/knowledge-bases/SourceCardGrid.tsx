@@ -107,7 +107,7 @@ export default function SourceCardGrid({
   if (totalSources === 0) {
     return (
       <p className="text-sm text-app-muted">
-        暂无导入源。通过「本体清洗」上传文件、接入数据库、代码库、API 或手动条目来添加。
+        暂无导入源。通过「导入数据」上传文件、接入数据库、代码库、API 或手动条目来添加。
       </p>
     );
   }

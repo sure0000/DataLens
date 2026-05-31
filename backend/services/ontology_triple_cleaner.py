@@ -156,6 +156,11 @@ def _clamp_confidence(v: float) -> float:
     return max(0.0, min(100.0, round(v, 1)))
 
 
+def escape_turtle_literal(value: str) -> str:
+    """Escape literal for Turtle / N-Triples (newlines break Fuseki INSERT DATA)."""
+    return json.dumps(str(value), ensure_ascii=False)[1:-1]
+
+
 def stage1_syntax_normalize(triples: list[RawTriple]) -> list[RawTriple]:
     out: list[RawTriple] = []
     for t in triples:
@@ -249,16 +254,16 @@ def triples_to_ttl(triples: list[RawTriple]) -> str:
         if t.object_is_uri:
             lines.append(f"<{t.subject}> <{t.predicate}> <{t.object}> .")
         elif t.lang:
-            esc = str(t.object).replace("\\", "\\\\").replace('"', '\\"')
+            esc = escape_turtle_literal(str(t.object))
             lines.append(f'<{t.subject}> <{t.predicate}> "{esc}"@{t.lang} .')
         elif t.predicate in (f"{NS}confidence",):
-            esc = str(t.object).replace("\\", "\\\\").replace('"', '\\"')
+            esc = escape_turtle_literal(str(t.object))
             lines.append(f'<{t.subject}> <{t.predicate}> "{esc}"^^<{XSD.decimal}> .')
         elif t.predicate in (f"{NS}rowCount", f"{NS}platformId", f"{NS}chunkIndex"):
-            esc = str(t.object).replace("\\", "\\\\").replace('"', '\\"')
+            esc = escape_turtle_literal(str(t.object))
             lines.append(f'<{t.subject}> <{t.predicate}> "{esc}"^^<{XSD.integer}> .')
         else:
-            esc = str(t.object).replace("\\", "\\\\").replace('"', '\\"')
+            esc = escape_turtle_literal(str(t.object))
             lines.append(f'<{t.subject}> <{t.predicate}> "{esc}" .')
     return "\n".join(lines)
 

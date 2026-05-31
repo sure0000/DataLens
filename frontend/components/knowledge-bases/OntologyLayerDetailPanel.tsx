@@ -44,6 +44,7 @@ const LAYER_COLUMNS: Record<string, ProvenanceColumnDef[]> = {
     { key: "o", label: "客体", render: (r) => shortenIri(r.o ?? "") },
   ],
   attribute: [
+    { key: "subjectLabel", label: "名称", render: (r) => r.subjectLabel || "—" },
     { key: "s", label: "主体", render: (r) => shortenIri(r.s ?? "") },
     { key: "p", label: "属性", render: (r) => shortenIri(r.p ?? "") },
     { key: "o", label: "值" },
@@ -66,6 +67,8 @@ interface OntologyLayerDetailPanelProps {
   layerLabel?: string;
   layerDescription?: string;
   expectedTotal?: number;
+  /** 属性层：存在数据源入图条数时默认仅展示物理表/列 */
+  physicalAttributeTotal?: number;
 }
 
 export default function OntologyLayerDetailPanel({
@@ -74,12 +77,17 @@ export default function OntologyLayerDetailPanel({
   layerLabel,
   layerDescription,
   expectedTotal,
+  physicalAttributeTotal = 0,
 }: OntologyLayerDetailPanelProps) {
   const [data, setData] = useState<OntologyLayerDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [offset, setOffset] = useState(0);
   const [search, setSearch] = useState("");
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+  const [physicalOnly, setPhysicalOnly] = useState(
+    () => layerKey === "attribute" && physicalAttributeTotal > 0,
+  );
   const [selectedRow, setSelectedRow] = useState<ProvenanceRow | null>(null);
   const [provenance, setProvenance] = useState<OntologyProvenance | null>(null);
   const pageSize = layerKey === "rule" ? RULE_PAGE_SIZE : DEFAULT_PAGE_SIZE;
@@ -88,8 +96,18 @@ export default function OntologyLayerDetailPanel({
     setLoading(true);
     setError(null);
     try {
+      const params = new URLSearchParams({
+        limit: String(pageSize),
+        offset: String(offset),
+      });
+      if (layerKey === "attribute" && physicalOnly) {
+        params.set("physical_only", "true");
+      }
+      if (debouncedSearch.trim()) {
+        params.set("q", debouncedSearch.trim());
+      }
       const res = await api<OntologyLayerDetail>(
-        `/api/ontology/knowledge-bases/${kbId}/modeling/layers/${encodeURIComponent(layerKey)}?limit=${pageSize}&offset=${offset}`,
+        `/api/ontology/knowledge-bases/${kbId}/modeling/layers/${encodeURIComponent(layerKey)}?${params.toString()}`,
       );
       setData(res);
     } catch (e: unknown) {
@@ -98,14 +116,25 @@ export default function OntologyLayerDetailPanel({
     } finally {
       setLoading(false);
     }
-  }, [kbId, layerKey, offset, pageSize]);
+  }, [kbId, layerKey, offset, pageSize, physicalOnly, debouncedSearch]);
 
   useEffect(() => {
     setOffset(0);
     setSearch("");
+    setDebouncedSearch("");
     setSelectedRow(null);
     setProvenance(null);
-  }, [layerKey]);
+    setPhysicalOnly(layerKey === "attribute" && physicalAttributeTotal > 0);
+  }, [layerKey, physicalAttributeTotal]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => setDebouncedSearch(search), 300);
+    return () => window.clearTimeout(t);
+  }, [search]);
+
+  useEffect(() => {
+    setOffset(0);
+  }, [debouncedSearch, physicalOnly]);
 
   useEffect(() => {
     void load();
@@ -135,22 +164,10 @@ export default function OntologyLayerDetailPanel({
 
   const columns = LAYER_COLUMNS[layerKey] ?? LAYER_COLUMNS.vocabulary;
 
-  const filteredItems = useMemo(() => {
-    const items = (data?.items ?? []) as ProvenanceRow[];
-    const q = search.trim().toLowerCase();
-    if (!q) return items;
-    return items.filter(
-      (row) =>
-        Object.values(row).some((v) => {
-          if (typeof v === "object") return false;
-          return String(v ?? "").toLowerCase().includes(q);
-        }) ||
-        (row.origin?.knowledge_base_name || "").toLowerCase().includes(q) ||
-        (row.origin?.source_label || "").toLowerCase().includes(q),
-    );
-  }, [data?.items, search]);
+  const tableItems = (data?.items ?? []) as ProvenanceRow[];
 
   const total = data?.total ?? expectedTotal ?? 0;
+  const unfilteredTotal = data?.unfiltered_total;
   const pageStart = offset + 1;
   const pageEnd = offset + (data?.items?.length ?? 0);
   const canPrev = offset > 0;
@@ -169,16 +186,35 @@ export default function OntologyLayerDetailPanel({
             </div>
             <span className="inline-flex items-center rounded-full border border-app-border bg-app-surfaceMuted px-2.5 py-1 text-xs tabular-nums text-app-muted">
               共 {total} 条
+              {unfilteredTotal != null && unfilteredTotal !== total && (
+                <span className="ml-1">/ 全层 {unfilteredTotal}</span>
+              )}
               {total > 0 && data && <span className="ml-1">· 第 {pageStart}–{pageEnd} 条</span>}
             </span>
           </div>
 
+          {layerKey === "attribute" && physicalAttributeTotal > 0 && (
+            <label className="flex cursor-pointer items-center gap-2 text-xs text-app-secondary">
+              <input
+                type="checkbox"
+                className="rounded border-app-border"
+                checked={physicalOnly}
+                onChange={(e) => setPhysicalOnly(e.target.checked)}
+              />
+              仅数据源表结构（{physicalAttributeTotal} 条，power 等库表语义）
+            </label>
+          )}
+
           <SearchField
             className="max-w-md"
-            placeholder="在当前页筛选…"
+            placeholder={
+              layerKey === "attribute"
+                ? "搜索表名、字段名或属性值（全库）…"
+                : "搜索名称或 IRI（全库）…"
+            }
             value={search}
             onChange={setSearch}
-            disabled={loading || total === 0}
+            disabled={loading}
           />
         </div>
 
@@ -188,7 +224,13 @@ export default function OntologyLayerDetailPanel({
           {error && !loading && <p className="rounded-lg app-alert app-alert-error px-3 py-2 text-sm">{error}</p>}
 
           {!loading && !error && total === 0 && (
-            <p className="rounded-lg app-alert app-alert-info px-3 py-2 text-sm">本层暂无数据。</p>
+            <p className="rounded-lg app-alert app-alert-info px-3 py-2 text-sm">
+              {layerKey === "attribute" && physicalOnly && physicalAttributeTotal > 0 && debouncedSearch
+                ? "无匹配的数据源表结构记录，请调整关键词或取消「仅数据源表结构」。"
+                : layerKey === "attribute" && physicalOnly
+                  ? "本层暂无数据源表结构记录；可取消勾选「仅数据源表结构」查看文档/Git 抽取属性。"
+                  : "本层暂无数据。"}
+            </p>
           )}
 
           {!loading && !error && total > 0 && (
@@ -205,14 +247,14 @@ export default function OntologyLayerDetailPanel({
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredItems.length === 0 ? (
+                    {tableItems.length === 0 ? (
                       <tr>
                         <td colSpan={columns.length} className="px-3 py-6 text-center text-app-muted">
-                          当前页无匹配结果
+                          无匹配结果
                         </td>
                       </tr>
                     ) : (
-                      filteredItems.map((row, i) => {
+                      tableItems.map((row, i) => {
                         const active =
                           selectedRow === row ||
                           (selectedRow?.s === row.s &&
@@ -248,9 +290,9 @@ export default function OntologyLayerDetailPanel({
 
               <div className="flex flex-wrap items-center justify-between gap-2 border-t border-app-border pt-3">
                 <p className="text-[11px] text-app-muted">
-                  {search.trim()
-                    ? `当前页筛选后 ${filteredItems.length} 条（服务端分页，翻页后需重新筛选）`
-                    : "点击行查看详情与溯源；翻页加载更多记录"}
+                  {debouncedSearch.trim()
+                    ? `已按关键词筛选，共 ${total} 条`
+                    : "点击行查看详情与溯源；数据源表结构默认优先展示"}
                 </p>
                 <div className="flex items-center gap-1">
                   <button

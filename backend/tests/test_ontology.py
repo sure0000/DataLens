@@ -63,6 +63,29 @@ def test_triples_to_ttl_roundtrip():
     assert len(g) >= 1
 
 
+def test_triples_to_ttl_escapes_newlines():
+    triples = [
+        RawTriple(
+            table_iri(23),
+            f"{NS}businessSummary",
+            "业务描述\n- 每行一条订单",
+            False,
+            lang="zh",
+            graph=kb_graph_iri(1),
+        )
+    ]
+    ttl = triples_to_ttl(triples)
+    quoted = ttl.rsplit('"@zh', 1)[0].rsplit('"', 1)[1]
+    assert "\n" not in quoted
+    assert "\\n" in quoted
+    g = Graph()
+    g.parse(data=ttl, format="turtle")
+    assert len(g) == 1
+    lit = next(g.objects(None, None))
+    assert "业务描述" in str(lit)
+    assert "\n" in str(lit)
+
+
 def test_shacl_metric_requires_formula():
     ttl = """
 @prefix dl: <https://datalens.local/ontology/> .

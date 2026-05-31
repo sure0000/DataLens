@@ -24,6 +24,16 @@ def column_iri(table_id: int, column_name: str) -> str:
     return f"{DATA_NS}table/{table_id}/column/{safe}"
 
 
+def legacy_table_iri(table_id: int) -> str:
+    """Historical bug wrote tables under ontology/data/ instead of data/."""
+    return f"{NS}data/table/{table_id}"
+
+
+def legacy_column_iri(table_id: int, column_name: str) -> str:
+    safe = quote(column_name.strip(), safe="")
+    return f"{NS}data/table/{table_id}/column/{safe}"
+
+
 def term_iri(domain_id: int, slug: str) -> str:
     return f"{GRAPH_NS}domain/{domain_id}/term/{slug}"
 

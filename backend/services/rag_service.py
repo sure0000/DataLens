@@ -9,6 +9,7 @@ from typing import Any
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from config import get_settings
 from models import (
     BusinessDomain,
     BusinessDomainDescription,
@@ -302,7 +303,7 @@ async def answer(
 
     # -------- 阶段 4：解析 SQL 引用的表（reasoning_3） --------
     ds_anchor, dialect_anchor, default_db = _resolve_datasource_anchor(
-        db, table_id, preferred_table_id, resolved_table_id
+        db, table_id, preferred_table_id, resolved_table_id, sql_text=sql_text
     )
     r3_links = await _build_reasoning_3(
         db, sql_text, ds_anchor, dialect_anchor, default_db,
@@ -345,7 +346,11 @@ async def answer(
     exp_raw = str(result.get("explanation") or "").strip()
     exp_show = (exp_raw[:1600] + ("…" if len(exp_raw) > 1600 else "")) if exp_raw else "（模型未给出说明）"
 
-    if sql_review.get("review_required"):
+    settings = get_settings()
+    block_on_review = (
+        settings.copilot_sql_review_blocks_execution and sql_review.get("review_required")
+    )
+    if block_on_review:
         execution = {
             "ok": False,
             "columns": [],
@@ -356,7 +361,7 @@ async def answer(
         await trace_row(
             "reasoning_5",
             "7. 执行环境与 AST 校验",
-            "检测到 review 条件，已跳过自动执行；请在前端确认 SQL 与表范围。",
+            "检测到 review 条件且已开启 COPILOT_SQL_REVIEW_BLOCKS_EXECUTION，已跳过自动执行。",
         )
         await trace_row(
             "reasoning_7",
@@ -364,10 +369,19 @@ async def answer(
             "执行状态：未执行（等待 review 确认）。",
         )
     else:
+        if sql_review.get("review_required"):
+            await trace_row(
+                "reasoning_5",
+                "7. 执行环境与 AST 校验",
+                "存在 review 提示，仍将按只读策略自动执行 SQL（可在环境变量开启拦截）。",
+            )
         execution = await _execute_with_repair(
             db, question, sql_text, summary_text, ds_anchor, dialect_anchor,
             default_db, resolved_table_id, result, emit, trace_row, copilot_context, chat_model,
         )
+        if sql_review.get("review_required"):
+            execution["review_required"] = True
+            execution["review_reasons"] = list(sql_review.get("reasons") or [])
 
     # 第 4 步在修复/执行后补入
     sql_show_final = _format_sql_display(result.get("sql", ""), ds_anchor, dialect_anchor)
@@ -383,11 +397,23 @@ async def answer(
 
     result["query_result"] = execution
     result["intent"] = "sql_query"
-    sql_body = (
-        "已生成 SQL；请先确认表范围与口径后再执行。"
-        if sql_review.get("review_required")
-        else "已根据你的问题生成并执行 SQL，结果如下。"
-    )
+    rows_n = len(execution.get("rows") or [])
+    if execution.get("row_count") is None and execution.get("ok"):
+        execution["row_count"] = rows_n
+    if block_on_review:
+        sql_body = "已生成 SQL；请先确认表范围与口径后再执行。"
+    elif not execution.get("ok"):
+        sql_body = "SQL 执行失败，请查看下方错误说明。"
+    elif rows_n == 0:
+        sql_body = (
+            "查询已执行，返回 0 行。"
+            "请核对：客户姓名是否与库中一致、账期字段格式（如 202605）、"
+            "以及 SQL 中的库表前缀是否与数据源一致。"
+        )
+    elif sql_review.get("review_required"):
+        sql_body = f"已生成并执行 SQL，返回 {rows_n} 行；存在表范围/路由风险提示，请核对结果。"
+    else:
+        sql_body = f"已根据你的问题生成并执行 SQL，返回 {rows_n} 行，结果如下。"
     result["answer"] = sql_body
     result["pipeline_trace"] = pipeline_traces
     result["routing_trace"] = routing_trace.to_dict()
@@ -512,7 +538,12 @@ async def _handle_general_qa(
 
 
 def _resolve_datasource_anchor(
-    db: Session, table_id: int | None, preferred_table_id: int | None, resolved_table_id: int | None,
+    db: Session,
+    table_id: int | None,
+    preferred_table_id: int | None,
+    resolved_table_id: int | None,
+    *,
+    sql_text: str = "",
 ) -> tuple[DataSource | None, str, str | None]:
     """解析执行数据源锚点和 SQL 方言。"""
     ds_anchor: DataSource | None = None
@@ -524,6 +555,23 @@ def _resolve_datasource_anchor(
         anchor_tm = db.get(TableMeta, preferred_table_id)
     if anchor_tm is None and resolved_table_id:
         anchor_tm = db.get(TableMeta, resolved_table_id)
+
+    if anchor_tm is None and (sql_text or "").strip():
+        fallback_ds = db.execute(select(DataSource).order_by(DataSource.created_at.desc())).scalars().first()
+        if fallback_ds:
+            dialect_guess = source_type_to_sqlglot_dialect(fallback_ds.source_type) or "mysql"
+            default_guess = (str(fallback_ds.database or "").strip()) or None
+            for _cat, dbp, name in extract_table_refs_from_sql(sql_text, dialect=dialect_guess):
+                tm_hit = resolve_table_meta_for_trace(
+                    db,
+                    datasource_id=int(fallback_ds.id),
+                    default_database=default_guess,
+                    db_part=dbp,
+                    table_name=name,
+                )
+                if tm_hit:
+                    anchor_tm = tm_hit
+                    break
 
     if anchor_tm and anchor_tm.datasource_id:
         ds_anchor = db.get(DataSource, anchor_tm.datasource_id)

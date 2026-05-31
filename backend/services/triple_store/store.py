@@ -5,6 +5,7 @@ No module-level globals. All mutable state lives on the TripleStore instance.
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 from pathlib import Path
@@ -415,14 +416,14 @@ class TripleStore:
         if obj_is_uri:
             ttl_lines.append(f"<{subject}> <{predicate}> <{obj}> .")
         elif lang:
-            escaped = str(obj).replace("\\", "\\\\").replace('"', '\\"')
+            escaped = json.dumps(str(obj), ensure_ascii=False)[1:-1]
             ttl_lines.append(f'<{subject}> <{predicate}> "{escaped}"@{lang} .')
         elif isinstance(obj, bool):
             ttl_lines.append(f'<{subject}> <{predicate}> {"true" if obj else "false"}^^<{XSD.boolean}> .')
         elif isinstance(obj, (int, float)):
             ttl_lines.append(f'<{subject}> <{predicate}> "{obj}"^^<{XSD.decimal}> .')
         else:
-            escaped = str(obj).replace("\\", "\\\\").replace('"', '\\"')
+            escaped = json.dumps(str(obj), ensure_ascii=False)[1:-1]
             ttl_lines.append(f'<{subject}> <{predicate}> "{escaped}" .')
         self.insert_graph(graph_iri, "\n".join(ttl_lines))
 

@@ -16,6 +16,7 @@ settings = get_settings()
 
 KNOWLEDGE_EMBEDDING_REF = "knowledge_entry"
 TABLE_EMBEDDING_REF = "table"
+ONTOLOGY_CONCEPT_EMBEDDING_REF = "ontology_concept"
 
 
 def _has_embedding_key() -> bool:

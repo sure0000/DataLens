@@ -7,6 +7,11 @@ import type { ModelingStatus } from "../ontology/ModelingPipelineStatus";
 import type { PipelineStepIconStatus } from "../icons";
 import type { EvidencePackage } from "./ingestionTypes";
 import { CONNECTOR_LABELS } from "./ingestionTypes";
+import {
+  databaseSchemaStepsForPackage,
+  isPhysicalSchemaPackage,
+  mapRawStepStatus,
+} from "./pipelineDisplay";
 import type { DocRow, SourceCleaningStat } from "./types";
 import { evidencePackageCleaningKey } from "./sourceCleaningKey";
 import { indexingStepIconForPackage } from "./packageIndexStatus";
@@ -178,15 +183,6 @@ function modelingProgressForPackage(
   const runKey = `${runType}:${runId}`;
   if (runKey !== pkgKey) return null;
   return modeling.extraction.progress_percent;
-}
-
-function mapRawStepStatus(raw: unknown): string {
-  if (typeof raw === "string") return raw;
-  if (raw && typeof raw === "object" && "status" in raw) {
-    const v = (raw as { status?: unknown }).status;
-    return typeof v === "string" ? v : "pending";
-  }
-  return "pending";
 }
 
 function stepReasonFromRaw(raw: unknown): string | undefined {
@@ -449,13 +445,18 @@ function mergedStatusChip(
 } {
   const cleanKey = evidencePackageCleaningKey(pkg);
   const sourceStat = cleanKey && cleaningStats ? cleaningStats[cleanKey] : undefined;
-  const extractionSteps = extractionStepIconsForPackage(pkg, sourceStat, modeling);
+  const extractionSteps = isPhysicalSchemaPackage(pkg)
+    ? databaseSchemaStepsForPackage(sourceStat)
+    : extractionStepIconsForPackage(pkg, sourceStat, modeling);
   const steps = [
     { label: "索引", icon: indexingStepIconForPackage(pkg, documents), reason: undefined },
     ...extractionSteps,
   ];
 
   if (sourceStat?.status === "running") {
+    if (isPhysicalSchemaPackage(pkg)) {
+      return { detail: "清洗中…", steps };
+    }
     const pct = modelingProgressForPackage(pkg, sourceStat, modeling);
     const activeStep = extractionStepForPackage(pkg, modeling);
     return {
@@ -814,7 +815,7 @@ export default function EvidencePackageList({
   if (packages.length === 0) {
     return (
       <p className="text-sm text-app-muted">
-        暂无证据包。点击「本体清洗」导入企业数据，系统将自动登记为证据包。
+        暂无证据包。点击「导入数据」导入企业数据，系统将自动登记为证据包。
       </p>
     );
   }

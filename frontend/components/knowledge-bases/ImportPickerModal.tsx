@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useEscapeKey } from "../../hooks/useEscapeKey";
 import { api, apiForm, ApiError, formatApiError } from "../../lib/api";
 import GitSourceForm, { defaultGitFormData, type GitSourceFormData } from "./GitSourceForm";
+import { gitSourceValidationError } from "../../lib/parseGitRepoUrl";
 import type { ApiSource } from "./types";
 import {
   assetKindLabelsForConnector,
@@ -19,7 +20,7 @@ interface ImportPickerModalProps {
   kbId: number;
   apiSources: ApiSource[];
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (opts?: { databaseImportId?: number }) => void;
   notifyUser: (msg: string, tone?: "success" | "error" | "info", opts?: { persist?: boolean }) => void;
 }
 
@@ -144,12 +145,9 @@ export default function ImportPickerModal({
   }
 
   async function handleGitSave() {
-    if (!gitData.name.trim() || !gitData.owner.trim() || !gitData.repo.trim()) {
-      notifyUser("请填写显示名称、owner 与仓库名");
-      return;
-    }
-    if (!gitData.token.trim()) {
-      notifyUser("新建代码源时必须填写访问令牌");
+    const validationError = gitSourceValidationError(gitData, { requireToken: true });
+    if (validationError) {
+      notifyUser(validationError);
       return;
     }
     setSaving(true);
@@ -224,16 +222,16 @@ export default function ImportPickerModal({
     if (!dbSelectedDsId || dbSelectedNames.size === 0) return;
     setDbImporting(true);
     try {
-      await api(`/api/knowledge-bases/${kbId}/database-imports`, {
+      const res = await api<{ id: number }>(`/api/knowledge-bases/${kbId}/database-imports`, {
         method: "POST",
         body: JSON.stringify({
           datasource_id: dbSelectedDsId,
           database_names: Array.from(dbSelectedNames),
         }),
       });
-      notifyUser("数据库 Schema 已登记为证据包");
+      notifyUser("数据库已登记为证据包，正在自动触发语义清洗…", "info");
       onClose();
-      onSuccess();
+      onSuccess({ databaseImportId: res.id });
     } catch (e: unknown) {
       notifyUser(
         e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "导入失败",
@@ -330,9 +328,9 @@ export default function ImportPickerModal({
                 ← 返回
               </button>
             )}
-            <h2 className="app-section-title">本体清洗</h2>
+            <h2 className="app-section-title">导入数据</h2>
             <p className="text-xs text-app-muted mt-0.5">
-              选择连接器并配置；导入完成后由系统自动登记证据包，语义清洗在导入源卡片上触发
+              选择连接器并配置；导入完成后由系统自动登记证据包。数据源导入将自动语义清洗，其他源请在导入源卡片上触发语义清洗
             </p>
           </div>
           <button className="app-control-button" onClick={onClose}>
@@ -465,11 +463,7 @@ export default function ImportPickerModal({
                   className={`app-button w-full ${saving ? "is-loading" : ""}`}
                   type="button"
                   disabled={
-                    saving ||
-                    !gitData.name.trim() ||
-                    !gitData.owner.trim() ||
-                    !gitData.repo.trim() ||
-                    !gitData.token.trim()
+                    saving || gitSourceValidationError(gitData, { requireToken: true }) !== null
                   }
                   onClick={handleGitSave}
                 >

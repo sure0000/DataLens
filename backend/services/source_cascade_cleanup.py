@@ -35,7 +35,7 @@ from models import (
     PipelineRun,
     TableMeta,
 )
-from ontology import NS, chunk_iri, column_iri, kb_graph_iri, table_iri
+from ontology import NS, chunk_iri, column_iri, kb_graph_iri, legacy_column_iri, legacy_table_iri, table_iri
 from services.embedding_service import delete_embeddings_for_knowledge_entries
 from services.triple_store import get_triple_store
 
@@ -240,11 +240,13 @@ def _purge_physical_tables_for_import(
     for tid in table_ids:
         tid_int = int(tid)
         subjects.append(table_iri(tid_int))
+        subjects.append(legacy_table_iri(tid_int))
         col_names = db.execute(
             select(ColumnMeta.column_name).where(ColumnMeta.table_id == tid_int)
         ).scalars().all()
         for name in col_names:
             subjects.append(column_iri(tid_int, str(name)))
+            subjects.append(legacy_column_iri(tid_int, str(name)))
     return _purge_rdf_subjects(kb_id, subjects)
 
 

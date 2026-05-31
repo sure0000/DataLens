@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models import KnowledgeBase, PipelineRun
-from ontology import NS, kb_graph_iri
+from ontology import DATA_NS, NS, kb_graph_iri
 from services.ontology.provenance import build_entity_origin, fetch_grounded_sources
 from services.ontology.relation_predicates import (
     relation_predicate_in_clause,
     relation_predicate_local_names,
 )
 from services.ontology_store import sparql_query
+
+_logger = logging.getLogger(__name__)
 
 LAYER_KEYS = frozenset(
     {"vocabulary", "rule", "entity-concept", "dimension", "relation", "attribute"}
@@ -90,7 +93,8 @@ def _sparql_rows(query: str) -> list[dict[str, str]]:
     try:
         rows = sparql_query(query)
         return [{k: str(v) for k, v in row.items()} for row in rows]
-    except Exception:
+    except Exception as exc:
+        _logger.warning("SPARQL layer query failed: %s", exc)
         return []
 
 
@@ -198,6 +202,73 @@ def _count_queries(kb_id: int) -> dict[str, int]:
             }}
         """),
     }
+
+
+def _physical_table_subject_prefixes() -> tuple[str, ...]:
+    return (DATA_NS + "table/", NS + "data/table/")
+
+
+def is_physical_schema_subject(subject: str) -> bool:
+    s = subject or ""
+    return any(s.startswith(prefix) for prefix in _physical_table_subject_prefixes())
+
+
+def _count_physical_attribute_literals(kb_id: int) -> int:
+    graph, ns, _skos, rdf_ns, rdf_type = _graph_context(kb_id)
+    attr_exclude = ", ".join([f"<{rdf_type}>", f"<{ns}approvalStatus>"])
+    prefixes = " || ".join(
+        f'STRSTARTS(STR(?s), "{p}")' for p in _physical_table_subject_prefixes()
+    )
+    return _sparql_count(f"""
+        PREFIX dl: <{ns}>
+        PREFIX rdf: <{rdf_ns}>
+        SELECT (COUNT(*) AS ?c) WHERE {{
+            GRAPH <{graph}> {{
+                ?s ?p ?o .
+                FILTER(isLiteral(?o))
+                FILTER(?p NOT IN ({attr_exclude}))
+                FILTER({prefixes})
+            }}
+        }}
+    """)
+
+
+def _attribute_sort_key(item: dict[str, str]) -> tuple[int, int, str, str, str]:
+    subject = str(item.get("s", ""))
+    physical_rank = 0 if is_physical_schema_subject(subject) else 1
+    # 表级断言（businessSummary 等）排在列字段之前
+    column_rank = 1 if "/column/" in subject else 0
+    label = str(item.get("subjectLabel") or "")
+    pred = str(item.get("p") or "")
+    return (physical_rank, column_rank, label.lower(), pred, subject)
+
+
+def _attribute_row_matches_query(item: dict[str, str], query: str) -> bool:
+    q = query.strip().lower()
+    if not q:
+        return True
+    parts = [
+        str(item.get("subjectLabel") or ""),
+        str(item.get("s") or ""),
+        str(item.get("p") or ""),
+        str(item.get("o") or ""),
+    ]
+    blob = " ".join(parts).lower()
+    return q in blob
+
+
+def _apply_attribute_filters(
+    items: list[dict[str, str]],
+    *,
+    q: str | None = None,
+    physical_only: bool = False,
+) -> list[dict[str, str]]:
+    filtered = items
+    if physical_only:
+        filtered = [i for i in filtered if is_physical_schema_subject(str(i.get("s", "")))]
+    if q and q.strip():
+        filtered = [i for i in filtered if _attribute_row_matches_query(i, q)]
+    return sorted(filtered, key=_attribute_sort_key)
 
 
 def _fetch_layer_items(kb_id: int, layer_key: str) -> list[dict[str, str]]:
@@ -318,18 +389,20 @@ def _fetch_layer_items(kb_id: int, layer_key: str) -> list[dict[str, str]]:
 
     if layer_key == "attribute":
         attr_exclude = ", ".join([f"<{rdf_type}>", f"<{ns}approvalStatus>"])
-        return _sparql_rows(f"""
+        rows = _sparql_rows(f"""
             PREFIX dl: <{ns}>
             PREFIX skos: <{skos}>
             PREFIX rdf: <{rdf_ns}>
-            SELECT ?s ?p ?o WHERE {{
+            SELECT ?s ?p ?o ?subjectLabel WHERE {{
                 GRAPH <{graph}> {{
                     ?s ?p ?o .
                     FILTER(isLiteral(?o))
                     FILTER(?p NOT IN ({attr_exclude}))
+                    OPTIONAL {{ ?s skos:prefLabel ?subjectLabel }}
                 }}
             }}
         """)
+        return _apply_attribute_filters(rows)
 
     return []
 
@@ -338,12 +411,17 @@ def _build_summary_layers(counts: dict[str, int]) -> dict[str, dict[str, Any]]:
     layers: dict[str, dict[str, Any]] = {}
     for key in LAYER_KEYS:
         meta = _LAYER_META[key]
-        layers[key] = {
+        layer_entry: dict[str, Any] = {
             "label": meta["label"],
             "description": meta["description"],
             "ontology_class": meta["ontology_class"],
             "total": counts.get(key, 0),
         }
+        if key == "attribute":
+            physical_total = int(counts.get("attribute_physical") or 0)
+            if physical_total > 0:
+                layer_entry["physical_total"] = physical_total
+        layers[key] = layer_entry
         criteria = _LAYER_CRITERIA.get(key)
         if criteria:
             layers[key]["criteria"] = criteria
@@ -357,6 +435,7 @@ def get_cleaning_results(
     include_items: bool = False,
 ) -> dict[str, Any]:
     counts = _count_queries(kb_id)
+    counts["attribute_physical"] = _count_physical_attribute_literals(kb_id)
     layers = _build_summary_layers(counts)
 
     if include_items:
@@ -390,6 +469,8 @@ def get_modeling_layer(
     *,
     limit: int = 50,
     offset: int = 0,
+    q: str | None = None,
+    physical_only: bool = False,
 ) -> dict[str, Any]:
     normalized = normalize_layer_key(layer_key)
     if not normalized:
@@ -401,8 +482,26 @@ def get_modeling_layer(
 
     meta = _LAYER_META[normalized]
     counts = _count_queries(kb_id)
-    total = counts.get(normalized, 0)
-    all_items = _fetch_layer_items(kb_id, normalized)
+    unfiltered_total = counts.get(normalized, 0)
+
+    if normalized == "attribute":
+        raw_rows = _sparql_rows(_attribute_layer_sparql(kb_id))
+        all_items = _apply_attribute_filters(
+            raw_rows,
+            q=q,
+            physical_only=physical_only,
+        )
+        total = len(all_items)
+    else:
+        all_items = _fetch_layer_items(kb_id, normalized)
+        if q and q.strip():
+            ql = q.strip().lower()
+            all_items = [
+                i
+                for i in all_items
+                if ql in " ".join(str(v) for v in i.values() if v).lower()
+            ]
+        total = len(all_items) if (q and q.strip()) else unfiltered_total
 
     safe_offset = max(0, offset)
     safe_limit = max(1, min(limit, 2000))
@@ -418,7 +517,7 @@ def get_modeling_layer(
         enriched["origin"] = build_entity_origin(kb, src or None)
         enriched_page.append(enriched)
 
-    return {
+    result: dict[str, Any] = {
         "ok": True,
         "kb_id": kb_id,
         "layer_key": normalized,
@@ -427,11 +526,37 @@ def get_modeling_layer(
         "ontology_class": meta["ontology_class"],
         "criteria": _LAYER_CRITERIA.get(normalized),
         "total": total,
+        "unfiltered_total": unfiltered_total,
         "offset": safe_offset,
         "limit": safe_limit,
         "has_more": has_more,
         "items": enriched_page,
     }
+    if normalized == "attribute":
+        result["physical_total"] = _count_physical_attribute_literals(kb_id)
+        if physical_only:
+            result["physical_only"] = True
+        if q and q.strip():
+            result["q"] = q.strip()
+    return result
+
+
+def _attribute_layer_sparql(kb_id: int) -> str:
+    graph, ns, skos, rdf_ns, rdf_type = _graph_context(kb_id)
+    attr_exclude = ", ".join([f"<{rdf_type}>", f"<{ns}approvalStatus>"])
+    return f"""
+        PREFIX dl: <{ns}>
+        PREFIX skos: <{skos}>
+        PREFIX rdf: <{rdf_ns}>
+        SELECT ?s ?p ?o ?subjectLabel WHERE {{
+            GRAPH <{graph}> {{
+                ?s ?p ?o .
+                FILTER(isLiteral(?o))
+                FILTER(?p NOT IN ({attr_exclude}))
+                OPTIONAL {{ ?s skos:prefLabel ?subjectLabel }}
+            }}
+        }}
+    """
 
 
 def count_layers_for_kb(kb_id: int) -> dict[str, int]:

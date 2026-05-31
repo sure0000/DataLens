@@ -25,6 +25,7 @@ import GitSourceForm, {
   defaultGitFormData,
   type GitSourceFormData,
 } from "../../../components/knowledge-bases/GitSourceForm";
+import { gitSourceValidationError } from "../../../lib/parseGitRepoUrl";
 import ImportPickerModal from "../../../components/knowledge-bases/ImportPickerModal";
 import EvidencePackageList from "../../../components/knowledge-bases/EvidencePackageList";
 import { kbModelingSectionUrl } from "../../../lib/ontologyRoutes";
@@ -46,8 +47,8 @@ import {
 import SemanticCleanChoiceDialog, {
   type SemanticCleanResumeOptions,
 } from "../../../components/knowledge-bases/SemanticCleanChoiceDialog";
+import { databaseImportDisplayTitle } from "../../../components/knowledge-bases/pipelineDisplay";
 import { importSourceCleaningKey } from "../../../components/knowledge-bases/sourceCleaningKey";
-
 type GitHubDiagProbe = {
   reachable?: boolean;
   http_status?: number;
@@ -116,6 +117,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
 
   // ── Settings menu ──
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
+  const [settingsSchemaSyncing, setSettingsSchemaSyncing] = useState(false);
   const settingsMenuRef = useRef<HTMLDivElement>(null);
 
   // ── Database imports ──
@@ -329,7 +331,10 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
           clearCleaningState();
           if (now === "failed") {
             const reason = (stat.message || stat.failure_reason || "").trim();
-            notifyUser(reason ? `语义清洗失败：${reason}` : "语义清洗失败，请重试", "error");
+            notifyUser(
+              reason ? `语义清洗失败：${reason}` : "语义清洗失败，请重试",
+              "error",
+            );
           } else if (now === "completed") {
             notifyUser("语义清洗已完成", "success");
           }
@@ -389,7 +394,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       return {
         sourceId: source.data.id,
         sourceType: "database",
-        label: source.data.datasource_name || "数据库导入",
+        label: databaseImportDisplayTitle(source.data),
       };
     }
     if (source.kind === "api") {
@@ -425,9 +430,17 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     sourceType: string,
     opts: { resume: boolean; resumeFromRunId?: number },
   ) {
+    const isDatabase = sourceType === "database";
     setCleaningSourceKey(cleaningKeyForSourceType(sourceType, sourceId));
     armPollBurst();
-    notifyUser(opts.resume ? "正在从上次失败处续跑…" : "正在触发语义清洗（完整重跑）…", "info");
+    notifyUser(
+      opts.resume
+        ? "正在从上次失败处续跑…"
+        : isDatabase
+          ? "正在触发语义清洗（表结构入本体）…"
+          : "正在触发语义清洗（完整重跑）…",
+      "info",
+    );
     try {
       const params = new URLSearchParams({ source_type: sourceType });
       if (opts.resume) {
@@ -439,15 +452,71 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
       await api(`/api/knowledge-bases/${kbId}/sources/${sourceId}/clean?${params.toString()}`, {
         method: "POST",
       });
-      notifyUser(opts.resume ? "续跑已启动，正在后台运行…" : "语义清洗已触发，正在后台运行…", "success");
+      notifyUser(
+        opts.resume
+          ? "续跑已启动，正在后台运行…"
+          : isDatabase
+            ? "语义清洗已启动，可在「建模与质量 → 五层结果 → 属性层」查看进度"
+            : "语义清洗已触发，正在后台运行…",
+        "success",
+      );
       void fetchSourceCleaningStats();
       void refreshModelingSnapshot();
+      void loadCleaningResults();
+      setEvidenceRefreshSeq((n) => n + 1);
     } catch (e: unknown) {
       notifyUser(
-        e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "清洗启动失败",
+        e instanceof ApiError
+          ? formatApiError(e)
+          : e instanceof Error
+            ? e.message
+            : isDatabase
+              ? "语义清洗启动失败"
+              : "清洗启动失败",
         "error",
       );
       setCleaningSourceKey(null);
+    }
+  }
+
+  async function syncAllDatabaseSchemasFromSettings() {
+    if (databaseImports.length === 0) {
+      notifyUser("暂无数据库导入源，请先通过「导入数据」接入数据源", "info");
+      return;
+    }
+    setSettingsSchemaSyncing(true);
+    setSettingsMenuOpen(false);
+    armPollBurst();
+    notifyUser(
+      databaseImports.length > 1
+        ? `正在为 ${databaseImports.length} 个数据库源触发语义清洗…`
+        : "正在触发语义清洗（表结构入本体）…",
+      "info",
+    );
+    try {
+      for (const di of databaseImports) {
+        setCleaningSourceKey(importSourceCleaningKey("database", di.id));
+        await api(
+          `/api/knowledge-bases/${kbId}/sources/${di.id}/clean?source_type=database`,
+          { method: "POST" },
+        );
+      }
+      notifyUser(
+        "语义清洗已启动，可在「建模与质量 → 五层结果 → 属性层」查看进度",
+        "success",
+      );
+      void fetchSourceCleaningStats();
+      void refreshModelingSnapshot();
+      void loadCleaningResults();
+      setEvidenceRefreshSeq((n) => n + 1);
+    } catch (e: unknown) {
+      notifyUser(
+        e instanceof ApiError ? formatApiError(e) : e instanceof Error ? e.message : "语义清洗启动失败",
+        "error",
+      );
+      setCleaningSourceKey(null);
+    } finally {
+      setSettingsSchemaSyncing(false);
     }
   }
 
@@ -546,8 +615,9 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
   }
 
   async function saveGitEdit() {
-    if (!gitFormData.name.trim() || !gitFormData.owner.trim() || !gitFormData.repo.trim()) {
-      notifyUser("请填写显示名称、owner 与仓库名");
+    const validationError = gitSourceValidationError(gitFormData, { isEditing: true });
+    if (validationError) {
+      notifyUser(validationError);
       return;
     }
     setGitSaving(true);
@@ -627,11 +697,11 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
     <main className="app-page">
       <PageHeader
         breadcrumbs={[
-          { label: "本体清洗", href: "/knowledge-bases" },
+          { label: "本体知识库", href: "/knowledge-bases" },
           { label: kb?.name || "…" },
         ]}
-        title={kb?.name || "本体清洗"}
-        subtitle={kb?.description || "本体清洗：登记证据包并在导入源上触发语义清洗。"}
+        title={kb?.name || "本体知识库"}
+        subtitle={kb?.description || "本体知识库：登记证据包并在导入源上触发语义清洗。"}
         actions={
           <div className="app-toolbar flex-wrap">
             <Link
@@ -649,7 +719,25 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
                 设置
               </button>
               {settingsMenuOpen && (
-                <div className="absolute right-0 top-full mt-1 z-50 min-w-[120px] rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] py-1 shadow-lg">
+                <div className="absolute right-0 top-full mt-1 z-50 min-w-[200px] rounded-lg border border-[var(--app-border)] bg-[var(--app-surface)] py-1 shadow-lg">
+                  {databaseImports.length > 0 && (
+                    <>
+                      <button
+                        className="block w-full px-4 py-2 text-left text-sm text-[var(--app-text-primary)] hover:bg-[var(--app-bg-hover)] disabled:opacity-50"
+                        type="button"
+                        disabled={settingsSchemaSyncing || cleaningSourceKey != null}
+                        title={
+                          databaseImports.length > 1
+                            ? `为 ${databaseImports.length} 个数据库导入源触发语义清洗（表结构入本体）`
+                            : "将已分析表结构与字段语义写入本体属性层"
+                        }
+                        onClick={() => void syncAllDatabaseSchemasFromSettings()}
+                      >
+                        {settingsSchemaSyncing ? "清洗中…" : "语义清洗"}
+                      </button>
+                      <div className="my-1 border-t border-[var(--app-border)]" role="separator" />
+                    </>
+                  )}
                   <button
                     className="block w-full px-4 py-2 text-left text-sm text-[var(--app-text-primary)] hover:bg-[var(--app-bg-hover)]"
                     type="button"
@@ -668,7 +756,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
               )}
             </div>
             <button className="app-button app-toolbar-action" type="button" onClick={() => setImportPickerOpen(true)}>
-              本体清洗
+              导入数据
             </button>
           </div>
         }
@@ -710,7 +798,7 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
           <section className="mt-8 space-y-3">
             <h2 className="app-section-title">证据包登记</h2>
             <p className="text-xs text-app-muted">
-              导入层统一视图：按连接器/导入源自动登记，仅作溯源与进度展示。需推进建模时，请在上方对应导入源上点击「语义清洗」。
+              导入层统一视图：按连接器/导入源自动登记，仅作溯源与进度展示。数据库源可在右上角「设置 → 语义清洗」或源卡片按钮触发入图。
             </p>
             <EvidencePackageList
               kbId={kbId}
@@ -727,8 +815,13 @@ export default function KnowledgeBaseDetailPage({ params }: { params: { id: stri
             kbId={kbId}
             apiSources={apiSources}
             onClose={() => setImportPickerOpen(false)}
-            onSuccess={async () => {
+            onSuccess={async (opts) => {
               armPollBurst();
+              if (opts?.databaseImportId != null) {
+                setCleaningSourceKey(
+                  importSourceCleaningKey("database", opts.databaseImportId),
+                );
+              }
               try {
                 const snap = await fetchKbSourcesSnapshot(kbId);
                 applySourcesSnapshot(snap);

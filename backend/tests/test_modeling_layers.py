@@ -111,6 +111,48 @@ def test_normalize_layer_key_aliases():
     assert ml.normalize_layer_key("invalid") is None
 
 
+def test_attribute_physical_only_first_page(monkeypatch):
+    import os
+
+    from config import get_settings
+    from ontology import NS, kb_graph_iri, table_iri
+    from services import ontology_store as osmod
+    from services.ontology_store import insert_graph
+
+    monkeypatch.setenv("FUSEKI_FALLBACK_MEMORY", "true")
+    monkeypatch.delenv("FUSEKI_URL", raising=False)
+    get_settings.cache_clear()
+    osmod.reset_triple_store()
+
+    kb_id = 88
+    graph = kb_graph_iri(kb_id)
+    ti = table_iri(99)
+    insert_graph(
+        graph,
+        f"<{ti}> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <{NS}PhysicalTable> .\n"
+        f'<{ti}> <http://www.w3.org/2004/02/skos/core#prefLabel> "orders"@zh .\n'
+        f'<{ti}> <{NS}businessSummary> "订单表摘要"@zh .\n'
+        f'<http://ex/term1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <{NS}BusinessTerm> .\n'
+        f'<http://ex/term1> <http://www.w3.org/2004/02/skos/core#prefLabel> "ZZZ术语"@zh .\n'
+        f'<http://ex/term1> <{NS}confidence> "90" .\n',
+    )
+
+    db = MagicMock()
+    kb = MagicMock()
+    kb.id = kb_id
+    kb.name = "KB"
+    db.get.return_value = kb
+
+    with patch.object(ml, "fetch_grounded_sources", return_value={}):
+        page = ml.get_modeling_layer(db, kb_id, "attribute", limit=5, offset=0, physical_only=True)
+
+    assert page["total"] >= 1
+    assert all("/table/" in (row.get("s") or "") for row in page["items"])
+
+    osmod.reset_triple_store()
+    get_settings.cache_clear()
+
+
 def test_count_queries_sees_inserted_business_term(monkeypatch):
     """五层计数须能匹配入图时使用的 rdf:type 谓词（修复错误 rdf: 前缀）。"""
     import os

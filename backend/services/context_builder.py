@@ -95,18 +95,34 @@ def tables_from_business_domain(db: Session, domain_id: int) -> list[TableMeta]:
 
 
 def kb_ids_for_business_domain(db: Session, business_domain_id: int) -> list[int]:
-    rows = db.execute(
+    """Return KB ids bound to a business domain.
+
+    Supports both explicit M:N links (``business_domain_knowledge_bases``) and KBs
+    owned via ``knowledge_bases.business_domain_id`` (current create/list API path).
+    """
+    out: list[int] = []
+    seen: set[int] = set()
+
+    def add(kid: int) -> None:
+        if kid in seen:
+            return
+        seen.add(kid)
+        out.append(kid)
+
+    for kid in db.execute(
         select(BusinessDomainKnowledgeBase.knowledge_base_id).where(
             BusinessDomainKnowledgeBase.domain_id == business_domain_id
         )
-    ).scalars().all()
-    out: list[int] = []
-    seen: set[int] = set()
-    for kid in rows:
-        i = int(kid)
-        if i not in seen:
-            seen.add(i)
-            out.append(i)
+    ).scalars().all():
+        add(int(kid))
+
+    for kid in db.execute(
+        select(KnowledgeBase.id)
+        .where(KnowledgeBase.business_domain_id == business_domain_id)
+        .order_by(KnowledgeBase.id.asc())
+    ).scalars().all():
+        add(int(kid))
+
     return out
 
 
@@ -931,12 +947,8 @@ def collect_knowledge_context_text(
         kb_ids.append(kid)
 
     if business_domain_id:
-        for kid in db.execute(
-            select(BusinessDomainKnowledgeBase.knowledge_base_id).where(
-                BusinessDomainKnowledgeBase.domain_id == business_domain_id
-            )
-        ).scalars().all():
-            add_kb(int(kid))
+        for kid in kb_ids_for_business_domain(db, business_domain_id):
+            add_kb(kid)
 
     pinned_ids: list[int] = []
     seen_ent: set[int] = set()

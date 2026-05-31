@@ -65,12 +65,16 @@ def evaluate_sql_execution_review(
         out_of_domain = [tid for tid in sql_ids if tid not in domain_ids]
         out["out_of_domain_table_ids"] = out_of_domain
         if out_of_domain:
-            out["review_required"] = True
-            out["trust_level"] = "review"
-            out["execution_mode"] = "review"
             out["reasons"].append(
                 f"SQL 解析表 table_id={out_of_domain} 不在业务域挂载表范围内"
             )
+            if len(out_of_domain) >= len(sql_ids):
+                out["review_required"] = True
+                out["trust_level"] = "review"
+                out["execution_mode"] = "review"
+            else:
+                out["trust_level"] = "medium"
+                out["reasons"].append("部分引用表不在业务域挂载范围内，结果请人工核对")
 
     candidate_set = set(candidate_table_ids or [])
     if table_id:
@@ -79,12 +83,17 @@ def evaluate_sql_execution_review(
     if candidate_set:
         outside_candidate = [tid for tid in sql_ids if tid not in candidate_set]
         out["outside_candidate_table_ids"] = outside_candidate
-        if outside_candidate and len(outside_candidate) >= max(1, len(sql_ids) // 2):
+        if outside_candidate and len(outside_candidate) >= len(sql_ids):
             out["review_required"] = True
             out["trust_level"] = "review"
             out["execution_mode"] = "review"
             out["reasons"].append(
-                "SQL 引用表与路由候选集差异较大，建议确认后再执行"
+                "SQL 引用表均不在路由候选集内，建议确认后再执行"
+            )
+        elif outside_candidate:
+            out["trust_level"] = "medium"
+            out["reasons"].append(
+                f"部分引用表 table_id={outside_candidate} 不在路由候选集内"
             )
 
     if not out["review_required"] and len(sql_ids) > 1:

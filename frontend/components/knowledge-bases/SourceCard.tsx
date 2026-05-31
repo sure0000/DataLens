@@ -7,6 +7,12 @@ import {
   canSemanticCleanSource,
   semanticCleanDisabledReason,
 } from "./documentIndexPolicy";
+import {
+  databaseCleaningStatusText,
+  databaseImportDisplaySubtitle,
+  databaseImportDisplayTitle,
+  databaseSemanticCleanButtonLabel,
+} from "./pipelineDisplay";
 import { isSourceActivelyCleaning } from "./sourceCleaningKey";
 import { indexSummaryLabel, summarizeDocs } from "./sourceIndexPolicy";
 import { docStatusChip, gitSyncStatusChip } from "./utils";
@@ -71,6 +77,12 @@ function SemanticCleanButton({
   const isCleaning = isSourceActivelyCleaning(itemCleaningKey, cleaningSourceKey, cleaningStat);
   const canClean = canSemanticCleanSource(source);
   const cleanReason = semanticCleanDisabledReason(source);
+  const label =
+    source.kind === "database"
+      ? databaseSemanticCleanButtonLabel(isCleaning)
+      : isCleaning
+        ? "清洗中…"
+        : "语义清洗";
 
   return (
     <button
@@ -83,7 +95,7 @@ function SemanticCleanButton({
         onSemanticClean?.(source);
       }}
     >
-      {isCleaning ? "清洗中…" : "语义清洗"}
+      {label}
     </button>
   );
 }
@@ -91,10 +103,42 @@ function SemanticCleanButton({
 function CleaningInfo({
   cleaningStat,
   isCleaning,
+  sourceKind,
 }: {
   cleaningStat?: SourceCleaningStat;
   isCleaning: boolean;
+  sourceKind?: SourceItem["kind"];
 }) {
+  if (sourceKind === "database") {
+    const { text, tone, failureReason } = databaseCleaningStatusText(cleaningStat, isCleaning);
+    const dateSuffix =
+      tone === "success" && cleaningStat?.completed_at
+        ? ` ${formatCleaningDate(cleaningStat.completed_at)}`
+        : "";
+    if (tone === "running") {
+      return <p className="mt-1 text-[11px] text-blue-600 font-medium">{text}</p>;
+    }
+    if (tone === "error") {
+      return (
+        <div className="mt-1 space-y-0.5">
+          <p className="text-[11px] text-app-muted">
+            {text}
+            {cleaningStat?.completed_at ? ` ${formatCleaningDate(cleaningStat.completed_at)}` : ""}
+          </p>
+          {failureReason ? (
+            <p className="text-[11px] text-red-600 leading-snug break-words line-clamp-3" title={failureReason}>
+              {failureReason}
+            </p>
+          ) : null}
+        </div>
+      );
+    }
+    if (tone === "success") {
+      return <p className="mt-1 text-[11px] text-app-muted">{text}{dateSuffix}</p>;
+    }
+    return <p className="mt-1 text-[11px] text-app-muted">{text}</p>;
+  }
+
   if (isCleaning) {
     return <p className="mt-1 text-[11px] text-blue-600 font-medium">清洗中…</p>;
   }
@@ -182,7 +226,7 @@ export default function SourceCard({
               <p className="mt-1.5 text-[11px] text-app-muted truncate leading-snug">{label}</p>
             ) : null;
           })()}
-          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} />
+          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} sourceKind={source.kind} />
         </Link>
         <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
           <SemanticCleanButton
@@ -245,7 +289,7 @@ export default function SourceCard({
               <p className="mt-1.5 text-[11px] text-app-muted truncate leading-snug">{label}</p>
             ) : null;
           })()}
-          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} />
+          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} sourceKind={source.kind} />
         </Link>
         <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
           <SemanticCleanButton
@@ -304,7 +348,7 @@ export default function SourceCard({
           {doc?.status === "failed" && doc.error_message && (
             <p className="mt-1 text-[11px] app-text-danger line-clamp-2 leading-snug break-words">{doc.error_message}</p>
           )}
-          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} />
+          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} sourceKind={source.kind} />
         </Link>
         <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
           <SemanticCleanButton
@@ -354,7 +398,7 @@ export default function SourceCard({
               {doc.char_count != null ? ` · ${doc.char_count.toLocaleString()} 字符` : ""}
             </p>
           )}
-          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} />
+          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} sourceKind={source.kind} />
         </Link>
         <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
           <SemanticCleanButton
@@ -372,8 +416,6 @@ export default function SourceCard({
   // Database import
   if (source.kind === "database") {
     const s = source.data;
-    const dbCount = s.database_names.length;
-    const dbList = s.database_names.join(", ");
     return (
       <article className="app-card app-card-interactive group flex flex-col gap-2 p-3 overflow-hidden">
         <Link
@@ -390,10 +432,10 @@ export default function SourceCard({
             </span>
             <div className="min-w-0 flex-1">
               <p className="font-semibold text-[13px] text-app-primary truncate leading-snug">
-                {s.datasource_name}
+                {databaseImportDisplayTitle(s)}
               </p>
               <p className="text-[11px] text-app-muted mt-0.5 truncate leading-snug">
-                {dbCount} 个数据库：{dbList}
+                {databaseImportDisplaySubtitle(s)}
               </p>
             </div>
           </div>
@@ -403,7 +445,7 @@ export default function SourceCard({
           {s.last_error && (
             <p className="mt-1 text-[11px] app-text-danger line-clamp-2 leading-snug break-words">{s.last_error}</p>
           )}
-          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} />
+          <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} sourceKind={source.kind} />
         </Link>
         <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
           <SemanticCleanButton
@@ -412,6 +454,7 @@ export default function SourceCard({
             cleaningSourceKey={cleaningSourceKey}
             cleaningStat={cleaningStat}
             onSemanticClean={onSemanticClean}
+            className="app-button-secondary text-[11px] h-7 px-2.5"
           />
         </div>
       </article>
@@ -456,7 +499,7 @@ export default function SourceCard({
         {doc?.status === "failed" && doc.error_message && (
           <p className="mt-1 text-[11px] app-text-danger line-clamp-2 leading-snug break-words">{doc.error_message}</p>
         )}
-        <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} />
+        <CleaningInfo cleaningStat={cleaningStat} isCleaning={isCleaning} sourceKind={source.kind} />
       </Link>
       <div className="flex flex-wrap items-center gap-1.5" onClick={(e) => e.preventDefault()}>
         <SemanticCleanButton

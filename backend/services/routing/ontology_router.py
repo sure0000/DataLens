@@ -22,6 +22,8 @@ def search_ontology_metrics_and_terms(
     db: Session,
     question: str,
     kb_ids: list[int],
+    *,
+    query_vector: list[float] | None = None,
 ) -> tuple[str, set[int], dict[int, float]]:
     """Return (context_text, bound_table_ids, table_bonuses)."""
     settings = get_settings()
@@ -31,7 +33,9 @@ def search_ontology_metrics_and_terms(
     try:
         from services.copilot.router import OntologyRouter
         router = OntologyRouter(_get_store())
-        concepts = router.route_concepts(kb_ids, question, top_k=15)
+        concepts = router.route_concepts(
+            kb_ids, question, top_k=15, db=db, query_vector=query_vector
+        )
     except Exception:
         return "", set(), {}
 

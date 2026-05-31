@@ -25,6 +25,7 @@ REASON_LABELS: dict[str, str] = {
     "unexpected_error": "流水线异常终止",
     "already_running": "已有正在运行的抽取任务",
     "shacl_blocked": "入图被 SHACL 校验拦截，请查看建模与质量页",
+    "no_attributes_written": "语义清洗未写入任何属性，请确认表已在数据源侧完成 AI 分析",
     "no_triples_written": "入图未写入任何三元组",
     "no_triples": (
         "抽取已完成但未产生可入图三元组。请确认仓库含表间依赖或 JOIN 类逻辑"

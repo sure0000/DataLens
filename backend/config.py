@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     copilot_lineage_expand_top_k: int = Field(default=4, ge=0, le=20, alias="COPILOT_LINEAGE_EXPAND_TOP_K")
     copilot_routing_weight_lineage: float = Field(default=0.006, ge=0.0, alias="COPILOT_ROUTING_WEIGHT_LINEAGE")
     copilot_join_blacklist: str = Field(default="", alias="COPILOT_JOIN_BLACKLIST")
+    # 为 true 时，sql_review 判定需 review 则跳过自动执行；默认 false，仍执行并在结果中提示风险
+    copilot_sql_review_blocks_execution: bool = Field(
+        default=False, alias="COPILOT_SQL_REVIEW_BLOCKS_EXECUTION"
+    )
     # 语义流水线：超过此秒数未更新 progress_at 的 running 任务视为卡住（默认 15 分钟）
     pipeline_run_timeout_seconds: int = Field(default=900, ge=60, le=3600, alias="PIPELINE_RUN_TIMEOUT_SECONDS")
     # 单次抽取最多处理的文档分块数（每块 1 次 LLM；4 个 chunk 步骤串行）

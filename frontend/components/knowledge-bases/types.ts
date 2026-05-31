@@ -277,17 +277,19 @@ export type DatabaseTableNode = {
   analyzed_at: string | null;
 };
 
-/** 本体清洗五层中的一层（摘要，不含明细 items） */
+/** 本体知识库五层中的一层（摘要，不含明细 items） */
 export type OntologyCleaningLayer = {
   label: string;
   description: string;
   total: number;
+  /** 属性层：数据源物理表/列入图条数（database_schema_sync） */
+  physical_total?: number;
   ontology_class: string;
   criteria?: Record<string, string | number | boolean | string[]>;
   items?: Record<string, string>[];
 };
 
-/** 本体清洗五层结果 */
+/** 本体知识库五层结果 */
 export type OntologyCleaningResults = {
   ok: boolean;
   kb_id: number;
@@ -305,6 +307,10 @@ export type OntologyLayerDetail = {
   ontology_class: string;
   criteria?: Record<string, string | number | boolean | string[]>;
   total: number;
+  unfiltered_total?: number;
+  physical_total?: number;
+  physical_only?: boolean;
+  q?: string;
   offset: number;
   limit: number;
   has_more: boolean;

@@ -223,8 +223,13 @@ def list_evidence_packages(db: Session, kb_id: int) -> list[dict[str, Any]]:
                 "asset_label": ASSET_LABELS["physical_schema"],
                 "connector": "database",
                 "connector_label": CONNECTOR_LABELS["database"],
-                "title": f"{di.datasource_name}: {', '.join(di.database_names or [])}",
+                "title": (
+                    f"{di.datasource_name} / {', '.join(di.database_names or [])}"
+                    if di.database_names
+                    else di.datasource_name
+                ),
                 "source_ref": {
+                    "import_id": di.id,
                     "datasource_id": di.datasource_id,
                     "database_names": di.database_names,
                 },

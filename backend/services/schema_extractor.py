@@ -2,6 +2,8 @@ import re
 import sqlite3
 from collections.abc import Iterable
 from contextlib import contextmanager
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 import psycopg2
@@ -701,6 +703,33 @@ def get_row_count(conn_info: dict[str, Any], table_name: str) -> int:
     raise ValueError(f"不支持的数据源类型: {st}")
 
 
+def _json_safe_cell(value: Any) -> Any:
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value)
+
+
+def _normalize_query_result(columns: list[str], rows: list[Any]) -> dict[str, Any]:
+    norm_rows: list[dict[str, Any]] = []
+    for row in rows:
+        if isinstance(row, dict):
+            norm_rows.append({str(k): _json_safe_cell(v) for k, v in row.items()})
+        else:
+            norm_rows.append({columns[i]: _json_safe_cell(row[i]) for i in range(min(len(columns), len(row)))})
+    return {
+        "ok": True,
+        "columns": [str(c) for c in columns],
+        "rows": norm_rows,
+        "row_count": len(norm_rows),
+    }
+
+
 def execute_readonly_sql(conn_info: dict[str, Any], sql: str, limit: int = 200) -> dict[str, Any]:
     sql_clean = sql.strip().rstrip(";")
     lowered = sql_clean.lower()
@@ -720,7 +749,7 @@ def execute_readonly_sql(conn_info: dict[str, Any], sql: str, limit: int = 200) 
                 cursor.execute(sql_clean)
             rows = list(cursor.fetchall())[:limit]
             columns = list(rows[0].keys()) if rows else [d[0] for d in (cursor.description or [])]
-            return {"ok": True, "columns": columns, "rows": rows}
+            return _normalize_query_result(columns, rows)
 
     if _is_postgres_family(st):
         with postgres_conn(conn_info) as conn, conn.cursor(cursor_factory=RealDictCursor) as cursor:
@@ -730,7 +759,7 @@ def execute_readonly_sql(conn_info: dict[str, Any], sql: str, limit: int = 200) 
                 cursor.execute(sql_clean)
             rows = list(cursor.fetchall())[:limit]
             columns = list(rows[0].keys()) if rows else [d[0] for d in (cursor.description or [])]
-            return {"ok": True, "columns": columns, "rows": rows}
+            return _normalize_query_result(columns, rows)
 
     if st == "sqlserver":
         with sqlserver_conn(conn_info) as conn, conn.cursor() as cursor:
@@ -741,7 +770,7 @@ def execute_readonly_sql(conn_info: dict[str, Any], sql: str, limit: int = 200) 
             rows = cursor.fetchall()
             rows = rows[:limit] if rows else []
             columns = list(rows[0].keys()) if rows else [d[0] for d in (cursor.description or [])]
-            return {"ok": True, "columns": columns, "rows": [dict(r) for r in rows]}
+            return _normalize_query_result(columns, [dict(r) for r in rows])
 
     if st == "sqlite":
         with sqlite_conn(conn_info) as conn, _sqlite_cursor(conn) as cursor:
@@ -752,7 +781,7 @@ def execute_readonly_sql(conn_info: dict[str, Any], sql: str, limit: int = 200) 
             rows = cursor.fetchall()
             rows = rows[:limit]
             columns = list(rows[0].keys()) if rows else [d[0] for d in (cursor.description or [])]
-            return {"ok": True, "columns": columns, "rows": [dict(r) for r in rows]}
+            return _normalize_query_result(columns, [dict(r) for r in rows])
 
     if st == "trino":
         conn = _trino_connection(conn_info)
@@ -765,7 +794,7 @@ def execute_readonly_sql(conn_info: dict[str, Any], sql: str, limit: int = 200) 
         data = cur.fetchmany(limit)
         conn.close()
         rows = [dict(zip(cols, row)) for row in data]
-        return {"ok": True, "columns": cols, "rows": rows}
+        return _normalize_query_result(cols, rows)
 
     if st == "clickhouse":
         client = _clickhouse_client(conn_info)
@@ -776,7 +805,7 @@ def execute_readonly_sql(conn_info: dict[str, Any], sql: str, limit: int = 200) 
             data = data[:limit]
         col_names = [c[0] for c in cols]
         rows = [dict(zip(col_names, row)) for row in data]
-        return {"ok": True, "columns": col_names, "rows": rows}
+        return _normalize_query_result(col_names, rows)
 
     if st == "hive":
         with hive_conn(conn_info) as conn:
@@ -788,6 +817,6 @@ def execute_readonly_sql(conn_info: dict[str, Any], sql: str, limit: int = 200) 
             cols = [d[0] for d in (cur.description or [])]
             data = cur.fetchmany(limit)
             rows = [dict(zip(cols, row)) for row in (data or [])]
-            return {"ok": True, "columns": cols, "rows": rows}
+            return _normalize_query_result(cols, rows)
 
-    return {"ok": False, "error": f"不支持的数据源类型: {st}", "columns": [], "rows": []}
+    return {"ok": False, "error": f"不支持的数据源类型: {st}", "columns": [], "rows": [], "row_count": 0}

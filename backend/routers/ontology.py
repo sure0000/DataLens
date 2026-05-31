@@ -414,6 +414,11 @@ def get_modeling_layer(
     layer_key: str,
     limit: int = Query(20, ge=1, le=2000),
     offset: int = Query(0, ge=0),
+    q: str | None = Query(None, description="全层搜索（属性层支持表名/字段/属性值）"),
+    physical_only: bool = Query(
+        False,
+        description="属性层：仅返回数据源物理表/列（database_schema_sync 入图）",
+    ),
     db: Session = Depends(get_db),
 ) -> dict:
     """Return a single cleaning layer (vocabulary, rule, dimension, relation, …)."""
@@ -422,7 +427,15 @@ def get_modeling_layer(
         raise HTTPException(status_code=404, detail="知识库不存在")
     from services.ontology.modeling_layers import get_modeling_layer as _layer
 
-    result = _layer(db, kb_id, layer_key, limit=limit, offset=offset)
+    result = _layer(
+        db,
+        kb_id,
+        layer_key,
+        limit=limit,
+        offset=offset,
+        q=q,
+        physical_only=physical_only,
+    )
     if not result.get("ok"):
         raise HTTPException(status_code=404, detail=result.get("error", "未知清洗层"))
     return result

@@ -513,8 +513,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
             <Link
               href="/knowledge-bases"
               className={`app-control-button flex h-9 w-9 shrink-0 items-center justify-center p-0 no-underline ${isActive(pathname, "/knowledge-bases") ? "border-app-activeBorder bg-app-activeBg text-app-primary" : ""}`}
-              title="本体清洗"
-              aria-label="本体清洗"
+              title="本体知识库"
+              aria-label="本体知识库"
             >
               <Icon name="book" className="h-4 w-4" />
             </Link>
@@ -571,7 +571,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               className={`app-nav-item rounded-lg ${isActive(pathname, "/knowledge-bases") ? "is-active" : ""}`}
             >
               <Icon name="book" className="h-4 w-4 shrink-0" />
-              <span>本体清洗</span>
+              <span>本体知识库</span>
             </Link>
             <Link
               href={ontologyNavHref}

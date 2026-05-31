@@ -158,8 +158,16 @@ def run_ontology_match(
             detail=f"Fuseki 不可达：{settings.fuseki_url}",
         )
 
+        from services.embedding_service import _embed
+
+        query_vector: list[float] | None = None
+        try:
+            query_vector = _embed([q])[0]
+        except Exception:
+            query_vector = None
+
         router = OntologyRouter(store)
-        route = router.full_route(kb_ids, q, top_k=12)
+        route = router.full_route(kb_ids, q, top_k=12, db=db, query_vector=query_vector)
         concepts = route.get("concepts") or []
         tables = route.get("tables") or []
     except Exception as exc:
@@ -214,7 +222,8 @@ def run_ontology_match(
             "iri": iri,
             "label": label,
             "type": _concept_kind(ctype),
-            "source": "sparql",
+            "source": str(c.get("match_source") or "sparql"),
+            "match_score": c.get("match_score"),
             "maps_to": item.get("maps_to") or "",
         })
         if item["kind"] == "metric":
@@ -274,7 +283,10 @@ def run_ontology_match(
         if len(mappings) > 10:
             mapping_lines.append(f"… 另有 {len(mappings) - 10} 条映射未展开")
         summary = "\n".join(mapping_lines)
-        detail = "SPARQL 命中概念 {} 个、关联物理表 {} 个。".format(len(concepts), len(tables))
+        sources = ", ".join(sorted({str(c.get("match_source") or "unknown") for c in concepts}))
+        detail = "混合路由命中概念 {} 个（{}）、关联物理表 {} 个。".format(
+            len(concepts), sources or "—", len(tables)
+        )
     else:
         summary = (
             "【问题 → 本体映射】\n"
@@ -282,7 +294,7 @@ def run_ontology_match(
             "映射结果：未在本体知识库中找到与问题语义匹配的术语、指标或物理表。\n"
             "建议：在知识库完成语义清洗与本体建模后重试，或在提问中直接使用已建模的指标/术语名称。"
         )
-        detail = "SPARQL 未命中概念（kb_ids={}）。".format(kb_ids)
+        detail = "混合路由未命中概念（kb_ids={}，策略=substring+embedding+keyword）。".format(kb_ids)
 
     return OntologyMatchResult(
         matched=matched,

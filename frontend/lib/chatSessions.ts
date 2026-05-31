@@ -4,6 +4,7 @@ export type QueryResult = {
   ok: boolean;
   columns: string[];
   rows: Record<string, unknown>[];
+  row_count?: number;
   error?: string;
   review_required?: boolean;
 };

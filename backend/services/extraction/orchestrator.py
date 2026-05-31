@@ -755,7 +755,7 @@ async def run_database_schema_pipeline(db: Session, kb_id: int, import_id: int) 
             "status": "skipped",
             "reason": "no_tables_found",
             "steps": {
-                "_pipeline": {"status": "skipped", "reason": "no_tables_found"},
+                "_pipeline": {"status": "skipped", "reason": "no_tables_found", "pipeline_kind": "database_schema_sync"},
                 "physical_schema": {"status": "skipped", "reason": "no_tables_found"},
             },
         }
@@ -767,7 +767,7 @@ async def run_database_schema_pipeline(db: Session, kb_id: int, import_id: int) 
             "status": "skipped",
             "reason": "no_analyzed_tables",
             "steps": {
-                "_pipeline": {"status": "skipped", "reason": "no_analyzed_tables"},
+                "_pipeline": {"status": "skipped", "reason": "no_analyzed_tables", "pipeline_kind": "database_schema_sync"},
                 "physical_schema": {
                     "status": "skipped",
                     "reason": "no_analyzed_tables",
@@ -776,21 +776,70 @@ async def run_database_schema_pipeline(db: Session, kb_id: int, import_id: int) 
             },
         }
 
+    from models import TableKnowledgeBase
+
     synced = 0
     line_count = 0
+    literal_count = 0
+    shacl_blocked = False
     for tid in done_ids:
-        line_count += sync_physical_table_to_ontology(db, tid, kb_id)
+        out = sync_physical_table_to_ontology(db, tid, kb_id, datasource_id=di.datasource_id)
+        written = int(out.get("written") or 0)
+        line_count += written
+        literal_count += int(out.get("literal_count") or 0)
+        if out.get("shacl_blocked"):
+            shacl_blocked = True
         synced += 1
+        existing_link = db.execute(
+            select(TableKnowledgeBase).where(
+                TableKnowledgeBase.table_id == tid,
+                TableKnowledgeBase.knowledge_base_id == kb_id,
+            )
+        ).scalar_one_or_none()
+        if existing_link is None:
+            db.add(TableKnowledgeBase(table_id=tid, knowledge_base_id=kb_id))
+    db.commit()
+
+    if shacl_blocked or literal_count == 0:
+        return {
+            "status": "failed",
+            "reason": "shacl_blocked" if shacl_blocked else "no_attributes_written",
+            "steps": {
+                "physical_schema": {
+                    "status": "failed",
+                    "reason": "shacl_blocked" if shacl_blocked else "no_attributes_written",
+                    "tables": synced,
+                    "statements": line_count,
+                },
+                "_pipeline": {
+                    "status": "failed",
+                    "pipeline_kind": "database_schema_sync",
+                    "reason": "shacl_blocked" if shacl_blocked else "no_attributes_written",
+                    "message": "Schema 入图被 SHACL 拦截，请到「质量与隔离」查看详情"
+                    if shacl_blocked
+                    else "语义清洗未写入任何属性，请确认表已在数据源侧完成 AI 分析",
+                },
+            },
+        }
 
     steps: dict[str, Any] = {
-        "physical_schema": {"status": "done", "tables": synced, "statements": line_count},
+        "physical_schema": {
+            "status": "done",
+            "tables": synced,
+            "statements": line_count,
+            "literal_attributes": literal_count,
+        },
+        "_pipeline": {
+            "status": "completed",
+            "pipeline_kind": "database_schema_sync",
+            "message": f"已同步 {synced} 张已分析表到本体",
+        },
     }
     if pending:
-        steps["_pipeline"] = {
-            "status": "completed",
-            "reason": f"synced_with_pending:{pending}",
-            "message": f"已同步 {synced} 张已分析表，另有 {pending} 张待分析",
-        }
+        steps["_pipeline"]["reason"] = f"synced_with_pending:{pending}"
+        steps["_pipeline"]["message"] = (
+            f"已同步 {synced} 张已分析表，另有 {pending} 张待分析"
+        )
 
     return {"status": "completed", "steps": steps, "total_triples": line_count}
 
