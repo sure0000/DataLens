@@ -68,7 +68,7 @@ def search_ontology_metrics_and_terms(
                     try:
                         tid = int(pid)
                         table_ids.add(tid)
-                        bonuses[tid] = bonuses.get(tid, 0) + 0.02
+                        bonuses[tid] = bonuses.get(tid, 0) + 0.10
                     except (ValueError, TypeError):
                         pass
                 # Fallback: extract from IRI
@@ -76,7 +76,7 @@ def search_ontology_metrics_and_terms(
                 tid = platform_id_from_table_iri(iri)
                 if tid:
                     table_ids.add(tid)
-                    bonuses[tid] = bonuses.get(tid, 0) + 0.02
+                    bonuses[tid] = bonuses.get(tid, 0) + 0.10
         except Exception:
             pass
 

@@ -53,6 +53,7 @@ from services.sql_ast_guard import (
 )
 from services.trace_helpers import insert_reasoning_4_after_reasoning_3
 from services.copilot.ontology_match import OntologyMatchResult, run_ontology_match
+from services.nlp_helpers import preprocess_question
 
 
 def _ontology_mapping_payload(onto: OntologyMatchResult) -> dict[str, Any]:
@@ -162,6 +163,15 @@ async def answer(
         "\n".join([onto.detail, "", onto.summary]).strip(),
     )
 
+    # -------- 阶段 2b：NLP 预处理（时间解析、维度值提取、计算模式检测）--------
+    nlp_pre = preprocess_question(question)
+    nlp_hint = nlp_pre.combined_hint
+    await trace_row(
+        "nlp_preprocess",
+        "2b. 问题结构化预处理",
+        nlp_hint if nlp_hint else "（未检测到结构化信号，以原始问题为输入）",
+    )
+
     sql_needed = intent == "sql_query"
     sql_decision_lines = [
         f"意图分类结果：{'需要生成并执行 SQL' if sql_needed else '无需执行 SQL，以自然语言回答'}。",
@@ -220,9 +230,16 @@ async def answer(
                 if knowledge_text.strip()
                 else onto.ontology_context_text
             )
+        # 注入 NLP 预处理提示（通用问答路径）
+        if nlp_hint:
+            knowledge_text = (
+                (nlp_hint + "\n\n" + knowledge_text).strip()
+                if knowledge_text.strip()
+                else nlp_hint
+            )
         await trace_row("reasoning_2", "4. 确认拿到的上下文信息", reasoning_2_detail, links=reasoning_2_links)
         return await _handle_general_qa(
-            db, question, knowledge_text, pipeline_traces,
+            db, question, knowledge_text, priority_context, pipeline_traces,
             emit, trace_row, chat_model, routing_trace=routing_trace, onto=onto,
         )
 
@@ -267,6 +284,14 @@ async def answer(
             "routing_trace": routing_trace.to_dict(),
             "ontology_mapping": _ontology_mapping_payload(onto),
         }
+
+    # 注入 NLP 预处理的结构化提示（时间、维度值、计算模式）
+    if nlp_hint:
+        knowledge_text = (
+            (nlp_hint + "\n\n" + knowledge_text).strip()
+            if knowledge_text.strip()
+            else nlp_hint
+        )
 
     if onto.ontology_context_text:
         knowledge_text = (
@@ -340,7 +365,13 @@ async def answer(
             sql_text=result.get("sql", ""), explanation=result.get("explanation", ""),
         ))
         db.commit()
-    await embed_and_store_async(db, "query", resolved_table_id or 0, f"{question} -> {result.get('sql', '')}")
+    # 在 embedding content 中附加计算模式标签，使相同模式的查询在向量检索中更相似
+    nlp_patterns_for_store = nlp_pre.calculation_info.get("patterns", [])
+    pattern_tag = f"[{'|'.join(nlp_patterns_for_store)}] " if nlp_patterns_for_store else ""
+    await embed_and_store_async(
+        db, "query", resolved_table_id or 0,
+        f"{pattern_tag}{question} -> {result.get('sql', '')}"
+    )
 
     # -------- 阶段 5-7：执行 + 修复 + 结果 --------
     exp_raw = str(result.get("explanation") or "").strip()

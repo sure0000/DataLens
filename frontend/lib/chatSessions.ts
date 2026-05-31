@@ -34,6 +34,8 @@ export type OntologyMappingLink = {
   physical_tables?: string;
   /** 完整映射句：问题如何对应到本体资产 */
   description?: string;
+  /** 匹配类型：exact（标签/别名出现在问题中）| semantic（语义推断） */
+  match_type?: string;
 };
 
 export type OntologyMapping = {
@@ -57,7 +59,7 @@ export type RoutingTrace = {
   auto_domain_applied?: boolean;
   embed_calls?: number;
   kb_search_calls?: number;
-  ontology_trace?: { iri?: string; label?: string; type?: string; source?: string }[];
+  ontology_trace?: { iri?: string; label?: string; type?: string; source?: string; match_score?: number; maps_to?: string; match_type?: string }[];
 };
 
 export type SqlReview = {

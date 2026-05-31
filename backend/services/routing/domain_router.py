@@ -13,9 +13,7 @@ from services.context_builder import latest_table_summaries, tables_from_busines
 
 
 def _token_set(text: str) -> set[str]:
-    return set(re.findall(r"[\w\u4e00-\u9fff]+", (text or "").lower()))
-
-
+    return set(re.findall(r"[a-zA-Z0-9_]+|[\u4e00-\u9fff]", (text or "").lower()))
 def _domain_profile_text(db: Session, domain_id: int) -> str:
     dom = db.get(BusinessDomain, domain_id)
     if not dom:

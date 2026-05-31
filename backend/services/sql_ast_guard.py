@@ -7,7 +7,8 @@ from sqlglot import exp
 
 _MAX_JOINS = 16
 
-_FORBIDDEN: tuple[type[exp.Expression], ...] = (
+# These can only appear as top-level statements — tree search is safe.
+_FORBIDDEN_STMT: tuple[type[exp.Expression], ...] = (
     exp.Insert,
     exp.Update,
     exp.Delete,
@@ -16,6 +17,9 @@ _FORBIDDEN: tuple[type[exp.Expression], ...] = (
     exp.Alter,
     exp.TruncateTable,
     exp.Merge,
+)
+# These can also appear as functions within SELECT (e.g. REPLACE()).
+_FORBIDDEN_ROOT_ONLY: tuple[type[exp.Expression], ...] = (
     exp.Replace,
 )
 
@@ -88,8 +92,12 @@ def validate_readonly_sql_ast(sql: str, *, dialect: str) -> tuple[bool, str]:
 
     root = statements[0]
 
-    for cls in _FORBIDDEN:
+    for cls in _FORBIDDEN_STMT:
         if root.find(cls):
+            return False, f"禁止非只读语句（检测到 {cls.__name__}）"
+
+    for cls in _FORBIDDEN_ROOT_ONLY:
+        if isinstance(root, cls):
             return False, f"禁止非只读语句（检测到 {cls.__name__}）"
 
     allowed_root = isinstance(root, (exp.Select, exp.Union, exp.Show, exp.Describe))

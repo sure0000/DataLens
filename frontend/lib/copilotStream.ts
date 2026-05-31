@@ -26,6 +26,7 @@ export type OntologyMappingLink = {
   target_definition?: string;
   physical_tables?: string;
   description?: string;
+  match_type?: string;
 };
 
 export type OntologyMapping = {

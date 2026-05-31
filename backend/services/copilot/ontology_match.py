@@ -1,12 +1,50 @@
 """Copilot 本体知识匹配：将用户问题映射到 RDF 中的术语 / 指标 / 物理表。"""
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from config import get_settings
+
+# 会话级本体匹配结果缓存（同一问题 + 同一 KB 集合，5 分钟内复用）
+_CACHE_MAX_SIZE = 128
+_CACHE_TTL_SEC = 300
+_cache: dict[str, tuple[float, OntologyMatchResult]] = {}
+
+
+def _cache_key(question: str, kb_ids: list[int]) -> str:
+    q = (question or "").strip().lower()
+    return f"{hash(tuple(sorted(kb_ids)))}:{hash(q)}"
+
+
+def _cache_get(question: str, kb_ids: list[int]) -> OntologyMatchResult | None:
+    key = _cache_key(question, kb_ids)
+    entry = _cache.get(key)
+    if entry is None:
+        return None
+    ts, result = entry
+    if time.monotonic() - ts > _CACHE_TTL_SEC:
+        del _cache[key]
+        return None
+    return result
+
+
+def _cache_set(question: str, kb_ids: list[int], result: OntologyMatchResult) -> None:
+    if len(_cache) >= _CACHE_MAX_SIZE:
+        # lazy eviction: clear oldest quarter
+        sorted_keys = sorted(_cache.keys(), key=lambda k: _cache[k][0])
+        for k in sorted_keys[: _CACHE_MAX_SIZE // 4]:
+            _cache.pop(k, None)
+    key = _cache_key(question, kb_ids)
+    _cache[key] = (time.monotonic(), result)
+
+
+def clear_ontology_match_cache() -> None:
+    """清空缓存（用于测试或知识库更新后）。"""
+    _cache.clear()
 
 
 @dataclass
@@ -29,10 +67,10 @@ class OntologyMatchResult:
 
 
 def _resolve_kb_ids(db: Session, business_domain_id: int | None) -> list[int]:
-    from services.context_builder import kb_ids_for_business_domain
+    """Ontology 匹配始终搜索全部知识库，不按业务域过滤。
 
-    if business_domain_id:
-        return kb_ids_for_business_domain(db, business_domain_id)
+    因为本体指标/术语可能跨域共享，领域过滤在 SQL 生成/表路由阶段完成。
+    """
     try:
         from models import KnowledgeBase
         from sqlalchemy import select
@@ -140,9 +178,15 @@ def run_ontology_match(
             detail="用户问题为空。",
         )
 
+    # 缓存命中直接返回
+    cached = _cache_get(q, kb_ids)
+    if cached is not None:
+        return cached
+
     try:
         from services.triple_store import get_triple_store
         from services.copilot.router import OntologyRouter
+        from services.nlp_helpers import extract_dimension_values
 
         store = get_triple_store()
         store_ready = store.probe_fuseki(timeout=2.0) or settings.ontology_local_store_enabled
@@ -160,6 +204,16 @@ def run_ontology_match(
 
         from services.embedding_service import _embed
 
+        # 预处理：提取并移除以维度值（人名、地名、ID 等），避免它们被误当作概念进行匹配
+        dim_info = extract_dimension_values(q)
+        dim_values_to_skip: list[str] = [dv["text"] for dv in dim_info.get("dimension_values", [])]
+        q_for_routing = q
+        if dim_values_to_skip:
+            # 按长度降序排列，先替换长的避免短子串干扰
+            for dv in sorted(dim_values_to_skip, key=len, reverse=True):
+                q_for_routing = q_for_routing.replace(dv, " ")
+            q_for_routing = " ".join(q_for_routing.split())  # 压缩多余空白
+
         query_vector: list[float] | None = None
         try:
             query_vector = _embed([q])[0]
@@ -167,7 +221,7 @@ def run_ontology_match(
             query_vector = None
 
         router = OntologyRouter(store)
-        route = router.full_route(kb_ids, q, top_k=12, db=db, query_vector=query_vector)
+        route = router.full_route(kb_ids, q_for_routing, top_k=12, db=db, query_vector=query_vector)
         concepts = route.get("concepts") or []
         tables = route.get("tables") or []
     except Exception as exc:
@@ -203,6 +257,15 @@ def run_ontology_match(
         item = _format_mapping_item(c, linked)
         items.append(item)
         definition = str(item.get("definition") or "").strip()
+
+        # 概念归属验证：判定是精确匹配还是语义推断
+        label_in_q = label.lower() in q.lower()
+        alias_in_q = any(
+            (a or "").lower() in q.lower()
+            for a in [c.get("altLabel", ""), c.get("definition", "")]
+        )
+        match_type = "exact" if label_in_q or alias_in_q else "semantic"
+
         mapping_desc = _build_mapping_sentence(
             q,
             kind=item["kind"],
@@ -217,6 +280,7 @@ def run_ontology_match(
             "target_definition": definition,
             "physical_tables": item.get("maps_to") or "",
             "description": mapping_desc,
+            "match_type": match_type,
         })
         ontology_trace.append({
             "iri": iri,
@@ -225,6 +289,7 @@ def run_ontology_match(
             "source": str(c.get("match_source") or "sparql"),
             "match_score": c.get("match_score"),
             "maps_to": item.get("maps_to") or "",
+            "match_type": match_type,
         })
         if item["kind"] == "metric":
             line = f"指标「{label}」"
@@ -296,7 +361,7 @@ def run_ontology_match(
         )
         detail = "混合路由未命中概念（kb_ids={}，策略=substring+embedding+keyword）。".format(kb_ids)
 
-    return OntologyMatchResult(
+    result = OntologyMatchResult(
         matched=matched,
         summary=summary,
         detail=detail,
@@ -308,3 +373,5 @@ def run_ontology_match(
         concepts=concepts,
         tables=tables,
     )
+    _cache_set(q, kb_ids, result)
+    return result

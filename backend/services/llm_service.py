@@ -158,7 +158,7 @@ async def _chat_json(
     model_ref: str,
     db: Session,
     *,
-    temperature: float = 0.1,
+    temperature: float = 0.0,
 ) -> dict[str, Any]:
     return await _chat_json_messages(
         [{"role": "user", "content": prompt}],
@@ -173,7 +173,7 @@ async def _chat_json_messages(
     model_ref: str,
     db: Session,
     *,
-    temperature: float = 0.1,
+    temperature: float = 0.0,
 ) -> dict[str, Any]:
     client, model_name = _client_and_model_for_ref(model_ref, db)
 

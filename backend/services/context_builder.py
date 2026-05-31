@@ -852,11 +852,13 @@ def build_priority_context(
 
     analysis_lines = ["[优先上下文-AI分析信息]"]
     merged_summary_parts: list[str] = []
+    onto_table_ids = routing_bundle.metric_bound_table_ids if routing_bundle else set()
     for t in selected_tables:
         summary = latest_summaries.get(t.id)
         use_cases = summary.use_cases if summary and summary.use_cases else ""
         key_cols = summary.key_columns if summary and summary.key_columns else ""
-        table_line = f"- {t.database_name}.{t.table_name} 状态={t.status}"
+        tag = " [本体]" if t.id in onto_table_ids else ""
+        table_line = f"- {t.database_name}.{t.table_name} 状态={t.status}{tag}"
         if summary and summary.summary:
             table_line += f" | 摘要={summary.summary}"
             merged_summary_parts.append(summary.summary)
@@ -893,6 +895,10 @@ def build_priority_context(
         )
 
     context_text = domain_header + "\n".join(context_lines)
+    if onto_table_ids:
+        onto_names = [f"{t.database_name}.{t.table_name}" for t in selected_tables if t.id in onto_table_ids]
+        if onto_names:
+            analysis_lines.append(f"\n本体映射推荐：下列表与用户问题中的业务概念直接对应，对比/环比查询必须优先使用：{'，'.join(onto_names)}")
     analysis_text = "\n".join(analysis_lines)
     schema_text = "\n".join(schema_lines)
     summary_text = "；".join(merged_summary_parts[:6])

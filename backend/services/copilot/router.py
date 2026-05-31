@@ -57,13 +57,13 @@ class OntologyRouter:
         for kb_id in kb_ids:
             g = kb_graph_iri(kb_id)
             graph_blocks.append(f"""
-            GRAPH <{g}> {{
+            {{ GRAPH <{g}> {{
               ?concept (<{ns}computedFromTable>|<{ns}mapsToColumn>) ?table .
               ?table a <{ns}PhysicalTable> .
               OPTIONAL {{ ?table <{skos}prefLabel> ?tableName . }}
               OPTIONAL {{ ?table <{ns}businessSummary> ?summary . }}
               OPTIONAL {{ ?table <{ns}platformId> ?platformId . }}
-            }}
+            }} }}
             """)
 
         sparql = f"""
@@ -71,7 +71,7 @@ class OntologyRouter:
         PREFIX skos: <{skos}>
         SELECT DISTINCT ?table ?tableName ?summary ?platformId WHERE {{
           FILTER({concept_filters})
-          {{ {' UNION '.join(graph_blocks)} }}
+          {' UNION '.join(graph_blocks)}
         }}
         LIMIT {top_k}
         """
@@ -106,19 +106,19 @@ class OntologyRouter:
         for kb_id in kb_ids:
             g = kb_graph_iri(kb_id)
             graph_blocks.append(f"""
-            GRAPH <{g}> {{
+            {{ GRAPH <{g}> {{
               {{ ?table (<{ns}transformsFrom>|<{ns}joinableWith>) ?neighbor . }}
               UNION
               {{ ?neighbor (<{ns}transformsFrom>|<{ns}joinableWith>) ?table . }}
               ?neighbor a <{ns}PhysicalTable> .
-            }}
+            }} }}
             """)
 
         sparql = f"""
         PREFIX dl: <{ns}>
         SELECT DISTINCT ?neighbor WHERE {{
           FILTER({table_filters})
-          {{ {' UNION '.join(graph_blocks)} }}
+          {' UNION '.join(graph_blocks)}
         }}
         LIMIT 30
         """

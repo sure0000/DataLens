@@ -17,8 +17,9 @@ _logger = logging.getLogger(__name__)
 
 MIN_LABEL_LEN = 2
 EMBED_PROBE_TOP_K = 24
-MIN_EMBED_SIMILARITY = 0.32
+MIN_EMBED_SIMILARITY = 0.40
 MIN_KEYWORD_SCORE = 0.35
+# 保持与 MIN_KEYWORD_SCORE 一致，避免 keyword 有效匹配被误杀
 MIN_MERGED_SCORE = 0.35
 
 
@@ -37,7 +38,10 @@ def escape_sparql_literal(text: str, *, max_len: int = 500) -> str:
 
 
 def _token_set(text: str) -> set[str]:
-    return set(re.findall(r"[\w\u4e00-\u9fff]+", (text or "").lower()))
+    """Split text into tokens: alphanumeric words stay whole, CJK chars are individual."""
+    # [a-zA-Z0-9_]+ = English words/numbers stay together
+    # [\u4e00-\u9fff] = each CJK character is its own token
+    return set(re.findall(r"[a-zA-Z0-9_]+|[\u4e00-\u9fff]", (text or "").lower()))
 
 
 def keyword_score(label: str, question: str, *, definition: str = "") -> float:
@@ -258,7 +262,7 @@ def route_concepts_sparql(
     for kb_id in kb_ids:
         g = kb_graph_iri(kb_id)
         graph_blocks.append(f"""
-            GRAPH <{g}> {{
+            {{ GRAPH <{g}> {{
               ?concept a ?type ;
                        <{skos}prefLabel> ?label .
               OPTIONAL {{ ?concept <{skos}altLabel> ?altLabel . }}
@@ -270,14 +274,14 @@ def route_concepts_sparql(
                 (BOUND(?altLabel) && STRLEN(STR(?altLabel)) >= {MIN_LABEL_LEN} && CONTAINS(LCASE("{q_esc}"), LCASE(STR(?altLabel)))) ||
                 (BOUND(?definition) && STRLEN(STR(?definition)) >= 4 && CONTAINS(LCASE("{q_esc}"), LCASE(STR(?definition))))
               )
-            }}
+            }} }}
             """)
 
     sparql = f"""
         PREFIX dl: <{ns}>
         PREFIX skos: <{skos}>
         SELECT DISTINCT ?concept ?type ?label ?definition ?confidence ?status WHERE {{
-          {{ {' UNION '.join(graph_blocks)} }}
+          {' UNION '.join(graph_blocks)}
         }}
         ORDER BY DESC(?confidence)
         LIMIT {top_k}
@@ -365,7 +369,7 @@ def merge_concept_candidates(
                 by_iri[iri] = dict(c)
     merged = sorted(
         by_iri.values(),
-        key=lambda x: (-float(x.get("match_score") or 0), -float(x.get("confidence") or 0)),
+        key=lambda x: (-float(x.get("match_score") or 0), -float(x.get("confidence") or 0), str(x.get("iri") or "")),
     )
     return [c for c in merged if float(c.get("match_score") or 0) >= MIN_MERGED_SCORE][:top_k]
 
@@ -386,12 +390,21 @@ def hybrid_route_concepts(
 
     sparql_hits = route_concepts_sparql(store, kb_ids, q, top_k=top_k)
     embed_hits: list[dict[str, Any]] = []
+    keyword_hits: list[dict[str, Any]] = []
+
+    sparql_iris = {c.get("iri") for c in sparql_hits if c.get("iri")}
+
     if db is not None:
         embed_hits = search_ontology_concept_embeddings(
             db, kb_ids, q, query_vector=query_vector, top_k=top_k
         )
-    keyword_hits: list[dict[str, Any]] = []
-    if len(sparql_hits) + len(embed_hits) < top_k:
-        keyword_hits = route_concepts_keyword_memory(store, kb_ids, q, top_k=top_k)
+        # SPARQL hits are authoritative; embedding only adds concepts not in SPARQL
+        if sparql_iris:
+            embed_hits = [c for c in embed_hits if c.get("iri") not in sparql_iris]
+
+    keyword_hits = route_concepts_keyword_memory(store, kb_ids, q, top_k=top_k)
+    # SPARQL hits are authoritative; keyword only adds concepts not in SPARQL or embedding
+    if sparql_iris:
+        keyword_hits = [c for c in keyword_hits if c.get("iri") not in sparql_iris]
 
     return merge_concept_candidates(sparql_hits, embed_hits, keyword_hits, top_k=top_k)
