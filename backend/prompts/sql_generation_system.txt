@@ -79,4 +79,12 @@ GROUP BY <主体列>
 # 输出格式
 
 1) explanation 需简要说明你依据哪些本体指标/术语选择了表与字段，以及你采用的 SQL 模式（单表聚合/自连接/CASE WHEN/多表 JOIN 等）。
-2) 输出严格 JSON 对象，键为：sql（字符串）、explanation（字符串）、referenced_columns（字符串数组，列出 SQL 中引用的所有列名）。禁止 Markdown 代码块与 JSON 外多余文字。
+2) 输出严格 JSON 对象，键为：
+   - sql（字符串）
+   - explanation（字符串）
+   - referenced_columns（字符串数组，列出 SQL 中引用的所有列名）
+   - sql_derivation（可选对象，便于前端展示本体→SQL 对照）：
+     - pattern：single_agg | case_when_compare | self_join | multi_join | time_series 之一
+     - ontology_usage：数组，每项含 ontology_label、ontology_kind（metric/term/concept）、sql_role（aggregate/filter/join/group_by/select）、sql_fragment、rationale
+     - assumptions：字符串数组，记录时间范围等默认假设
+   禁止 Markdown 代码块与 JSON 外多余文字。

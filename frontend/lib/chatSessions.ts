@@ -159,6 +159,36 @@ export function compactCopilotTraceSteps(steps: PipelineTraceStep[]): PipelineTr
   return filterCopilotTraceSteps(steps).filter((s) => SIMPLE_TRACE_STEP_IDS.has(s.id));
 }
 
+/** 流式 / 持久化 trace：同 id 步骤以最新一条为准 */
+export function upsertPipelineTraceStep(steps: PipelineTraceStep[], row: PipelineTraceStep): PipelineTraceStep[] {
+  const idx = steps.findIndex((s) => s.id === row.id);
+  if (idx === -1) return [...steps, row];
+  const next = [...steps];
+  next[idx] = row;
+  return next;
+}
+
+/** 推导面板用 trace：去掉与 OntologyMappingBlock 重复的 ontology_match */
+export function traceStepsForDerivationPanel(steps: PipelineTraceStep[], hasOntologyMapping: boolean): PipelineTraceStep[] {
+  const compact = compactCopilotTraceSteps(steps);
+  if (!hasOntologyMapping) return compact;
+  return compact.filter((s) => s.id !== "ontology_match");
+}
+
+export type SqlDerivationOntologyUsage = {
+  ontology_label?: string;
+  ontology_kind?: string;
+  sql_role?: string;
+  sql_fragment?: string;
+  rationale?: string;
+};
+
+export type SqlDerivation = {
+  pattern?: string;
+  ontology_usage?: SqlDerivationOntologyUsage[];
+  assumptions?: string[];
+};
+
 export type ChatMessage = {
   id: string;
   role: "user" | "assistant";
@@ -167,6 +197,8 @@ export type ChatMessage = {
   answer?: string;
   sql?: string;
   explanation?: string;
+  referenced_columns?: string[];
+  sql_derivation?: SqlDerivation;
   query_result?: QueryResult;
   pipeline_trace?: PipelineTraceStep[];
   routing_trace?: RoutingTrace;
@@ -258,7 +290,36 @@ function normalizePipelineTrace(raw: unknown): PipelineTraceStep[] | undefined {
   return out.length ? out : undefined;
 }
 
+function normalizeSqlDerivation(raw: unknown): SqlDerivation | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Record<string, unknown>;
+  const pattern = typeof o.pattern === "string" ? o.pattern : undefined;
+  const assumptions = Array.isArray(o.assumptions)
+    ? o.assumptions.filter((a): a is string => typeof a === "string" && a.trim().length > 0)
+    : undefined;
+  const usageRaw = o.ontology_usage;
+  let ontology_usage: SqlDerivationOntologyUsage[] | undefined;
+  if (Array.isArray(usageRaw) && usageRaw.length) {
+    ontology_usage = usageRaw
+      .filter((u): u is Record<string, unknown> => !!u && typeof u === "object")
+      .map((u) => ({
+        ontology_label: typeof u.ontology_label === "string" ? u.ontology_label : undefined,
+        ontology_kind: typeof u.ontology_kind === "string" ? u.ontology_kind : undefined,
+        sql_role: typeof u.sql_role === "string" ? u.sql_role : undefined,
+        sql_fragment: typeof u.sql_fragment === "string" ? u.sql_fragment : undefined,
+        rationale: typeof u.rationale === "string" ? u.rationale : undefined
+      }))
+      .filter((u) => u.ontology_label || u.sql_fragment);
+    if (!ontology_usage.length) ontology_usage = undefined;
+  }
+  if (!pattern && !assumptions?.length && !ontology_usage?.length) return undefined;
+  return { pattern, assumptions, ontology_usage };
+}
+
 function normalizeMessage(raw: Partial<ChatMessage>): ChatMessage {
+  const referenced_columns = Array.isArray(raw.referenced_columns)
+    ? raw.referenced_columns.filter((c): c is string => typeof c === "string" && c.trim().length > 0)
+    : undefined;
   return {
     id: raw.id || makeId("msg"),
     role: raw.role === "user" ? "user" : "assistant",
@@ -267,6 +328,8 @@ function normalizeMessage(raw: Partial<ChatMessage>): ChatMessage {
     answer: raw.answer || "",
     sql: raw.sql || "",
     explanation: raw.explanation || "",
+    referenced_columns: referenced_columns?.length ? referenced_columns : undefined,
+    sql_derivation: normalizeSqlDerivation(raw.sql_derivation),
     query_result: raw.query_result || { ok: false, columns: [], rows: [], error: "历史记录无执行结果" },
     pipeline_trace: normalizePipelineTrace(raw.pipeline_trace),
     routing_trace: raw.routing_trace,

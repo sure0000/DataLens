@@ -1,5 +1,5 @@
 import { API } from "./api";
-import type { PipelineTraceStep, RoutingTrace, SqlReview } from "./chatSessions";
+import type { PipelineTraceStep, RoutingTrace, SqlDerivation, SqlReview } from "./chatSessions";
 
 export type StreamStage = "intent_recognizing" | "answer_generating" | "sql_executing";
 
@@ -44,6 +44,8 @@ export type AskResponse = {
   answer?: string;
   sql: string;
   explanation: string;
+  referenced_columns?: string[];
+  sql_derivation?: SqlDerivation;
   query_result: {
     ok: boolean;
     columns: string[];

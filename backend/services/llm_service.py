@@ -646,7 +646,7 @@ async def generate_sql(
         {"role": "system", "content": SQL_GENERATION_SYSTEM},
         {
             "role": "user",
-            "content": user_content + "\n\n请根据 USER QUESTION 生成 SQL，并输出 JSON 键：sql,explanation,referenced_columns",
+            "content": user_content + "\n\n请根据 USER QUESTION 生成 SQL，并输出 JSON 键：sql,explanation,referenced_columns,sql_derivation（可选）",
         },
     ]
     return await _chat_json_messages(messages, model_ref, db)

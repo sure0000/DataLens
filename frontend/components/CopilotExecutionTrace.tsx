@@ -30,6 +30,8 @@ type Props = {
   title?: string;
   variant?: "plain" | "framed";
   streaming?: boolean;
+  /** 为 true 时 reasoning_4 仅展示查询逻辑，不重复渲染 SQL 代码块 */
+  hideReasoning4Sql?: boolean;
 };
 
 function StatusGlyph({ status, className }: { status: TraceCheckpointStatus; className?: string }) {
@@ -150,13 +152,21 @@ function CopilotExecutionTrace({
   compact,
   title = "推理过程",
   variant = "plain",
-  streaming = false
+  streaming = false,
+  hideReasoning4Sql = false
 }: Props) {
   if (!steps.length) return null;
 
   const titleCls = compact
     ? "mb-2 text-xs font-semibold uppercase tracking-wide text-app-secondary"
     : "mb-2 text-sm font-semibold text-app-primary";
+
+  const filterSubsForStep = (stepId: string, subs: AnnotatedSub[]) => {
+    if (hideReasoning4Sql && stepId === "reasoning_4") {
+      return subs.filter((x) => !x.sql);
+    }
+    return subs;
+  };
 
   const stageTitleCls = compact ? "text-[12px] font-semibold leading-tight" : "text-[13px] font-semibold leading-tight";
   const idxCls = compact ? "w-3.5 pt-px text-[9px]" : "w-4 pt-px text-[10px]";
@@ -167,12 +177,14 @@ function CopilotExecutionTrace({
 
   const list = (
     <div className="min-w-0">
-      <p className={titleCls}>{title}</p>
-      <div className="space-y-3" aria-label={title}>
+      {title ? <p className={titleCls}>{title}</p> : null}
+      <div className="space-y-3" aria-label={title || "推理过程"}>
         {steps.map((s, stageIdx) => {
-          const subs = annotateSubCheckpointsWithStatus(s.id, splitTraceStepDetailIntoSubCheckpoints(s));
+          const subs = filterSubsForStep(s.id, annotateSubCheckpointsWithStatus(s.id, splitTraceStepDetailIntoSubCheckpoints(s)));
           const isLastStage = stageIdx === steps.length - 1;
           const stepLinks = parseTraceEntityLinks(s.links);
+
+          if (!subs.length && hideReasoning4Sql && s.id === "reasoning_4") return null;
 
           return (
             <section key={`${s.id}-${stageIdx}`} className="min-w-0">

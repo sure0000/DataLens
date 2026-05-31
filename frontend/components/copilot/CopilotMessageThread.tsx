@@ -7,13 +7,15 @@ import SqlBlock from "../SqlBlock";
 import CsvExportButton from "../CsvExportButton";
 import { alertWarning, chatPanel, textDanger, userBubble } from "../../lib/themeClasses";
 import ChatGptStyleBody from "./ChatGptStyleBody";
-import OntologyMappingBlock from "./OntologyMappingBlock";
+import SqlDerivationPanel from "./SqlDerivationPanel";
 
 type QueryResult = {
   ok: boolean;
   columns: string[];
   rows: Record<string, unknown>[];
   error?: string;
+  review_required?: boolean;
+  row_count?: number;
 };
 
 export type CopilotMessageThreadProps = {
@@ -53,6 +55,7 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
           (!m.sql &&
             !queryResult.ok &&
             (queryResult.error?.includes("无需SQL") || queryResult.error?.includes("无需 SQL") || false));
+        const isSqlQuery = !isGeneralQa && (m.intent === "sql_query" || !!m.sql?.trim());
 
         if (m.role === "user") {
           if (editingMessageId === m.id) {
@@ -83,16 +86,20 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
           );
         }
 
-        const narrativeRaw =
-          (m.answer || "").trim() && (m.explanation || "").trim()
-            ? `${(m.answer || "").trim()}\n\n${(m.explanation || "").trim()}`
-            : (m.answer || "").trim() || (m.explanation || "").trim();
-        const narrative = stripAutoRepairExplanationNote(narrativeRaw.trim());
+        const answerText = stripAutoRepairExplanationNote((m.answer || "").trim());
+        const explanationText = stripAutoRepairExplanationNote((m.explanation || "").trim());
         const userQuestion =
           messages
             .slice(0, msgIdx)
             .reverse()
             .find((x) => x.role === "user" && x.question?.trim())?.question?.trim() || "";
+
+        const generalNarrative =
+          answerText && explanationText
+            ? `${answerText}\n\n${explanationText}`
+            : answerText || explanationText;
+
+        const sqlBlockId = `sql-${m.id}`;
 
         return (
           <div key={m.id} className="flex justify-start">
@@ -117,14 +124,42 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
                   </div>
                 )}
 
-              {m.ontology_mapping ? (
-                <OntologyMappingBlock mapping={m.ontology_mapping} fallbackQuestion={userQuestion} />
+              {isSqlQuery ? (
+                <SqlDerivationPanel
+                  ontologyMapping={m.ontology_mapping}
+                  pipelineTrace={m.pipeline_trace}
+                  explanation={m.explanation}
+                  sqlDerivation={m.sql_derivation}
+                  referencedColumns={m.referenced_columns}
+                  fallbackQuestion={userQuestion}
+                />
+              ) : m.ontology_mapping ? (
+                <SqlDerivationPanel
+                  ontologyMapping={m.ontology_mapping}
+                  pipelineTrace={m.pipeline_trace}
+                  explanation={m.explanation}
+                  fallbackQuestion={userQuestion}
+                  defaultExpanded={false}
+                />
               ) : null}
 
-              {narrative ? <ChatGptStyleBody text={narrative} /> : <p className="text-sm text-app-muted">（无回复内容）</p>}
+              {isSqlQuery ? (
+                <>
+                  {answerText ? (
+                    <div className="mb-3">
+                      <p className="mb-1 text-xs font-medium text-app-secondary">执行摘要</p>
+                      <ChatGptStyleBody text={answerText} />
+                    </div>
+                  ) : null}
+                </>
+              ) : generalNarrative ? (
+                <ChatGptStyleBody text={generalNarrative} />
+              ) : (
+                <p className="text-sm text-app-muted">（无回复内容）</p>
+              )}
 
               {!isGeneralQa && m.sql?.trim() ? (
-                <div className="mt-3">
+                <div id={sqlBlockId} className="mt-3 scroll-mt-4">
                   <p className="mb-1.5 text-xs font-medium text-app-secondary">生成的 SQL</p>
                   <SqlBlock sql={m.sql} />
                 </div>

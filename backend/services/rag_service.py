@@ -68,6 +68,62 @@ def _ontology_mapping_payload(onto: OntologyMatchResult) -> dict[str, Any]:
     }
 
 
+def _normalize_referenced_columns(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, str) and item.strip():
+            out.append(item.strip())
+    return out
+
+
+def _normalize_sql_derivation(raw: Any) -> dict[str, Any] | None:
+    if not isinstance(raw, dict):
+        return None
+    pattern = str(raw.get("pattern") or "").strip() or None
+    assumptions_raw = raw.get("assumptions")
+    assumptions: list[str] = []
+    if isinstance(assumptions_raw, list):
+        assumptions = [str(a).strip() for a in assumptions_raw if str(a).strip()]
+    usage_raw = raw.get("ontology_usage")
+    ontology_usage: list[dict[str, str]] = []
+    if isinstance(usage_raw, list):
+        for row in usage_raw:
+            if not isinstance(row, dict):
+                continue
+            entry = {
+                k: str(row.get(k) or "").strip()
+                for k in ("ontology_label", "ontology_kind", "sql_role", "sql_fragment", "rationale")
+            }
+            if entry.get("ontology_label") or entry.get("sql_fragment"):
+                ontology_usage.append(entry)
+    if not pattern and not assumptions and not ontology_usage:
+        return None
+    payload: dict[str, Any] = {}
+    if pattern:
+        payload["pattern"] = pattern
+    if assumptions:
+        payload["assumptions"] = assumptions
+    if ontology_usage:
+        payload["ontology_usage"] = ontology_usage
+    return payload
+
+
+def _attach_sql_metadata(result: dict[str, Any]) -> None:
+    """Normalize LLM sql_derivation / referenced_columns for API responses."""
+    cols = _normalize_referenced_columns(result.get("referenced_columns"))
+    if cols:
+        result["referenced_columns"] = cols
+    elif "referenced_columns" in result:
+        del result["referenced_columns"]
+    deriv = _normalize_sql_derivation(result.get("sql_derivation"))
+    if deriv:
+        result["sql_derivation"] = deriv
+    elif "sql_derivation" in result:
+        del result["sql_derivation"]
+
+
 async def answer(
     db: Session,
     question: str,
@@ -322,6 +378,7 @@ async def answer(
 
     sql_text = sanitize_sql_text(str(result.get("sql") or ""))
     result["sql"] = sql_text
+    _attach_sql_metadata(result)
 
     # -------- 阶段 4：解析 SQL 引用的表（reasoning_3） --------
     ds_anchor, dialect_anchor, default_db = _resolve_datasource_anchor(
