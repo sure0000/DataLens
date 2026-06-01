@@ -1,0 +1,50 @@
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix dl:   <https://datalens.local/ontology/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+dl:BusinessRuleShape a sh:NodeShape ;
+  sh:targetClass dl:BusinessRule ;
+  sh:severity sh:Violation ;
+  sh:property [
+    sh:path dl:ruleExpression ;
+    sh:name "规则表达式"@zh ;
+    sh:description "每条业务规则必须有一个规则表达式"@zh ;
+    sh:minCount 1 ;
+    sh:datatype xsd:string ;
+  ] ;
+  sh:property [
+    sh:path dl:ruleType ;
+    sh:name "规则类型"@zh ;
+    sh:description "规则类型必须是 validation / derivation / constraint 之一"@zh ;
+    sh:minCount 1 ;
+    sh:in ("validation" "derivation" "constraint") ;
+    sh:datatype xsd:string ;
+  ] ;
+  sh:property [
+    sh:path skos:prefLabel ;
+    sh:name "首选标签"@zh ;
+    sh:minCount 1 ;
+  ] ;
+  sh:property [
+    sh:path dl:belongsToDomain ;
+    sh:name "归属领域"@zh ;
+    sh:minCount 1 ;
+  ] ;
+  sh:property [
+    sh:path dl:confidence ;
+    sh:minInclusive 0.0 ;
+    sh:maxInclusive 100.0 ;
+    sh:datatype xsd:decimal ;
+  ] ;
+  sh:property [
+    sh:path dl:appliesTo ;
+    sh:name "应用对象"@zh ;
+    sh:description "每条业务规则必须声明其应用的目标对象"@zh ;
+    sh:minCount 1 ;
+  ] ;
+  sh:property [
+    sh:path dl:approvalStatus ;
+    sh:in ("approved" "pending_review" "draft" "rejected") ;
+    sh:datatype xsd:string ;
+  ] .

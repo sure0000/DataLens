@@ -27,6 +27,7 @@ async def extract_rule_triples(
     auto_approve_confidence: float = 80.0,
     domain_id: int | None = None,
     on_chunk_progress: ChunkProgressCallback | None = None,
+    ontology_context: str = "",
 ) -> list[RawTriple]:
     """Extract dl:BusinessRule triples from document chunks via LLM.
 
@@ -40,11 +41,12 @@ async def extract_rule_triples(
     async for chunk in iter_chunks_with_progress(chunks, on_chunk_progress):
         content = getattr(chunk, "content", "") or ""
 
+        user_msg = f"{ontology_context}\n\n{content}" if ontology_context else content
         try:
             result = await call_llm_json(
                 llm_client, model_name,
                 load_prompt("rule_extraction_system"),
-                content,
+                user_msg,
             )
             rules_data = result.get("rules", [])
         except Exception:
@@ -79,6 +81,13 @@ async def extract_rule_triples(
 
             if domain_id is not None:
                 triples.append(RawTriple(iri, f"{NS}belongsToDomain", domain_iri(domain_id), True, graph=graph, confidence=confidence))
+
+            # applies_to → dl:appliesTo (object reference)
+            applies_to = (item.get("applies_to") or "").strip()
+            if applies_to:
+                target_slug = concept_slug(applies_to, "term")
+                target_iri = rule_iri(kb_id, target_slug)  # rule target as IRI reference
+                triples.append(RawTriple(iri, f"{NS}appliesTo", target_iri, True, graph=graph, confidence=confidence))
 
             chunk_id = getattr(chunk, "id", None)
             if chunk_id:

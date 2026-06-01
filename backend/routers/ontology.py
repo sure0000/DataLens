@@ -841,3 +841,98 @@ def create_metric(kb_id: int, body: MetricOntologyCreate) -> dict:
     )
     result = writer.write_metric(kb_id, metric_input)
     return {"ok": True, "kb_id": kb_id, **result}
+
+
+# ── Domain TBox Extension (P2) ─────────────────────────────────────────
+
+
+class DomainTBoxRegisterRequest(BaseModel):
+    subclasses: list[dict[str, str]] = Field(default_factory=list)
+    shapes: list[dict[str, Any]] = Field(default_factory=list)
+
+
+@router.post("/domain/{domain_id}/tbox")
+def register_domain_tbox(domain_id: int, body: DomainTBoxRegisterRequest) -> dict:
+    """Register domain-specific TBox extensions (subclasses + SHACL shapes)."""
+    writer = _get_writer()
+    result = writer.write_domain_tbox(
+        domain_id=domain_id,
+        subclasses=body.subclasses,
+        shapes=body.shapes,
+    )
+    return {"ok": True, "domain_id": domain_id, **result}
+
+
+# ── Entity Deprecation (P2: 版本与演化管理) ────────────────────────────
+
+
+class DeprecateEntityRequest(BaseModel):
+    entity_iri: str
+    reason: str = ""
+
+
+@router.post("/knowledge-bases/{kb_id}/deprecate")
+def deprecate_entity(kb_id: int, body: DeprecateEntityRequest) -> dict:
+    """Mark an entity as deprecated instead of deleting it."""
+    writer = _get_writer()
+    result = writer.deprecate_entity(kb_id, body.entity_iri, body.reason)
+    return {"ok": True, "kb_id": kb_id, **result}
+
+
+# ── Five-Dimension Quality Assessment (P3) ──────────────────────────────
+
+
+@router.get("/knowledge-bases/{kb_id}/quality-assessment")
+def get_quality_assessment(
+    kb_id: int,
+    domain_id: int | None = Query(None),
+    db: Session = Depends(get_db),
+) -> dict:
+    """Run five-dimension quality assessment (completeness, accuracy, consistency, timeliness, authority)."""
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+    from services.ontology.governance import assess_quality
+
+    return assess_quality(kb_id, domain_id=domain_id)
+
+
+# ── KGE Discovery (P3) ──────────────────────────────────────────────────
+
+
+class KGERequest(BaseModel):
+    embedding_dim: int = 128
+    epochs: int = 100
+    top_k_per_relation: int = 5
+    min_score: float = 0.5
+
+
+@router.post("/knowledge-bases/{kb_id}/kge/discover")
+def discover_kge_candidates(kb_id: int, body: KGERequest | None = None, db: Session = Depends(get_db)) -> dict:
+    """Run KGE embedding training and discover missing relation candidates."""
+    kb = db.get(KnowledgeBase, kb_id)
+    if not kb:
+        raise HTTPException(status_code=404, detail="知识库不存在")
+
+    from ontology import kb_graph_iri, NS
+    from services.ontology_store import get_named_graph
+
+    g = get_named_graph(kb_graph_iri(kb_id))
+    triples: list[tuple[str, str, str]] = []
+    for s, p, o in g:
+        triples.append((str(s), str(p), str(o)))
+
+    if len(triples) < 10:
+        return {"ok": False, "error": "insufficient_triples", "triples": len(triples)}
+
+    req = body or KGERequest()
+    from services.ontology.kge_completer import train_and_discover
+
+    result = train_and_discover(
+        triples,
+        embedding_dim=req.embedding_dim,
+        epochs=req.epochs,
+        top_k_per_relation=req.top_k_per_relation,
+        min_score=req.min_score,
+    )
+    return {"ok": True, "kb_id": kb_id, **result}

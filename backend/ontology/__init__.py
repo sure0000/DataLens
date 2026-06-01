@@ -35,11 +35,43 @@ def legacy_column_iri(table_id: int, column_name: str) -> str:
 
 
 def term_iri(domain_id: int, slug: str) -> str:
+    """Term IRI (DATA_NS). Old GRAPH_NS IRIs bridged via owl:sameAs."""
+    return f"{DATA_NS}domain/{domain_id}/term/{slug}"
+
+
+def term_iri_legacy(domain_id: int, slug: str) -> str:
+    """Legacy term IRI under GRAPH_NS (for owl:sameAs bridging)."""
     return f"{GRAPH_NS}domain/{domain_id}/term/{slug}"
 
 
 def metric_iri(domain_id: int, slug: str) -> str:
+    """Metric IRI (DATA_NS). Old GRAPH_NS IRIs bridged via owl:sameAs."""
+    return f"{DATA_NS}domain/{domain_id}/metric/{slug}"
+
+
+def metric_iri_legacy(domain_id: int, slug: str) -> str:
+    """Legacy metric IRI under GRAPH_NS (for owl:sameAs bridging)."""
     return f"{GRAPH_NS}domain/{domain_id}/metric/{slug}"
+
+
+def dimension_iri(domain_id: int, slug: str) -> str:
+    """Dimension IRI (DATA_NS). Old GRAPH_NS IRIs bridged via owl:sameAs."""
+    return f"{DATA_NS}domain/{domain_id}/dimension/{slug}"
+
+
+def dimension_iri_legacy(domain_id: int, slug: str) -> str:
+    """Legacy dimension IRI under GRAPH_NS (for owl:sameAs bridging)."""
+    return f"{GRAPH_NS}domain/{domain_id}/dimension/{slug}"
+
+
+def rule_iri(domain_id: int, slug: str) -> str:
+    """Rule IRI (DATA_NS). Old GRAPH_NS IRIs bridged via owl:sameAs."""
+    return f"{DATA_NS}domain/{domain_id}/rule/{slug}"
+
+
+def rule_iri_legacy(domain_id: int, slug: str) -> str:
+    """Legacy rule IRI under GRAPH_NS (for owl:sameAs bridging)."""
+    return f"{GRAPH_NS}domain/{domain_id}/rule/{slug}"
 
 
 def concept_iri(slug: str) -> str:
@@ -66,14 +98,6 @@ def concept_slug(name: str, prefix: str = "term") -> str:
     n = re.sub(r"\s+", "_", (name or "").strip().lower())
     n = re.sub(r"[^\w\u4e00-\u9fff._-]", "", n)
     return f"{prefix}.{n}" if n else ""
-
-
-def dimension_iri(domain_id: int, slug: str) -> str:
-    return f"{GRAPH_NS}domain/{domain_id}/dimension/{slug}"
-
-
-def rule_iri(domain_id: int, slug: str) -> str:
-    return f"{GRAPH_NS}domain/{domain_id}/rule/{slug}"
 
 
 def view_iri(view_id: int) -> str:

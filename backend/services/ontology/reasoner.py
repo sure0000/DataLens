@@ -108,18 +108,234 @@ class InversePropertyRule(InferenceRule):
         return new
 
 
+class SubClassOfRule(InferenceRule):
+    """Materialize rdfs:subClassOf hierarchy closure.
+
+    IF ?a rdfs:subClassOf ?b AND ?b rdfs:subClassOf ?c THEN ?a rdfs:subClassOf ?c
+    IF ?x rdf:type ?a AND ?a rdfs:subClassOf ?b THEN ?x rdf:type ?b
+    """
+
+    def __init__(self):
+        super().__init__("subclass-closure", "Materialize rdfs:subClassOf hierarchy closure and type propagation")
+
+    def apply(self, graph: Graph) -> list[tuple[URIRef, URIRef, Any]]:
+        new: list[tuple[URIRef, URIRef, Any]] = []
+
+        # Build subclass hierarchy closure
+        subclass_closure: dict[URIRef, set[URIRef]] = {}
+        for s, o in graph.subject_objects(RDFS.subClassOf):
+            if isinstance(s, URIRef) and isinstance(o, URIRef):
+                subclass_closure.setdefault(s, set()).add(o)
+
+        # Transitive closure of subclass hierarchy
+        changed = True
+        while changed:
+            changed = False
+            for s in list(subclass_closure):
+                for o in list(subclass_closure[s]):
+                    if o in subclass_closure:
+                        for o2 in subclass_closure[o]:
+                            if o2 not in subclass_closure[s]:
+                                subclass_closure[s].add(o2)
+                                changed = True
+
+        # Emit inferred subclass triples
+        for s, targets in subclass_closure.items():
+            for o in targets:
+                if (s, RDFS.subClassOf, o) not in graph:
+                    new.append((s, RDFS.subClassOf, o))
+
+        # Type propagation: if ?x rdf:type ?a and ?a rdfs:subClassOf ?b, then ?x rdf:type ?b
+        for s, t in graph.subject_objects(RDF.type):
+            if isinstance(s, URIRef) and isinstance(t, URIRef) and t in subclass_closure:
+                for sup in subclass_closure[t]:
+                    if (s, RDF.type, sup) not in graph:
+                        new.append((s, RDF.type, sup))
+
+        return new
+
+
+class SubPropertyOfRule(InferenceRule):
+    """Materialize rdfs:subPropertyOf hierarchy closure.
+
+    IF ?a rdfs:subPropertyOf ?b AND ?b rdfs:subPropertyOf ?c THEN ?a rdfs:subPropertyOf ?c
+    IF ?x ?a ?y AND ?a rdfs:subPropertyOf ?b THEN ?x ?b ?y
+    """
+
+    def __init__(self):
+        super().__init__("subproperty-closure", "Materialize rdfs:subPropertyOf hierarchy closure and property propagation")
+
+    def apply(self, graph: Graph) -> list[tuple[URIRef, URIRef, Any]]:
+        new: list[tuple[URIRef, URIRef, Any]] = []
+
+        # Build subproperty hierarchy closure
+        subprop_closure: dict[URIRef, set[URIRef]] = {}
+        for s, o in graph.subject_objects(RDFS.subPropertyOf):
+            if isinstance(s, URIRef) and isinstance(o, URIRef):
+                subprop_closure.setdefault(s, set()).add(o)
+
+        changed = True
+        while changed:
+            changed = False
+            for s in list(subprop_closure):
+                for o in list(subprop_closure[s]):
+                    if o in subprop_closure:
+                        for o2 in subprop_closure[o]:
+                            if o2 not in subprop_closure[s]:
+                                subprop_closure[s].add(o2)
+                                changed = True
+
+        # Emit inferred subPropertyOf triples
+        for s, targets in subprop_closure.items():
+            for o in targets:
+                if (s, RDFS.subPropertyOf, o) not in graph:
+                    new.append((s, RDFS.subPropertyOf, o))
+
+        # Property propagation: if ?x ?prop ?y and ?prop rdfs:subPropertyOf ?super_prop, then ?x ?super_prop ?y
+        for s, p, o in graph:
+            if isinstance(p, URIRef) and p in subprop_closure:
+                for sup in subprop_closure[p]:
+                    if (s, sup, o) not in graph:
+                        new.append((s, sup, o))
+
+        return new
+
+
+class EquivalentClassRule(InferenceRule):
+    """Handle owl:equivalentClass.
+
+    IF ?a owl:equivalentClass ?b THEN materialize bidirectional rdfs:subClassOf
+    IF ?x rdf:type ?a AND ?a owl:equivalentClass ?b THEN ?x rdf:type ?b
+    """
+
+    def __init__(self):
+        from rdflib.namespace import OWL
+        super().__init__("equivalent-class", "Materialize owl:equivalentClass inferences")
+        self._owl_equiv = OWL.equivalentClass
+
+    def apply(self, graph: Graph) -> list[tuple[URIRef, URIRef, Any]]:
+        new: list[tuple[URIRef, URIRef, Any]] = []
+
+        for s, o in graph.subject_objects(self._owl_equiv):
+            if not isinstance(s, URIRef) or not isinstance(o, URIRef):
+                continue
+            # Bidirectional subclass
+            if (s, RDFS.subClassOf, o) not in graph:
+                new.append((s, RDFS.subClassOf, o))
+            if (o, RDFS.subClassOf, s) not in graph:
+                new.append((o, RDFS.subClassOf, s))
+
+            # Type propagation: entities with type of one get type of the other
+            for x, _ in graph.subject_objects(RDF.type):
+                if isinstance(x, URIRef):
+                    for ent, equiv in [(s, o), (o, s)]:
+                        if (x, RDF.type, ent) in graph and (x, RDF.type, equiv) not in graph:
+                            new.append((x, RDF.type, equiv))
+
+        return new
+
+
+class SWRLStyleRule(InferenceRule):
+    """Simple SWRL-like rule: IF body patterns match THEN derive head triple.
+
+    Supports basic business rule derivation, e.g.:
+      IF ?metric is Metric AND ?metric computedFromTable ?table AND ?table hasMeasure ?m
+      THEN ?metric relatedTo ?m
+    """
+
+    def __init__(
+        self,
+        name: str,
+        description: str,
+        body_patterns: list[tuple[str | None, str, str | None]],
+        head: tuple[str, str, str],
+    ):
+        """Args:
+            name: Rule name.
+            description: Human-readable description.
+            body_patterns: List of (subject_var, predicate_uri, object_var) where
+                vars are prefixed with '?', None means any value.
+            head: (subject_var, predicate_uri, object_var) to derive.
+        """
+        super().__init__(name, description)
+        self.body_patterns = body_patterns
+        self.head = head
+
+    def apply(self, graph: Graph) -> list[tuple[URIRef, URIRef, Any]]:
+        new: list[tuple[URIRef, URIRef, Any]] = []
+        # For each body pattern, collect bindings
+        bindings_list: list[list[dict[str, URIRef | Literal]]] = []
+
+        for subj_var, pred_uri, obj_var in self.body_patterns:
+            pred = URIRef(pred_uri)
+            bindings: list[dict[str, URIRef | Literal]] = []
+            for s, o in graph.subject_objects(pred):
+                binding: dict[str, URIRef | Literal] = {}
+                if subj_var:
+                    binding[subj_var] = s
+                if obj_var:
+                    binding[obj_var] = o
+                if binding:
+                    bindings.append(binding)
+            bindings_list.append(bindings)
+
+        if not bindings_list:
+            return new
+
+        # Simple join: intersect bindings where shared variables match
+        # For now, do a naive cartesian product + filter
+        import itertools
+        for combo in itertools.product(*bindings_list):
+            merged: dict[str, URIRef | Literal] = {}
+            ok = True
+            for b in combo:
+                for k, v in b.items():
+                    if k in merged and merged[k] != v:
+                        ok = False
+                        break
+                    merged[k] = v
+                if not ok:
+                    break
+            if not ok:
+                continue
+
+            # Resolve head
+            head_s = merged.get(self.head[0])
+            head_o = merged.get(self.head[2])
+            if head_s is None or head_o is None:
+                # Try literal match
+                head_s = head_s or URIRef(self.head[0]) if self.head[0] and not self.head[0].startswith("?") else head_s
+                head_o = head_o or URIRef(self.head[2]) if self.head[2] and not self.head[2].startswith("?") else head_o
+
+            if isinstance(head_s, URIRef) and (isinstance(head_o, URIRef) or isinstance(head_o, Literal)):
+                head_p = URIRef(self.head[1])
+                if (head_s, head_p, head_o) not in graph:
+                    new.append((head_s, head_p, head_o))
+
+        return new
+
+
 # ── Rule set ────────────────────────────────────────────────────────────
 
 
 def _default_rules() -> list[InferenceRule]:
     return [
+        # Hierarchy closure (P2)
+        SubClassOfRule(),
+        SubPropertyOfRule(),
+        EquivalentClassRule(),
+        # Transitive closures
         TransitivePropertyRule("trans-derivedFrom", f"{NS}derivedFrom"),
         TransitivePropertyRule("trans-transformsFrom", f"{NS}transformsFrom"),
+        TransitivePropertyRule("trans-precedes", f"{NS}precedes"),
+        # Symmetric closures
         SymmetricPropertyRule("sym-joinableWith", f"{NS}joinableWith"),
+        SymmetricPropertyRule("sym-exactMatch", f"{SKOS}exactMatch"),
+        # Inverse properties
         InversePropertyRule(f"{SKOS}broader", f"{SKOS}narrower"),
         InversePropertyRule(f"{SKOS}narrower", f"{SKOS}broader"),
-        SymmetricPropertyRule("sym-exactMatch", f"{SKOS}exactMatch"),
-        TransitivePropertyRule("trans-exactMatch", f"{SKOS}exactMatch"),
+        InversePropertyRule(f"{NS}groundedBy", f"{NS}asserts"),
+        InversePropertyRule(f"{NS}computedFromTable", f"{NS}usedBy"),
     ]
 
 

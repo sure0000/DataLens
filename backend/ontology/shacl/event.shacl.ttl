@@ -1,0 +1,42 @@
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix dl:   <https://datalens.local/ontology/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+dl:EventShape a sh:NodeShape ;
+  sh:targetClass dl:BusinessEvent ;
+  sh:severity sh:Violation ;
+  sh:property [
+    sh:path skos:prefLabel ;
+    sh:name "首选标签"@zh ;
+    sh:description "每个业务事件必须有一个标签"@zh ;
+    sh:minCount 1 ;
+  ] ;
+  sh:property [
+    sh:path skos:definition ;
+    sh:name "定义"@zh ;
+    sh:description "每个业务事件应有业务含义定义"@zh ;
+    sh:severity sh:Warning ;
+    sh:minCount 1 ;
+  ] ;
+  sh:property [
+    sh:path dl:belongsToDomain ;
+    sh:name "归属领域"@zh ;
+    sh:minCount 1 ;
+  ] .
+
+# SPG 约束: BusinessConcept 不可指向 BusinessEvent（由动到静）
+dl:NoEntityToEventConstraint a sh:NodeShape ;
+  sh:targetClass dl:BusinessConcept ;
+  sh:severity sh:Violation ;
+  sh:message "业务概念实体不可直接指向业务事件（SPG 由动到静约束）"@zh ;
+  sh:sparql [
+    sh:message "BusinessConcept 不可通过任何 ObjectProperty 指向 BusinessEvent"@zh ;
+    sh:select """
+      SELECT $this ?value WHERE {
+        $this ?p ?value .
+        ?value a dl:BusinessEvent .
+        FILTER(?p NOT IN (rdf:type))
+      }
+      """ ;
+  ] .

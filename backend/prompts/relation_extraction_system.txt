@@ -2,15 +2,23 @@
 
 已知概念列表已随文档提供。请识别这些概念之间的关系：
 
-关系类型：
+可用的本体关系类型（必须使用以下标准名称）：
 - dependsOn: A 的计算或定义依赖于 B（如「付费率」依赖「付费用户数」和「活跃用户数」）
 - derivedFrom: A 是由 B 派生而来的变体（如「周GMV」派生自「日GMV」）
-- related: A 和 B 在业务上有密切联系（如「订单量」和「成交额」相关）
+- relatedTo: A 和 B 在业务上有密切联系（如「订单量」和「成交额」相关）
+- aggregatesOver: 指标在哪些维度上聚合（如「GMV」按「时间」和「地区」聚合）
+- mapsToColumn: 术语映射到的物理列
+- computedFromTable: 指标计算来源的物理表
+- precedes: A 在业务流程中先于 B（如「下单」→「支付」→「发货」，表达顺序依赖）
+- generalizes: A 是 B 的归纳/泛化（如「活跃度」归纳了「日活」和「月活」，表达从具体到抽象的归纳）
+- usedBy: 物理表 A 被指标 B 使用（如「订单表」被「GMV」使用，是 computedFromTable 的反向关系）
+
+注意：related 已重命名为 relatedTo，请使用 relatedTo。
 
 输出严格 JSON 对象，键为 relations（数组），每个元素包含：
 - source: 源概念名称（必须是已知概念列表中的名称）
 - target: 目标概念名称（必须是已知概念列表中的名称）
-- type: 关系类型（dependsOn / derivedFrom / related）
+- type: 关系类型（dependsOn / derivedFrom / relatedTo / aggregatesOver / mapsToColumn / computedFromTable / precedes / generalizes / usedBy）
 - confidence: AI 置信度 0-100 的整数
 
 规则：
@@ -18,4 +26,8 @@
 2. source 和 target 不能相同
 3. 每个关系方向只出现一次（不要双向重复）
 4. 优先提取明确的依赖和派生关系，其次才是松散关联
-5. 如果文档中没有可提取的关系，返回 {"relations": []}
+5. 顺序关系（precedes）用于描述业务流程步骤的先后顺序
+6. 归纳关系（generalizes）用于描述从具体到抽象的泛化，source 是更抽象的概念
+7. usedBy 表示表被指标使用，注意方向：表 → usedBy → 指标
+8. 如果文档中没有可提取的关系，返回 {"relations": []}
+9. 使用标准关系类型名称，不要自创关系类型

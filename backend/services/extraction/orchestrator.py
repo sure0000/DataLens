@@ -282,6 +282,69 @@ def _resolve_domain_id(db: Session, kb_id: int) -> int | None:
     return int(kb_domain_id) if kb_domain_id is not None else None
 
 
+# ── Ontology injection context builder ────────────────────────────────────
+
+
+def _build_ontology_injection_context(db: Session, kb_id: int, domain_id: int | None = None) -> str:
+    """Build an ontology-awareness preamble injected into LLM extraction prompts.
+
+    Queries the existing knowledge graph for known entities and relation types
+    within the KB's domain, so the LLM can:
+      - Re-use existing entity IRIs instead of creating duplicates
+      - Use known relation types / class names
+      - Respect the TBox schema
+
+    Returns a short plain-text block prepended to the user message.
+    """
+    parts: list[str] = ["[本体上下文 - 请使用以下已知知识库信息]"]
+    effective_domain = domain_id if domain_id is not None else kb_id
+
+    parts.append(
+        "已知实体类型: BusinessTerm(业务术语), Metric(指标), Dimension(维度), "
+        "BusinessRule(业务规则), PhysicalTable(物理表), PhysicalColumn(列)"
+    )
+    parts.append(
+        "已知关系类型: dependsOn(依赖), derivedFrom(派生), relatedTo(关联), "
+        "aggregatesOver(聚合维度), computedFromTable(计算来源), "
+        "mapsToColumn(映射到列), belongsToDomain(归属领域), groundedBy(证据来源)"
+    )
+    parts.append(
+        "维度类型枚举: time(时间), geo(地理), category(分类), hierarchy(层级); "
+        "规则类型枚举: validation(校验), derivation(派生), constraint(约束)"
+    )
+
+    try:
+        from services.ontology.reader import OntologyReader
+        from services.triple_store import get_triple_store
+        store = get_triple_store()
+        reader = OntologyReader(store)
+
+        existing_terms = reader.list_terms(kb_id, limit=30)
+        existing_metrics = reader.list_metrics(kb_id, limit=20)
+
+        if existing_terms:
+            term_strs = [f"{t.get('prefLabel','')}({t.get('iri','')})" for t in existing_terms[:30] if t.get('prefLabel')]
+            if term_strs:
+                parts.append(f"已有术语({len(term_strs)}): {', '.join(term_strs)}")
+
+        if existing_metrics:
+            metric_strs = [f"{m.get('prefLabel','')}({m.get('iri','')})" for m in existing_metrics[:20] if m.get('prefLabel')]
+            if metric_strs:
+                parts.append(f"已有指标({len(metric_strs)}): {', '.join(metric_strs)}")
+    except Exception:
+        pass
+
+    from config import get_settings
+    settings = get_settings()
+    auto_threshold = settings.ontology_min_confidence_auto_approve
+    parts.append(
+        f"置信度规则: 清晰定义→≥80, 间接提及→50-70, 不确定则跳过。"
+        f"置信度≥{auto_threshold}自动审批, <{auto_threshold}进入人工审核。"
+    )
+
+    return "\n".join(parts)
+
+
 # ── Orchestrator ────────────────────────────────────────────────────────
 
 
@@ -389,6 +452,7 @@ class ExtractionOrchestrator:
 
         from services.extraction.git_entry_chunks import git_entries_as_llm_chunks
 
+
         min_body_chars = int(git_extraction_config.get("min_body_chars") or 50)
         llm_chunks = chunks
         if not llm_chunks and git_entries:
@@ -423,6 +487,9 @@ class ExtractionOrchestrator:
         step_lock = threading.Lock()
         git_scope_entries: list[Any] = []
         git_diag: Any = None
+
+        # Build ontology injection context once for all extraction steps
+        ontology_injection_context = _build_ontology_injection_context(db, kb_id, domain_id)
 
         def _chunk_progress(step_key: str):
             def _report(done: int, total: int) -> None:
@@ -490,6 +557,7 @@ class ExtractionOrchestrator:
                             auto_approve_confidence=auto_approve,
                             domain_id=domain_id,
                             on_chunk_progress=_chunk_progress("term_extraction"),
+                            ontology_context=ontology_injection_context,
                         ),
                     ),
                     _run_extraction_step(
@@ -504,6 +572,7 @@ class ExtractionOrchestrator:
                             auto_approve_confidence=auto_approve,
                             domain_id=domain_id,
                             on_chunk_progress=_chunk_progress("metric_caliber"),
+                            ontology_context=ontology_injection_context,
                         ),
                     ),
                     _run_extraction_step(
@@ -518,6 +587,7 @@ class ExtractionOrchestrator:
                             auto_approve_confidence=auto_approve,
                             domain_id=domain_id,
                             on_chunk_progress=_chunk_progress("dimension_extraction"),
+                            ontology_context=ontology_injection_context,
                         ),
                     ),
                     _run_extraction_step(
@@ -532,6 +602,7 @@ class ExtractionOrchestrator:
                             auto_approve_confidence=auto_approve,
                             domain_id=domain_id,
                             on_chunk_progress=_chunk_progress("rule_extraction"),
+                            ontology_context=ontology_injection_context,
                         ),
                     ),
                 ]

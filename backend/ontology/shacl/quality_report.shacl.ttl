@@ -1,0 +1,41 @@
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix dl:   <https://datalens.local/ontology/> .
+@prefix dqv:  <http://www.w3.org/ns/dqv#> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+
+# QualityMeasurement must have a value in [0, 1] and a dimension reference
+dl:QualityMeasurementShape a sh:NodeShape ;
+  sh:targetClass dqv:QualityMeasurement ;
+  sh:severity sh:Violation ;
+  sh:property [
+    sh:path dqv:value ;
+    sh:name "度量值"@zh ;
+    sh:minInclusive 0.0 ;
+    sh:maxInclusive 1.0 ;
+    sh:datatype xsd:decimal ;
+    sh:message "QualityMeasurement value must be between 0.0 and 1.0"@en ;
+  ] ;
+  sh:property [
+    sh:path dqv:isMeasurementOf ;
+    sh:name "度量指标定义"@zh ;
+    sh:minCount 1 ;
+    sh:message "QualityMeasurement must reference a dqv:Metric via isMeasurementOf"@en ;
+  ] ;
+  sh:property [
+    sh:path dqv:computedOn ;
+    sh:name "计算对象"@zh ;
+    sh:minCount 1 ;
+    sh:message "QualityMeasurement must reference the computed entity via computedOn"@en ;
+  ] .
+
+# QualityReport convenience shape: overallQualityScore in [0, 1]
+dl:QualityReportShape a sh:NodeShape ;
+  sh:targetClass dl:QualityReport ;
+  sh:severity sh:Violation ;
+  sh:property [
+    sh:path dl:overallQualityScore ;
+    sh:name "综合质量分"@zh ;
+    sh:minInclusive 0.0 ;
+    sh:maxInclusive 1.0 ;
+    sh:datatype xsd:decimal ;
+  ] .

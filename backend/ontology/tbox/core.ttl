@@ -121,6 +121,35 @@ dl:QuarantinedAssertion a owl:Class ;
   rdfs:label "隔离区断言"@zh , "Quarantined Assertion"@en ;
   rdfs:comment "未通过 SHACL 校验或实体链接的三元组，暂存隔离区等待人工裁决"@zh .
 
+# --- Event & dynamic behavior (P2: SPG "由动到静" constraint) ---
+
+dl:BusinessEvent a owl:Class ;
+  rdfs:label "业务事件"@zh , "Business Event"@en ;
+  rdfs:comment "业务过程中的动态行为建模 — 下单、支付、发货、审批等。SPG 约束：事件可指向任意类型，但实体不可指向事件（由动到静）。"@zh .
+
+# --- Domain TBox extension (P2: Domain-layer schema extension) ---
+
+dl:DomainTBoxExtension a owl:Class ;
+  rdfs:label "域级 TBox 扩展"@zh , "Domain TBox Extension"@en ;
+  rdfs:comment "在 Domain 图中注册的域特有子类或 SHACL Shape，可覆盖/追加全局 TBox 约束"@zh .
+
+# --- PROV-O aligned provenance classes (P3: W3C PROV alignment) ---
+
+dl:DataEntity a owl:Class ;
+  rdfs:subClassOf prov:Entity ;
+  rdfs:label "数据实体"@zh , "Data Entity"@en ;
+  rdfs:comment "PROV-O 对齐：业务数据实体，如一张表、一个文件、一个数据集"@zh .
+
+dl:TransformActivity a owl:Class ;
+  rdfs:subClassOf prov:Activity ;
+  rdfs:label "转换活动"@zh , "Transform Activity"@en ;
+  rdfs:comment "PROV-O 对齐：数据转换活动，如 ETL 任务、计算步骤"@zh .
+
+dl:ResponsibleAgent a owl:Class ;
+  rdfs:subClassOf prov:Agent ;
+  rdfs:label "责任人"@zh , "Responsible Agent"@en ;
+  rdfs:comment "PROV-O 对齐：数据负责人或负责系统"@zh .
+
 # ------------------------------------------------------------------
 # 2. CLASS DISJOINTNESS AXIOMS
 # ------------------------------------------------------------------
@@ -139,6 +168,12 @@ dl:Document      owl:disjointWith  dl:DataAsset .
 
 # --- BusinessConcept → DataAsset mappings ---
 
+dl:appliesTo a owl:ObjectProperty ;
+  rdfs:domain dl:BusinessRule ;
+  rdfs:range owl:Thing ;
+  rdfs:label "应用于"@zh , "applies to"@en ;
+  rdfs:comment "业务规则应用的目标对象 — 表、列、指标或概念"@zh .
+
 dl:mapsToColumn a owl:ObjectProperty ;
   rdfs:domain dl:BusinessTerm ;
   rdfs:range dl:PhysicalColumn ;
@@ -146,10 +181,11 @@ dl:mapsToColumn a owl:ObjectProperty ;
   rdfs:comment "术语对应到物理表中的具体列"@zh .
 
 dl:computedFromTable a owl:ObjectProperty ;
+  rdf:type owl:FunctionalProperty ;
   rdfs:domain dl:Metric ;
   rdfs:range dl:PhysicalTable ;
   rdfs:label "计算来源表"@zh , "computed from table"@en ;
-  rdfs:comment "指标的计算数据来源 — 该指标从哪个物理表取数"@zh .
+  rdfs:comment "指标的计算数据来源 — 该指标从哪个物理表取数。唯一：一个指标不重复声明取数源。"@zh .
 
 dl:aggregatesOver a owl:ObjectProperty ;
   rdfs:domain dl:Metric ;
@@ -177,6 +213,26 @@ dl:relatedTo a owl:ObjectProperty ;
   rdfs:range dl:BusinessConcept ;
   rdfs:label "关联到"@zh , "related to"@en ;
   rdfs:comment "概念间的非层级关联 — 比 skos:related 更语义明确"@zh .
+
+dl:precedes a owl:ObjectProperty ;
+  rdf:type owl:TransitiveProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range owl:Thing ;
+  rdfs:label "顺承"@zh , "precedes"@en ;
+  rdfs:comment "表达业务流程的顺序关系，如 下单→支付→发货。传递属性：若 A precedes B 且 B precedes C，则 A precedes C。"@zh .
+
+dl:generalizes a owl:ObjectProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range owl:Thing ;
+  rdfs:label "归纳"@zh , "generalizes"@en ;
+  rdfs:comment "实例到类 / 细粒度到粗粒度的归纳关系，如「日活用户数」generalizes「7日活跃用户数」"@zh .
+
+dl:usedBy a owl:ObjectProperty ;
+  rdfs:domain dl:PhysicalTable ;
+  rdfs:range dl:Metric ;
+  rdfs:label "被用于"@zh , "used by"@en ;
+  rdfs:comment "数据资产被用于计算某指标，是 computedFromTable 的逆属性"@zh ;
+  owl:inverseOf dl:computedFromTable .
 
 dl:aliasOf a owl:ObjectProperty ;
   rdfs:subPropertyOf skos:exactMatch ;
@@ -215,14 +271,18 @@ dl:hasDimension a owl:ObjectProperty ;
 # --- Join relation properties ---
 
 dl:leftTable a owl:ObjectProperty ;
+  rdf:type owl:FunctionalProperty ;
   rdfs:domain dl:JoinRelation ;
   rdfs:range dl:PhysicalTable ;
-  rdfs:label "左表"@zh , "left table"@en .
+  rdfs:label "左表"@zh , "left table"@en ;
+  rdfs:comment "JOIN 关系的左表 — 每个 JOIN 唯一。"@zh .
 
 dl:rightTable a owl:ObjectProperty ;
+  rdf:type owl:FunctionalProperty ;
   rdfs:domain dl:JoinRelation ;
   rdfs:range dl:PhysicalTable ;
-  rdfs:label "右表"@zh , "right table"@en .
+  rdfs:label "右表"@zh , "right table"@en ;
+  rdfs:comment "JOIN 关系的右表 — 每个 JOIN 唯一。"@zh .
 
 # --- Containment / structure ---
 
@@ -237,9 +297,11 @@ dl:materializedFrom a owl:ObjectProperty ;
   rdfs:label "物化自"@zh , "materialized from"@en .
 
 dl:belongsToDataSource a owl:ObjectProperty ;
+  rdf:type owl:FunctionalProperty ;
   rdfs:domain dl:DataAsset ;
   rdfs:range dl:DataSource ;
-  rdfs:label "归属数据源"@zh , "belongs to data source"@en .
+  rdfs:label "归属数据源"@zh , "belongs to data source"@en ;
+  rdfs:comment "数据资产归属的数据源 — 每个资产唯一归属一个数据源。"@zh .
 
 dl:belongsToDomain a owl:ObjectProperty ;
   rdf:type owl:FunctionalProperty ;
@@ -295,6 +357,36 @@ dl:sourceChunk a owl:ObjectProperty ;
 
 prov:wasDerivedFrom a owl:ObjectProperty ;
   rdfs:label "来源"@zh , "was derived from"@en .
+
+# --- Event dynamics (P2) ---
+
+dl:triggers a owl:ObjectProperty ;
+  rdfs:domain dl:BusinessEvent ;
+  rdfs:range owl:Thing ;
+  rdfs:label "触发"@zh , "triggers"@en ;
+  rdfs:comment "业务事件触发后续行为或状态变更，如「下单事件」triggers「支付流程」"@zh .
+
+# --- PROV-O object properties (P3) ---
+
+prov:wasGeneratedBy a owl:ObjectProperty ;
+  rdfs:domain prov:Entity ;
+  rdfs:range prov:Activity ;
+  rdfs:label "生成自"@zh , "was generated by"@en .
+
+prov:used a owl:ObjectProperty ;
+  rdfs:domain prov:Activity ;
+  rdfs:range prov:Entity ;
+  rdfs:label "使用了"@zh , "used"@en .
+
+prov:wasAttributedTo a owl:ObjectProperty ;
+  rdfs:domain prov:Entity ;
+  rdfs:range prov:Agent ;
+  rdfs:label "归属责任人"@zh , "was attributed to"@en .
+
+prov:wasInformedBy a owl:ObjectProperty ;
+  rdfs:domain prov:Activity ;
+  rdfs:range prov:Activity ;
+  rdfs:label "获知自"@zh , "was informed by"@en .
 
 # --- Quarantine ---
 
@@ -529,6 +621,20 @@ dl:suggestedFix a owl:DatatypeProperty ;
   rdfs:domain dl:QuarantinedAssertion ;
   rdfs:range xsd:string ;
   rdfs:label "建议修复"@zh , "suggested fix"@en .
+
+# --- Version & evolution attributes (P2: 版本与演化管理) ---
+
+dl:version a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range xsd:string ;
+  rdfs:label "版本号"@zh , "version"@en ;
+  rdfs:comment "实体版本号，如 1.0.0、2024Q1-v2。每次更新时递增。"@zh .
+
+dl:changeNote a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range xsd:string ;
+  rdfs:label "变更说明"@zh , "change note"@en ;
+  rdfs:comment "本次变更的原因与内容简述"@zh .
 
 # ------------------------------------------------------------------
 # 5. PROPERTY CHAIN AXIOMS

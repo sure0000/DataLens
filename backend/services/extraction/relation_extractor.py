@@ -76,7 +76,7 @@ async def extract_relation_triples(
 
             if not source_name or not target_name:
                 continue
-            if rel_type not in ("dependsOn", "related", "derivedFrom"):
+            if rel_type not in ("dependsOn", "related", "relatedTo", "derivedFrom", "aggregatesOver", "mapsToColumn", "computedFromTable", "precedes", "generalizes", "usedBy"):
                 continue
 
             source_iri = all_concepts.get(source_name)
@@ -93,9 +93,20 @@ async def extract_relation_triples(
             except (ValueError, TypeError):
                 confidence = 50.0
 
-            pred = f"{NS}dependsOn" if rel_type == "dependsOn" else (
-                f"{NS}derivedFrom" if rel_type == "derivedFrom" else f"{NS}relatedTo"
-            )
+            # Map relation type to dl: namespace predicate
+            _rel_type_map = {
+                "dependsOn": "dependsOn",
+                "derivedFrom": "derivedFrom",
+                "related": "relatedTo",
+                "relatedTo": "relatedTo",
+                "aggregatesOver": "aggregatesOver",
+                "mapsToColumn": "mapsToColumn",
+                "computedFromTable": "computedFromTable",
+                "precedes": "precedes",
+                "generalizes": "generalizes",
+                "usedBy": "usedBy",
+            }
+            pred = f"{NS}{_rel_type_map.get(rel_type, 'relatedTo')}"
             triples.append(RawTriple(
                 source_iri, pred, target_iri, True,
                 graph=graph, confidence=confidence,

@@ -27,6 +27,7 @@ async def extract_dimension_triples(
     auto_approve_confidence: float = 80.0,
     domain_id: int | None = None,
     on_chunk_progress: ChunkProgressCallback | None = None,
+    ontology_context: str = "",
 ) -> list[RawTriple]:
     """Extract dl:Dimension triples from document chunks via LLM.
 
@@ -40,11 +41,12 @@ async def extract_dimension_triples(
     async for chunk in iter_chunks_with_progress(chunks, on_chunk_progress):
         content = getattr(chunk, "content", "") or ""
 
+        user_msg = f"{ontology_context}\n\n{content}" if ontology_context else content
         try:
             result = await call_llm_json(
                 llm_client, model_name,
                 load_prompt("dimension_extraction_system"),
-                content,
+                user_msg,
             )
             dims_data = result.get("dimensions", [])
         except Exception:

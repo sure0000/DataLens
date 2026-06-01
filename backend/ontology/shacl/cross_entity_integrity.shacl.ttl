@@ -1,0 +1,36 @@
+@prefix sh:   <http://www.w3.org/ns/shacl#> .
+@prefix dl:   <https://datalens.local/ontology/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+
+# ── Cross-entity reference integrity ────────────────────────────────────
+# These SPARQL-based constraints verify that object references
+# point to actually existing entities in the graph.
+
+dl:TermGroundedByIntegrityShape a sh:NodeShape ;
+  sh:targetClass dl:BusinessTerm ;
+  sh:severity sh:Warning ;
+  sh:sparql [
+    sh:message "术语的 groundedBy 目标实体不存在"@zh ;
+    sh:select """
+      SELECT $this ?target
+      WHERE {
+        $this dl:groundedBy ?target .
+        FILTER NOT EXISTS { ?target ?p ?o . }
+      }
+      """ ;
+  ] .
+
+dl:MetricComputedFromIntegrityShape a sh:NodeShape ;
+  sh:targetClass dl:Metric ;
+  sh:severity sh:Warning ;
+  sh:sparql [
+    sh:message "指标的 computedFromTable 目标表实体不存在"@zh ;
+    sh:select """
+      SELECT $this ?target
+      WHERE {
+        $this dl:computedFromTable ?target .
+        FILTER NOT EXISTS { ?target a dl:PhysicalTable . }
+      }
+      """ ;
+  ] .

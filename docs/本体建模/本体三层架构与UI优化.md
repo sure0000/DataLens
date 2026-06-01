@@ -1,7 +1,7 @@
 # 本体三层架构与 UI 优化方案
 
 > 本文档汇总 2026-05 关于「企业数据统一整理、本体建模清洗、导入/展示层 redesign」的讨论结论。  
-> **关联文档：** [ONTOLOGY_ENTERPRISE_DATA_SOURCES](./ONTOLOGY_ENTERPRISE_DATA_SOURCES.md)、[ONTOLOGY_REFACTOR_PLAN](./ONTOLOGY_REFACTOR_PLAN.md)、[DATALENS_OVERVIEW](./DATALENS_OVERVIEW.md)
+> **关联文档：** [ONTOLOGY_ENTERPRISE_DATA_SOURCES](./企业数据来源与自动化抽取.md)、[ONTOLOGY_REFACTOR_PLAN](./本体驱动重构方案.md)、[DATALENS_OVERVIEW](../项目总览/DataLens项目全貌.md)
 
 **状态说明：** 🔲 规划中 / 🚧 部分已有基础 / ✅ 已实现
 
@@ -92,7 +92,7 @@ flowchart TB
 
 ### 3.1 TBox 类与清洗五层
 
-本体 TBox 见 `backend/ontology/tbox/core.ttl`；清洗五层见 [ONTOLOGY_REFACTOR_PLAN](./ONTOLOGY_REFACTOR_PLAN.md#本体清洗五层模型)。
+本体 TBox 见 `backend/ontology/tbox/core.ttl`；清洗五层见 [ONTOLOGY_REFACTOR_PLAN](./本体驱动重构方案.md#本体清洗五层模型)。
 
 | 企业数据 | 本体模块（OWL 类 / 属性） | 清洗层 | 抽取器 / 来源 |
 |---------|---------------------------|--------|---------------|
@@ -462,7 +462,7 @@ flowchart LR
 
 **实体概念层视图：** 概念子视图支持 **列表**（分页表格，含 `broader` 列）与 **树形**（懒加载 `GET .../views/hierarchy`，`ConceptHierarchyPanel`）。树形用于核对 `skos:broader` 结构与 hierarchy SHACL；原放在「质量与隔离」中的概念层级已迁至此，避免与隔离待办混在同一屏。
 
-五层模型定义与 SHACL 映射见 [ONTOLOGY_REFACTOR_PLAN § 本体清洗五层模型](./ONTOLOGY_REFACTOR_PLAN.md#本体清洗五层模型)。
+五层模型定义与 SHACL 映射见 [ONTOLOGY_REFACTOR_PLAN § 本体清洗五层模型](./本体驱动重构方案.md#本体清洗五层模型)。
 
 **空态**
 

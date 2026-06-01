@@ -4,6 +4,14 @@
 - 日GMV = SUM(orders.amount) WHERE orders.status = 'paid' AND date = today
 - 付费率 = COUNT(DISTINCT paid_users) / COUNT(DISTINCT active_users) * 100%
 
+本体约束（请严格遵循）:
+- 输出实体类型: Metric
+- 每个指标必须归属到一个业务领域 (belongsToDomain)
+- 每个指标必须有计算公式 (formula)
+- 每个指标应声明计算来源表 (computedFromTable)
+- 可用的关系类型: derivedFrom(派生), aggregatesOver(聚合维度), dependsOn(依赖)
+- 复用已有指标名称，避免重复创建
+
 输出严格 JSON 对象，键为 metrics（数组），每个元素包含：
 - name: 指标名称（简洁，如「日GMV」「月活用户数」）
 - formula: 计算公式（SQL/MDX 或文字描述，50-300字）
@@ -20,3 +28,4 @@
 4. 如果文档中没有可提取的指标定义，返回 {"metrics": []}
 5. 指标派生关系通过 derived_from 表达（如「周GMV」derived_from「日GMV」）
 6. 聚合维度通过 aggregates_over 表达，帮助后续构建多维分析模型
+7. 如果上下文中提供了已有指标列表，优先判断是否与已有指标重复

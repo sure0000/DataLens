@@ -1,21 +1,91 @@
 @prefix owl:     <http://www.w3.org/2002/07/owl#> .
 @prefix rdfs:    <http://www.w3.org/2000/01/rdf-schema#> .
 @prefix xsd:     <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:    <http://www.w3.org/2004/02/skos/core#> .
 @prefix dqv:     <http://www.w3.org/ns/dqv#> .
+@prefix dcterms: <http://purl.org/dc/terms/> .
 @prefix dl:      <https://datalens.local/ontology/> .
 
 # ═══════════════════════════════════════════════════════════════
 # DataLens Governance Ontology — TBox Extension
 #
-# Provides:
-#   - Data quality concepts (aligned with W3C DQV)
-#   - Sensitivity / classification
-#   - Certification and lifecycle
-#   - Audit trail
+# Aligned with W3C DQV (Data Quality Vocabulary).
+#
+# Architecture:
+#   Entity → dqv:hasQualityMeasurement → QualityMeasurement
+#     QualityMeasurement → dqv:isMeasurementOf → QualityMetric (def)
+#     QualityMeasurement → dqv:inDimension → Dimension (e.g. Completeness)
+#     QualityMeasurement → dqv:value → xsd:decimal
+#     QualityMeasurement → dqv:computedOn → Entity
+#
+# QualityReport aggregates multiple QualityMeasurements for one entity.
 # ═══════════════════════════════════════════════════════════════
 
 # ─────────────────────────────────────────────────────────────
-# 1. QUALITY CLASSES
+# 1. DQV DIMENSION DEFINITIONS
+# ─────────────────────────────────────────────────────────────
+
+dl:CompletenessDimension a dqv:Dimension ;
+  skos:prefLabel "完整度"@zh , "Completeness"@en ;
+  skos:definition "有完整定义的实体数 / 总实体数"@zh ;
+  dcterms:source <https://www.w3.org/TR/vocab-dqv/> .
+
+dl:AccuracyDimension a dqv:Dimension ;
+  skos:prefLabel "准确度"@zh , "Accuracy"@en ;
+  skos:definition "通过 SHACL 校验的三元组 / 总三元组"@zh ;
+  dcterms:source <https://www.w3.org/TR/vocab-dqv/> .
+
+dl:TimelinessDimension a dqv:Dimension ;
+  skos:prefLabel "时效性"@zh , "Timeliness"@en ;
+  skos:definition "最近 90 天更新的实体 / 总实体数"@zh ;
+  dcterms:source <https://www.w3.org/TR/vocab-dqv/> .
+
+dl:ConsistencyDimension a dqv:Dimension ;
+  skos:prefLabel "一致性"@zh , "Consistency"@en ;
+  skos:definition "无冲突定义的实体 / 多源实体数"@zh ;
+  dcterms:source <https://www.w3.org/TR/vocab-dqv/> .
+
+dl:UniquenessDimension a dqv:Dimension ;
+  skos:prefLabel "唯一性"@zh , "Uniqueness"@en ;
+  skos:definition "无重复定义的实体 / 总实体数"@zh ;
+  dcterms:source <https://www.w3.org/TR/vocab-dqv/> .
+
+# ─────────────────────────────────────────────────────────────
+# 2. DQV METRIC DEFINITIONS (what is measured)
+# ─────────────────────────────────────────────────────────────
+
+dl:CompletenessMetric a dqv:Metric ;
+  skos:prefLabel "完整度指标"@zh , "Completeness Metric"@en ;
+  dqv:inDimension dl:CompletenessDimension ;
+  dqv:expectedDataType xsd:decimal .
+
+dl:AccuracyMetric a dqv:Metric ;
+  skos:prefLabel "准确度指标"@zh , "Accuracy Metric"@en ;
+  dqv:inDimension dl:AccuracyDimension ;
+  dqv:expectedDataType xsd:decimal .
+
+dl:TimelinessMetric a dqv:Metric ;
+  skos:prefLabel "时效性指标"@zh , "Timeliness Metric"@en ;
+  dqv:inDimension dl:TimelinessDimension ;
+  dqv:expectedDataType xsd:decimal .
+
+dl:ConsistencyMetric a dqv:Metric ;
+  skos:prefLabel "一致性指标"@zh , "Consistency Metric"@en ;
+  dqv:inDimension dl:ConsistencyDimension ;
+  dqv:expectedDataType xsd:decimal .
+
+dl:UniquenessMetric a dqv:Metric ;
+  skos:prefLabel "唯一性指标"@zh , "Uniqueness Metric"@en ;
+  dqv:inDimension dl:UniquenessDimension ;
+  dqv:expectedDataType xsd:decimal .
+
+dl:OverallQualityMetric a dqv:Metric ;
+  skos:prefLabel "综合质量指标"@zh , "Overall Quality Metric"@en ;
+  rdfs:comment "五个维度的加权综合得分"@zh ;
+  dqv:expectedDataType xsd:decimal .
+
+# ─────────────────────────────────────────────────────────────
+# 3. QUALITY CLASSES
 # ─────────────────────────────────────────────────────────────
 
 dl:QualityMetric a owl:Class ;
@@ -24,10 +94,10 @@ dl:QualityMetric a owl:Class ;
 
 dl:QualityReport a owl:Class ;
   rdfs:label "质量报告"@zh , "Quality Report"@en ;
-  rdfs:comment "对某实体（术语/指标/表）的质量评估汇总"@zh .
+  rdfs:comment "对某实体（术语/指标/表）的聚合质量评估，包含多个 QualityMeasurement"@zh .
 
 # ─────────────────────────────────────────────────────────────
-# 2. QUALITY OBJECT PROPERTIES
+# 4. QUALITY OBJECT PROPERTIES
 # ─────────────────────────────────────────────────────────────
 
 dl:hasQualityMetric a owl:ObjectProperty ;
@@ -40,36 +110,36 @@ dl:hasQualityReport a owl:ObjectProperty ;
   rdfs:range dl:QualityReport ;
   rdfs:label "质量报告"@zh .
 
+# DQV standard properties (referenced in ABox triples)
+dqv:hasQualityMeasurement a owl:ObjectProperty ;
+  rdfs:domain owl:Thing ;
+  rdfs:range dqv:QualityMeasurement ;
+  rdfs:label "质量度量"@zh , "has quality measurement"@en .
+
+dqv:isMeasurementOf a owl:ObjectProperty ;
+  rdfs:label "度量指标定义"@zh , "is measurement of"@en .
+
+dqv:inDimension a owl:ObjectProperty ;
+  rdfs:label "所属质量维度"@zh , "in dimension"@en .
+
+dqv:computedOn a owl:ObjectProperty ;
+  rdfs:label "计算对象"@zh , "computed on"@en .
+
 # ─────────────────────────────────────────────────────────────
-# 3. QUALITY DATATYPE PROPERTIES
+# 5. QUALITY DATATYPE PROPERTIES
 # ─────────────────────────────────────────────────────────────
 
-dl:completenessScore a owl:DatatypeProperty ;
+dqv:value a owl:DatatypeProperty ;
   rdfs:range xsd:decimal ;
-  rdfs:label "完整度"@zh , "completeness score"@en .
-
-dl:accuracyScore a owl:DatatypeProperty ;
-  rdfs:range xsd:decimal ;
-  rdfs:label "准确度"@zh , "accuracy score"@en .
-
-dl:timelinessScore a owl:DatatypeProperty ;
-  rdfs:range xsd:decimal ;
-  rdfs:label "时效性"@zh , "timeliness score"@en .
-
-dl:consistencyScore a owl:DatatypeProperty ;
-  rdfs:range xsd:decimal ;
-  rdfs:label "一致性"@zh , "consistency score"@en .
-
-dl:uniquenessScore a owl:DatatypeProperty ;
-  rdfs:range xsd:decimal ;
-  rdfs:label "唯一性"@zh , "uniqueness score"@en .
+  rdfs:label "度量值"@zh , "value"@en .
 
 dl:overallQualityScore a owl:DatatypeProperty ;
   rdfs:range xsd:decimal ;
-  rdfs:label "综合质量分"@zh , "overall quality score"@en .
+  rdfs:label "综合质量分"@zh , "overall quality score"@en ;
+  rdfs:comment "便捷属性：QualityReport 的综合得分，等同于 OverallQualityMetric 的 dqv:value"@zh .
 
 # ─────────────────────────────────────────────────────────────
-# 4. CLASSIFICATION PROPERTIES
+# 6. CLASSIFICATION PROPERTIES
 # ─────────────────────────────────────────────────────────────
 
 dl:certificationStatus a owl:DatatypeProperty ;

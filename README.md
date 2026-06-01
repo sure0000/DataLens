@@ -2,17 +2,17 @@
 
 DataLens 是一个轻量级 ChatBI 系统：连接数据源 → 自动理解表结构和字段含义 → 维护业务语义知识库 → 自然语言生成 SQL → 只读执行预览。
 
-**详细架构、数据流、数据模型、API 文档：** 见 [`docs/DATALENS_OVERVIEW.md`](docs/DATALENS_OVERVIEW.md)。
+**详细架构、数据流、数据模型、API 文档：** 见 [`docs/项目总览/DataLens项目全貌.md`](docs/项目总览/DataLens项目全貌.md)。
 
 ## 文档索引
 
 | 文档 | 说明 |
 |------|------|
-| [DATALENS_OVERVIEW.md](docs/DATALENS_OVERVIEW.md) | 项目全貌（推荐首读） |
-| [ONTOLOGY_LAYER_UI_OPTIMIZATION.md](docs/ONTOLOGY_LAYER_UI_OPTIMIZATION.md) | 本体三层 UI（导入层证据包、KB 建模与质量、业务域五层语义资产浏览） |
-| [企业语义层与域内自治实践.md](docs/企业语义层与域内自治实践.md) | 语义层理念、存储结构、联邦治理 |
-| [COPILOT_ROUTING_OPTIMIZATION.md](docs/COPILOT_ROUTING_OPTIMIZATION.md) | Copilot 多信号路由与 trace |
-| [SEMANTIC_LAYER_OPTIMIZATION_BACKLOG.md](docs/SEMANTIC_LAYER_OPTIMIZATION_BACKLOG.md) | 语义层能力清单与实现状态 |
+| [DataLens项目全貌.md](docs/项目总览/DataLens项目全貌.md) | 项目全貌（推荐首读） |
+| [本体三层架构与UI优化.md](docs/本体建模/本体三层架构与UI优化.md) | 本体三层 UI（导入层证据包、KB 建模与质量、业务域五层语义资产浏览） |
+| [企业语义层与域内自治实践.md](docs/项目总览/企业语义层与域内自治实践.md) | 语义层理念、存储结构、联邦治理 |
+| [Copilot语义路由优化.md](docs/路由与抽取/Copilot语义路由优化.md) | Copilot 多信号路由与 trace |
+| [语义层能力清单.md](docs/项目总览/语义层能力清单.md) | 语义层能力清单与实现状态 |
 
 ---
 
@@ -49,12 +49,12 @@ cp .env.example .env
 - `COPILOT_MAX_TABLES_WITHOUT_DOMAIN`：未选业务域时语义 top_k 表上限（默认 `20`）
 - `SEMANTIC_AUTO_APPROVE_CONFIDENCE`：术语/指标提取置信度 ≥ 此值自动 `approved`（默认 `80`）
 - `SEMANTIC_CHUNK_STRUCTURE_MAX`：单文档语义结构化最多处理的 chunk 数（默认 `40`）
-- **本体层 / 存储**（Formal OWL，见 [`docs/ONTOLOGY_CUTOVER.md`](docs/ONTOLOGY_CUTOVER.md)）：
+- **本体层 / 存储**（Formal OWL，见 [`docs/本体建模/本体驱动重构方案.md`](docs/本体建模/本体驱动重构方案.md)）：
   - **默认**：Fuseki（`FUSEKI_URL=http://localhost:3030`），可用 Docker 或本地 Java Fuseki
   - `./scripts/fuseki.sh start`：单独启动 Docker Fuseki（`./scripts/service.sh start local` 不会自动拉起 Docker）
   - 调试回退：显式设置 `ONTOLOGY_LOCAL_STORE_ENABLED=true` 才写入本地 Trig 文件
 
-更多 Copilot 路由相关变量见 [`docs/COPILOT_ROUTING_OPTIMIZATION.md`](docs/COPILOT_ROUTING_OPTIMIZATION.md) §5。
+更多 Copilot 路由相关变量见 [`docs/路由与抽取/Copilot语义路由优化.md`](docs/路由与抽取/Copilot语义路由优化.md) §5。
 
 ## 3. 本地启动后端（FastAPI）
 
@@ -128,7 +128,7 @@ npm run dev
 
 - `command not found: docker`：本机未安装 Docker，使用“本地启动方式”即可。
 - 前端请求失败：确认 `.env` 中 `NEXT_PUBLIC_API_URL` 指向正确后端地址；访问前端时勿混用 `localhost` 与 `127.0.0.1`（可配置 `CORS_ORIGINS`，见 `.env.example`）。
-- 知识库建模：在详情页**导入源卡片**点击「语义清洗」；**建模与质量**（`#modeling`）含 **流水线**、**五层结果**（实体概念层支持列表/树形）、**质量与隔离**（KPI + 待办隔离区 / 指标 SHACL·置信度）。详见 [`docs/ONTOLOGY_LAYER_UI_OPTIMIZATION.md`](docs/ONTOLOGY_LAYER_UI_OPTIMIZATION.md) §5.3.1。
+- 知识库建模：在详情页**导入源卡片**点击「语义清洗」；**建模与质量**（`#modeling`）含 **流水线**、**五层结果**（实体概念层支持列表/树形）、**质量与隔离**（KPI + 待办隔离区 / 指标 SHACL·置信度）。详见 [`docs/本体建模/本体三层架构与UI优化.md`](docs/本体建模/本体三层架构与UI优化.md) §5.3.1。
 - 语义资产浏览：侧栏选择业务域后进入 **语义资产**（`/ontology`），按五层（实体概念 / 关系 / 规则 / 属性 / 词汇）聚合域内已入图资产，支持 `?kb=` 筛选与来源追溯。详见同上文档 §5.5。
 - 后端启动时报数据库错误：确认 PostgreSQL 已启动、`DATABASE_URL` 正确、并已启用 `pgvector`。
 - SQL Copilot 空结果：检查 `DEEPSEEK_API_KEY` / `OPENAI_API_KEY` 是否有效。

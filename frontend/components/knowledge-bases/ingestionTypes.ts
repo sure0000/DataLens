@@ -1,4 +1,4 @@
-/** 导入层 — 证据包与语义资产类型（对齐 ONTOLOGY_LAYER_UI_OPTIMIZATION.md） */
+/** 导入层 — 证据包与语义资产类型（对齐 本体三层架构与UI优化.md） */
 
 export type AssetKind =
   | "semantic_doc"
