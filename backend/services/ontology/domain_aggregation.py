@@ -48,6 +48,7 @@ def _normalize_term(raw: dict[str, Any], kb: KnowledgeBase, idx: int, sources: d
         "concept_id": None,
         "confidence": float(raw.get("confidence") or 0),
         "status": raw.get("status") or "draft",
+        "synonyms": raw.get("synonyms") or [],
         "origin": build_entity_origin(kb, src),
     }
 
@@ -383,6 +384,9 @@ def domain_layer_detail(
             subject = str(item.get("s", ""))
             src = sources.get(subject, {}) if subject else {}
             enriched["origin"] = build_entity_origin(kb, src)
+            # Parse GROUP_CONCAT synonyms string into list
+            syn_raw = str(item.get("synonyms", "") or "")
+            enriched["synonyms"] = [s.strip() for s in syn_raw.split("|||") if s.strip()] if syn_raw else []
             all_items.append(enriched)
 
     all_items = _sort_layer_items(normalized, all_items)

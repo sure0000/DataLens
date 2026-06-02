@@ -83,14 +83,18 @@ def list_rdf_terms(graph_iri: str, limit: int = 500) -> str:
     return f"""
 PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
 PREFIX dl: <{NS}>
-SELECT ?term ?label ?definition ?status WHERE {{
+SELECT ?term ?label ?definition ?status
+       (GROUP_CONCAT(?syn; separator='|||') AS ?synonyms)
+WHERE {{
   GRAPH <{graph_iri}> {{
     ?term a dl:BusinessTerm ;
           skos:prefLabel ?label .
     OPTIONAL {{ ?term skos:definition ?definition }}
     OPTIONAL {{ ?term dl:approvalStatus ?status }}
+    OPTIONAL {{ ?term skos:altLabel ?syn }}
   }}
-}} ORDER BY ?label LIMIT {limit}
+}} GROUP BY ?term ?label ?definition ?status
+ORDER BY ?label LIMIT {limit}
 """
 
 

@@ -279,14 +279,18 @@ def _fetch_layer_items(kb_id: int, layer_key: str) -> list[dict[str, str]]:
             PREFIX dl: <{ns}>
             PREFIX skos: <{skos}>
             PREFIX rdf: <{rdf_ns}>
-            SELECT ?s ?label ?definition ?status WHERE {{
+            SELECT ?s ?label ?definition ?status
+                   (GROUP_CONCAT(?syn; separator='|||') AS ?synonyms)
+            WHERE {{
                 GRAPH <{graph}> {{
                     ?s rdf:type dl:BusinessTerm .
                     OPTIONAL {{ ?s skos:prefLabel ?label }}
                     OPTIONAL {{ ?s skos:definition ?definition }}
                     OPTIONAL {{ ?s dl:approvalStatus ?status }}
+                    OPTIONAL {{ ?s skos:altLabel ?syn }}
                 }}
             }}
+            GROUP BY ?s ?label ?definition ?status
         """)
 
     if layer_key == "rule":

@@ -50,6 +50,7 @@ type ColumnDef = {
 const LAYER_COLUMNS: Record<string, ColumnDef[]> = {
   vocabulary: [
     { key: "label", label: "名称" },
+    { key: "synonyms", label: "同义词", render: (r) => renderSynonyms(r.synonyms) },
     { key: "definition", label: "定义", wrap: true },
     { key: "status", label: "状态" },
     { key: "s", label: "IRI", render: (r) => shortenIri(r.s ?? "") },
@@ -85,6 +86,11 @@ const LAYER_COLUMNS: Record<string, ColumnDef[]> = {
   ],
 };
 
+function renderSynonyms(synonyms: unknown): string {
+  const list = Array.isArray(synonyms) ? synonyms.filter((s: unknown) => typeof s === "string" && s.trim()) : [];
+  return list.length > 0 ? list.join("、") : "—";
+}
+
 function cellValue(row: DomainLayerItem, col: ColumnDef): string {
   if (col.render) return col.render(row);
   const v = row[col.key];
@@ -93,6 +99,20 @@ function cellValue(row: DomainLayerItem, col: ColumnDef): string {
 
 function rowKey(row: DomainLayerItem, index: number): string {
   return `${row.origin?.knowledge_base_id ?? 0}-${row.s ?? row.p ?? ""}-${row.o ?? ""}-${index}`;
+}
+
+function SynonymTags({ synonyms }: { synonyms: unknown }) {
+  const list: string[] = Array.isArray(synonyms) ? synonyms.filter((s: unknown) => typeof s === "string" && s.trim()) : [];
+  if (list.length === 0) return <span className="text-app-muted">—</span>;
+  return (
+    <span className="flex flex-wrap gap-1">
+      {list.map((s, i) => (
+        <span key={i} className="inline-flex items-center rounded border border-app-border bg-app-surfaceMuted px-1.5 py-0.5 text-xs text-app-secondary">
+          {s}
+        </span>
+      ))}
+    </span>
+  );
 }
 
 type Props = {
@@ -477,6 +497,8 @@ function LayerDetailTable({
                             >
                               {col.key === "status" && row.status ? (
                                 <OntologyStatusBadge status={row.status} />
+                              ) : col.key === "synonyms" ? (
+                                <SynonymTags synonyms={row.synonyms} />
                               ) : (
                                 cellValue(row, col)
                               )}

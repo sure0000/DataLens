@@ -54,6 +54,16 @@ def _row_val(row: dict, key: str) -> str:
     return str(v)
 
 
+_ALT_LABEL_SEP = "|||"
+
+
+def _split_synonyms(row: dict, key: str) -> list[str]:
+    val = _row_val(row, key)
+    if not val:
+        return []
+    return [s.strip() for s in val.split(_ALT_LABEL_SEP) if s.strip()]
+
+
 def _fetch_via_sparql(prod_graph: str, q_graph: str) -> dict[str, Any]:
     """Fuseki backend: SPARQL over HTTP (thread-safe)."""
     prod_triples = _scalar(sparql_query(count_triples_in_graph(prod_graph)))
@@ -67,6 +77,7 @@ def _fetch_via_sparql(prod_graph: str, q_graph: str) -> dict[str, Any]:
             "label": _row_val(r, "label"),
             "definition": _row_val(r, "definition"),
             "status": _row_val(r, "status") or "draft",
+            "synonyms": _split_synonyms(r, "synonyms"),
         }
         for r in term_rows
     ]
@@ -103,12 +114,14 @@ def _fetch_via_graph_walk(prod_graph: str, q_graph: str) -> dict[str, Any]:
 
     terms: list[dict[str, str]] = []
     for subj in prod_g.subjects(RDF.type, DL_BUSINESS_TERM):
+        syns = [_lit_value(o) for o in prod_g.objects(subj, SKOS.altLabel) if _lit_value(o)]
         terms.append(
             {
                 "iri": str(subj),
                 "label": _lit_value(prod_g.value(subj, SKOS.prefLabel)),
                 "definition": _lit_value(prod_g.value(subj, SKOS.definition)),
                 "status": _lit_value(prod_g.value(subj, DL_APPROVAL)) or "draft",
+                "synonyms": syns,
             }
         )
     terms.sort(key=lambda x: x["label"])

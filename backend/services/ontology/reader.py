@@ -23,19 +23,52 @@ class OntologyReader:
         metrics = reader.list_metrics(kb_id=1, include_inferred=True)
     """
 
+    _ALT_LABEL_SEP = "|||"
+
     def __init__(self, store: Any):
         self._store = store
+
+    def _fetch_alt_labels(self, kb_id: int, class_name: str) -> dict[str, list[str]]:
+        """Fetch skos:altLabel values grouped by subject IRI for a class."""
+        graph = kb_graph_iri(kb_id)
+        ns = "https://datalens.local/ontology/"
+        skos = "http://www.w3.org/2004/02/skos/core#"
+        query = f"""
+        PREFIX dl: <{ns}>
+        PREFIX skos: <{skos}>
+        SELECT ?s (GROUP_CONCAT(?s_raw; separator='{self._ALT_LABEL_SEP}') AS ?synonyms) WHERE {{
+          GRAPH <{graph}> {{
+            ?s a dl:{class_name} .
+            OPTIONAL {{ ?s skos:altLabel ?s_raw . }}
+          }}
+        }} GROUP BY ?s
+        """
+        try:
+            rows = self._store.sparql_query(query)
+        except Exception as exc:
+            _logger.warning("OntologyReader altLabel query failed for class=%s kb=%s: %s", class_name, kb_id, exc)
+            return {}
+        result: dict[str, list[str]] = {}
+        for row in rows:
+            iri = str(row.get("s", ""))
+            syns = str(row.get("synonyms", ""))
+            result[iri] = [s.strip() for s in syns.split(self._ALT_LABEL_SEP) if s.strip()]
+        return result
 
     # ── Concept queries ──────────────────────────────────────
 
     def list_terms(
         self, kb_id: int, *, limit: int = 500, include_inferred: bool = False,
     ) -> list[dict[str, str]]:
-        return self._query_concepts(
+        terms = self._query_concepts(
             kb_id, "BusinessTerm",
             ["label", "definition", "status", "confidence"],
             limit, include_inferred,
         )
+        syn_map = self._fetch_alt_labels(kb_id, "BusinessTerm")
+        for term in terms:
+            term["synonyms"] = syn_map.get(term["iri"], [])
+        return terms
 
     def list_metrics(
         self, kb_id: int, *, limit: int = 500, include_inferred: bool = False,

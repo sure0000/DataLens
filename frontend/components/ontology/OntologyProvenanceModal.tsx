@@ -17,6 +17,7 @@ export type ProvenanceColumnDef = {
 export type ProvenanceRow = Record<string, string> & {
   origin?: OntologyEntityOrigin;
   status?: string;
+  synonyms?: string[];
 };
 
 function cellValue(row: ProvenanceRow, col: ProvenanceColumnDef): string {
@@ -100,7 +101,6 @@ export default function OntologyProvenanceModal({
             <p className="text-xs font-medium text-app-muted">属性</p>
             <dl className="mt-2 divide-y divide-app-border rounded-lg border border-app-border">
               {columns.map((col) => {
-                const value = col.key === "status" && row.status ? null : cellValue(row, col);
                 if (col.key === "status" && row.status) {
                   return (
                     <div key={col.key} className="flex gap-3 px-3 py-2 text-xs">
@@ -111,6 +111,30 @@ export default function OntologyProvenanceModal({
                     </div>
                   );
                 }
+                if (col.key === "synonyms") {
+                  const syns: string[] = Array.isArray(row.synonyms)
+                    ? (row.synonyms as unknown as string[]).filter((s) => typeof s === "string" && s.trim())
+                    : [];
+                  return (
+                    <div key={col.key} className="flex gap-3 px-3 py-2 text-xs">
+                      <dt className="w-24 shrink-0 text-app-muted">{col.label}</dt>
+                      <dd className="min-w-0 flex-1 text-app-primary">
+                        {syns.length > 0 ? (
+                          <span className="flex flex-wrap gap-1">
+                            {syns.map((s, i) => (
+                              <span key={i} className="inline-flex items-center rounded border border-app-border bg-app-surfaceMuted px-1.5 py-0.5 text-xs text-app-secondary">
+                                {s}
+                              </span>
+                            ))}
+                          </span>
+                        ) : (
+                          <span className="text-app-muted">—</span>
+                        )}
+                      </dd>
+                    </div>
+                  );
+                }
+                const value = cellValue(row, col);
                 return (
                   <div key={col.key} className="flex gap-3 px-3 py-2 text-xs">
                     <dt className="w-24 shrink-0 text-app-muted">{col.label}</dt>

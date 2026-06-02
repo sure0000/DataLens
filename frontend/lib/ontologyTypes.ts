@@ -21,6 +21,7 @@ export type OntologyTerm = {
   name: string;
   type: string;
   definition: string;
+  synonyms?: string[];
   related_fields: string[];
   concept_id: string | null;
   confidence: number;
@@ -180,6 +181,7 @@ export type RdfEntity = {
   definition?: string;
   formula?: string;
   status?: string;
+  synonyms?: string[];
 };
 
 export type RdfPhysicalTable = {
