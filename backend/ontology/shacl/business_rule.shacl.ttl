@@ -6,45 +6,53 @@
 dl:BusinessRuleShape a sh:NodeShape ;
   sh:targetClass dl:BusinessRule ;
   sh:severity sh:Violation ;
+  sh:message "业务规则校验失败，请检查必填字段和值域约束"@zh ;
   sh:property [
     sh:path dl:ruleExpression ;
     sh:name "规则表达式"@zh ;
     sh:description "每条业务规则必须有一个规则表达式"@zh ;
     sh:minCount 1 ;
     sh:datatype xsd:string ;
+    sh:message "业务规则缺少规则表达式 (ruleExpression)"@zh ;
   ] ;
   sh:property [
     sh:path dl:ruleType ;
     sh:name "规则类型"@zh ;
-    sh:description "规则类型必须是 validation / derivation / constraint 之一"@zh ;
+    sh:description "规则类型: shacl_constraint(SHACL校验约束) / owl_axiom(OWL推理公理) / swrl_rule(SWRL规则) / business_rule(业务规则)"@zh ;
     sh:minCount 1 ;
-    sh:in ("validation" "derivation" "constraint") ;
+    sh:in ("shacl_constraint" "owl_axiom" "swrl_rule" "business_rule") ;
     sh:datatype xsd:string ;
+    sh:message "规则类型 (ruleType) 必须是 shacl_constraint / owl_axiom / swrl_rule / business_rule 之一"@zh ;
   ] ;
   sh:property [
     sh:path skos:prefLabel ;
     sh:name "首选标签"@zh ;
     sh:minCount 1 ;
+    sh:message "业务规则缺少首选标签 (skos:prefLabel)"@zh ;
   ] ;
   sh:property [
     sh:path dl:belongsToDomain ;
     sh:name "归属领域"@zh ;
     sh:minCount 1 ;
+    sh:message "业务规则缺少归属领域 (belongsToDomain)"@zh ;
   ] ;
   sh:property [
     sh:path dl:confidence ;
     sh:minInclusive 0.0 ;
     sh:maxInclusive 100.0 ;
     sh:datatype xsd:decimal ;
+    sh:message "置信度必须在 0-100 之间"@zh ;
   ] ;
   sh:property [
     sh:path dl:appliesTo ;
     sh:name "应用对象"@zh ;
     sh:description "每条业务规则必须声明其应用的目标对象"@zh ;
     sh:minCount 1 ;
+    sh:message "业务规则未声明应用对象 (appliesTo)"@zh ;
   ] ;
   sh:property [
     sh:path dl:approvalStatus ;
     sh:in ("approved" "pending_review" "draft" "rejected") ;
     sh:datatype xsd:string ;
+    sh:message "审批状态必须是 approved / pending_review / draft / rejected 之一"@zh ;
   ] .

@@ -92,7 +92,7 @@ def _start_pipeline_run(db: Session, kb_id: int, source_type: str | None = None,
         status="running",
         source_type=source_type,
         source_id=source_id,
-        steps={"term_extraction": "pending", "metric_caliber": "pending", "data_lineage": "pending"},
+        steps={"term_extraction": "pending", "metric_extraction": "pending", "data_lineage": "pending"},
     )
     db.add(run)
     db.commit()
@@ -432,7 +432,7 @@ async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None
 
         # Step 2: 指标口径提取
         metric_count = await extract_metrics_from_kb(db, kb_id)
-        steps_status["metric_caliber"] = {"status": "done", "count": metric_count}
+        steps_status["metric_extraction"] = {"status": "done", "count": metric_count}
         run.steps = steps_status
         db.commit()
 
@@ -478,10 +478,10 @@ async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None
         if not steps_status:
             steps_status = {
                 "term_extraction": {"status": "failed", "count": 0, "reason": "pipeline_timeout"},
-                "metric_caliber": {"status": "failed", "count": 0, "reason": "pipeline_timeout"},
+                "metric_extraction": {"status": "failed", "count": 0, "reason": "pipeline_timeout"},
                 "data_lineage": {"status": "failed", "count": 0, "reason": "pipeline_timeout"},
             }
-        for key in ("term_extraction", "metric_caliber", "data_lineage"):
+        for key in ("term_extraction", "metric_extraction", "data_lineage"):
             if key not in steps_status:
                 steps_status[key] = {"status": "failed", "count": 0, "reason": "pipeline_timeout"}
         run.steps = steps_status
@@ -489,7 +489,7 @@ async def run_semantic_pipeline(db: Session, kb_id: int, source_type: str | None
         return {"status": "timeout", "steps": steps_status, "run_id": run.id}
     except Exception:
         _logger.warning("Semantic pipeline failed for kb=%s", kb_id, exc_info=True)
-        for key in ("term_extraction", "metric_caliber", "data_lineage"):
+        for key in ("term_extraction", "metric_extraction", "data_lineage"):
             if key not in steps_status:
                 steps_status[key] = {"status": "failed", "count": 0, "reason": "unexpected_error"}
         run.steps = steps_status

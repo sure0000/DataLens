@@ -1,59 +1,74 @@
 # OWL 2 RL Inference Rules for DataLens Ontology
 #
-# These rules are applied by the reasoner (services/ontology/reasoner.py)
-# after each ABox write to materialize inferred triples into the
-# inferred graph (graph/inferred/{domain}).
+# Standard Datalog-style syntax consumed by reasoner.py:
+#   [rule-name] (body-pattern) ... -> (head)
+#
+# Body patterns: (?var predicate ?var) with ?var placeholders
+# Head: (?var predicate ?var) — derives a new triple when body matches
+#
+# These rules complement the structural inference rules hard-coded
+# in OntologyReasoner._default_rules() (subclass, transitive, symmetric, inverse).
+# This file contains business-level derivation rules.
 
-# ── RDFS Rules ──────────────────────────────────────────────
+# ── RDFS / OWL Structural Rules ─────────────────────────────────
 
 # rdfs:subClassOf transitivity
 # IF  ?a rdfs:subClassOf ?b . ?b rdfs:subClassOf ?c
 # THEN ?a rdfs:subClassOf ?c
-[rdfs11] (?a rdf:type ?b) -> (?b rdf:type ?b)
+[rdfs-subclass-trans] (?a rdfs:subClassOf ?b) (?b rdfs:subClassOf ?c) -> (?a rdfs:subClassOf ?c)
 
-# ── OWL Property Characteristics ────────────────────────────
+# rdfs:subPropertyOf transitivity
+# IF  ?a rdfs:subPropertyOf ?b . ?b rdfs:subPropertyOf ?c
+# THEN ?a rdfs:subPropertyOf ?c
+[rdfs-subprop-trans] (?a rdfs:subPropertyOf ?b) (?b rdfs:subPropertyOf ?c) -> (?a rdfs:subPropertyOf ?c)
 
-# owl:TransitiveProperty: dl:derivedFrom, dl:transformsFrom
-# IF  ?a dl:derivedFrom ?b . ?b dl:derivedFrom ?c
-# THEN ?a dl:derivedFrom ?c
-[transitive-derivedFrom] (?a dl:derivedFrom ?b) (?b dl:derivedFrom ?c) -> (?a dl:derivedFrom ?c)
+# rdfs:type propagation through subClassOf
+# IF  ?x rdf:type ?a . ?a rdfs:subClassOf ?b
+# THEN ?x rdf:type ?b
+[rdfs-type-prop] (?x rdf:type ?a) (?a rdfs:subClassOf ?b) -> (?x rdf:type ?b)
 
-# IF  ?a dl:transformsFrom ?b . ?b dl:transformsFrom ?c
-# THEN ?a dl:transformsFrom ?c
-[transitive-transformsFrom] (?a dl:transformsFrom ?b) (?b dl:transformsFrom ?c) -> (?a dl:transformsFrom ?c)
+# ── OWL Property Characteristics ────────────────────────────────
+
+# owl:TransitiveProperty: dl:derivedFrom
+[trans-derivedFrom] (?a dl:derivedFrom ?b) (?b dl:derivedFrom ?c) -> (?a dl:derivedFrom ?c)
+
+# owl:TransitiveProperty: dl:transformsFrom
+[trans-transformsFrom] (?a dl:transformsFrom ?b) (?b dl:transformsFrom ?c) -> (?a dl:transformsFrom ?c)
+
+# owl:TransitiveProperty: dl:precedes
+[trans-precedes] (?a dl:precedes ?b) (?b dl:precedes ?c) -> (?a dl:precedes ?c)
 
 # owl:SymmetricProperty: dl:joinableWith
-# IF  ?a dl:joinableWith ?b
-# THEN ?b dl:joinableWith ?a
-[symmetric-joinableWith] (?a dl:joinableWith ?b) -> (?b dl:joinableWith ?a)
+[sym-joinableWith] (?a dl:joinableWith ?b) -> (?b dl:joinableWith ?a)
 
-# ── SKOS Hierarchy ──────────────────────────────────────────
+# ── SKOS Hierarchy ──────────────────────────────────────────────
 
-# skos:broader / skos:narrower inverses
-# IF  ?a skos:broader ?b
-# THEN ?b skos:narrower ?a
-[skos-broader-inverse] (?a skos:broader ?b) -> (?b skos:narrower ?a)
-
-# IF  ?a skos:narrower ?b
-# THEN ?b skos:broader ?a
-[skos-narrower-inverse] (?a skos:narrower ?b) -> (?b skos:broader ?a)
+# skos:broader ↔ skos:narrower inverse pair
+[skos-broader-inv] (?a skos:broader ?b) -> (?b skos:narrower ?a)
+[skos-narrower-inv] (?a skos:narrower ?b) -> (?b skos:broader ?a)
 
 # skos:exactMatch symmetry + transitivity
-# IF  ?a skos:exactMatch ?b
-# THEN ?b skos:exactMatch ?a
-[skos-exactMatch-symmetric] (?a skos:exactMatch ?b) -> (?b skos:exactMatch ?a)
+[skos-exactMatch-sym] (?a skos:exactMatch ?b) -> (?b skos:exactMatch ?a)
+[skos-exactMatch-trans] (?a skos:exactMatch ?b) (?b skos:exactMatch ?c) -> (?a skos:exactMatch ?c)
 
-# IF  ?a skos:exactMatch ?b . ?b skos:exactMatch ?c
-# THEN ?a skos:exactMatch ?c
-[skos-exactMatch-transitive] (?a skos:exactMatch ?b) (?b skos:exactMatch ?c) -> (?a skos:exactMatch ?c)
+# ── Business Derivation Rules (P2 — SWRL equivalent) ───────────
 
-# ── Property Chain Axioms ──────────────────────────────────
+# Rule 1: Metric source-table dependency
+# IF  a Metric is computedFromTable a PhysicalTable
+# THEN the Metric dependsOn that table (implicit dependency)
+[metric-source-depends] (?m rdf:type dl:Metric) (?m dl:computedFromTable ?t) (?t rdf:type dl:PhysicalTable) -> (?m dl:dependsOn ?t)
 
-# Indirect lineage: ?table transformsFrom intermediate → intermediate transformsFrom target
-# Implies ?table transformsFrom target (handled by owl:TransitiveProperty above)
+# Rule 2: Derived metric inherits table affinity
+# IF  Metric A derivedFrom Metric B, and B computedFromTable T
+# THEN A computedFromTable T (inherits source from base metric)
+[derived-metric-inherits-table] (?a dl:derivedFrom ?b) (?b dl:computedFromTable ?t) (?a rdf:type dl:Metric) -> (?a dl:computedFromTable ?t)
 
-# ── Concept Scheme Membership ───────────────────────────────
+# Rule 3: Metric-dimension column affinity
+# IF  Metric M aggregatesOver Dimension D, and D mapsToColumn C
+# THEN M mapsToColumn C (metric linked to dimension's physical column)
+[metric-dim-column] (?m dl:aggregatesOver ?d) (?d dl:mapsToColumn ?c) -> (?m dl:mapsToColumn ?c)
 
-# IF  ?concept skos:inScheme ?scheme
-# AND ?scheme a dl:ConceptScheme
-# THEN ?concept belongs to the domain's concept scheme
+# Rule 4: BusinessRule auto-grounding
+# IF  a BusinessRule appliesTo Concept C, and C groundedBy Chunk D
+# THEN the BusinessRule is also groundedBy that chunk
+[rule-inherits-grounding] (?r dl:appliesTo ?c) (?c dl:groundedBy ?chunk) (?r rdf:type dl:BusinessRule) -> (?r dl:groundedBy ?chunk)

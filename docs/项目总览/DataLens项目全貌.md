@@ -1,6 +1,6 @@
 # DataLens 项目全貌
 
-> 最后更新：2026-06-01，反映 OWL/RDF 本体引擎、8 步抽取流水线、SHACL 校验写入、OWL 2 RL 推理、Copilot 本体路由等最新状态。
+> 最后更新：2026-06-02，反映 OWL/RDF 本体引擎、9 步抽取流水线、SHACL 校验写入、OWL 2 RL 推理、Copilot 本体路由等最新状态。
 
 ---
 
@@ -68,7 +68,7 @@
 - LLM 无 Key 兜底：未配置 API Key 时用规则和本地向量提供基本链路可用性
 - 大模型多厂商接入：DeepSeek / OpenAI / 自定义兼容端点
 - **OWL/RDF 本体引擎**：Apache Jena Fuseki 三元组存储、SPARQL 查询与推理、OWL 2 RL 增量推理
-- **本体建模与清洗**：8 步抽取编排、9 阶段三元组清洗管道、SHACL 校验、隔离区、五层结果分页 API
+- **本体建模与清洗**：9 步抽取编排、9 阶段三元组清洗管道、SHACL 校验、隔离区、五层结果分页 API
 - **业务域语义资产浏览**：按侧栏当前业务域聚合绑定知识库的已入图五层资产
 - **SHACL 校验写入**：三元组写入前强制校验，通过入 production graph，失败入 quarantine
 - **Copilot 本体路由**：OntologyRouter（SPARQL 概念/表路由）、混合路由（substring + embedding + keyword）
@@ -160,7 +160,7 @@
 │   │   │   └── quarantine_templates.py # 隔离区修复模板
 │   │   │
 │   │   ├── extraction/               # LLM 知识提取层
-│   │   │   ├── orchestrator.py       # 8 步提取流水线编排
+│   │   │   ├── orchestrator.py       # 9 步提取流水线编排
 │   │   │   ├── term_extractor.py     # 术语提取
 │   │   │   ├── metric_extractor.py   # 指标提取
 │   │   │   ├── dimension_extractor.py # 维度提取
@@ -423,7 +423,7 @@ owl:Thing
 │   │
 │   └── dl:BusinessRule         (业务规则)
 │       ├── dl:ruleExpression    xsd:string
-│       └── dl:ruleType          xsd:string {validation|derivation|constraint}
+│       └── dl:ruleType          xsd:string {shacl_constraint|owl_axiom|swrl_rule|business_rule}
 │
 ├── dl:DataAsset                (数据资产)
 │   ├── dl:PhysicalTable        (物理表)
@@ -496,7 +496,7 @@ dl:PhysicalTable  owl:disjointWith  dl:BusinessConcept .
 - **关系层**：查询 `isIRI(?o)` 且谓语在关系白名单中的三元组
 - **属性层**：查询 `isLiteral(?o)` 且排除 `rdf:type` 和 `approvalStatus` 的字面量三元组，支持按物理表/列维度筛选
 
-### 7.5 8 步提取流水线（ExtractionOrchestrator）
+### 7.5 9 步提取流水线（ExtractionOrchestrator）
 
 编排器 `ExtractionOrchestrator.run()` 协调从文档到 RDF 三元组的完整提取流程。
 
@@ -509,7 +509,7 @@ dl:PhysicalTable  owl:disjointWith  dl:BusinessConcept .
 ```
 阶段 1（并行执行 — 有文档分块时）:
   ├── Step 1: term_extraction    # 术语提取 (term_extractor.py)
-  ├── Step 2: metric_caliber     # 指标口径提取 (metric_extractor.py)
+  ├── Step 2: metric_extraction  # 指标口径提取 (metric_extractor.py)
   ├── Step 3: dimension_extraction # 维度提取 (dimension_extractor.py)
   └── Step 4: rule_extraction    # 业务规则提取 (rule_extractor.py)
 
@@ -877,7 +877,7 @@ Step 3: expand_lineage(kb_ids, table_iris) → expanded_tables[]
 - `GET /api/ontology/knowledge-bases/{id}/graph` — 图数据（nodes + edges）
 - `GET /api/ontology/knowledge-bases/{id}/modeling/status` — 建模状态
 - `GET /api/ontology/knowledge-bases/{id}/modeling/layers/{key}` — 五层明细分页
-- `POST /api/ontology/knowledge-bases/{id}/modeling/runs` — 触发 8 步抽取
+- `POST /api/ontology/knowledge-bases/{id}/modeling/runs` — 触发 9 步抽取
 - `GET /api/ontology/knowledge-bases/{id}/views/*` — 只读 SPARQL 视图（overview/terms/graph/lineage/hierarchy/triples）
 - `GET /api/ontology/knowledge-bases/{id}/quarantine` — 隔离区列表
 - `POST /api/ontology/knowledge-bases/{id}/quarantine/{idx}/resolve` — 隔离项裁决
@@ -962,6 +962,8 @@ Step 3: expand_lineage(kb_ids, table_iris) → expanded_tables[]
 
 | 文档 | 内容 |
 |------|------|
+| [本体建模理论标准](../本体建模/本体建模理论标准.md) | **新增** — W3C 技术栈、方法论、OWL/SHACL/SWRL 分工 |
+| [DataLens 本体建模优化方案](../本体建模/DataLens本体建模优化方案.md) | **新增** — P0–P3 优化路线、差距分析与实施方案 |
 | [本体三层架构与 UI 优化方案](../本体建模/本体三层架构与UI优化.md) | 导入层、清洗层、展示层设计 |
 | [企业语义层与域内自治实践](企业语义层与域内自治实践.md) | 理念、存储、联邦治理 |
 | [本体建模：企业数据来源与自动化抽取](../本体建模/企业数据来源与自动化抽取.md) | 本体要素全景、企业数据源映射 |

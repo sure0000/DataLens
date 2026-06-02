@@ -12,7 +12,7 @@ from models import Document, PipelineRun
 
 EXTRACTION_STEP_DEFS: list[tuple[str, str]] = [
     ("term_extraction", "术语"),
-    ("metric_caliber", "指标"),
+    ("metric_extraction", "指标"),
     ("dimension_extraction", "维度"),
     ("rule_extraction", "规则"),
     ("relation_extraction", "关系"),

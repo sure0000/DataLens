@@ -15,12 +15,30 @@ from sqlalchemy.orm import Session
 from config import get_settings
 from models import Document, DocumentChunk, KnowledgeDatabaseImport, KnowledgeEntry, KnowledgeGitSource, PipelineRun, TableMeta
 from services.ontology_triple_cleaner import RawTriple
+from services.extraction.cross_entity_validator import validate_cross_entity_consistency
+from services.extraction.cross_kb_equivalence import resolve_cross_kb_equivalences, suggest_cross_domain_mappings
+from services.extraction.entity_version_tracker import apply_version_tracking
 
 _logger = logging.getLogger(__name__)
 
+# Maps pipeline step keys to the 7 standard ontology output categories
+# Reference: docs/本体建模/本体建模理论标准.md 九
+_STEP_TO_STANDARD_CATEGORY = {
+    "term_extraction": "① 概念词典/业务词汇表 (SKOS)",
+    "metric_extraction": "⑥ ABox实例数据 — Metric",
+    "dimension_extraction": "⑥ ABox实例数据 — Dimension",
+    "rule_extraction": "⑤ 公理与规则约束 — BusinessRule（可细化为 ⑤a/⑤b/⑤c）",
+    "relation_extraction": "③ 关系定义 (OWL ObjectProperty)",
+    "hierarchy_building": "② 类层次结构 (SKOS broader/narrower)",
+    "data_lineage": "③ 关系定义 — transformsFrom (OWL TransitiveProperty)",
+    "join_extraction": "③ 关系定义 — joinableWith (OWL SymmetricProperty)",
+    "cross_kb_equivalence": "⑦ 对齐 — skos:exactMatch/closeMatch",
+    "cross_domain_alignment": "⑦ 对齐 — 跨域本体映射",
+}
+
 _CHUNK_STEP_KEYS = (
     "term_extraction",
-    "metric_caliber",
+    "metric_extraction",
     "dimension_extraction",
     "rule_extraction",
     "relation_extraction",
@@ -98,7 +116,7 @@ def _start_pipeline_run(db: Session, kb_id: int, source_type: str | None = None,
     initial_steps = touch_pipeline_progress(
         {
             "term_extraction": "pending",
-            "metric_caliber": "pending",
+            "metric_extraction": "pending",
             "dimension_extraction": "pending",
             "rule_extraction": "pending",
             "relation_extraction": "pending",
@@ -310,7 +328,7 @@ def _build_ontology_injection_context(db: Session, kb_id: int, domain_id: int | 
     )
     parts.append(
         "维度类型枚举: time(时间), geo(地理), category(分类), hierarchy(层级); "
-        "规则类型枚举: validation(校验), derivation(派生), constraint(约束)"
+        "规则类型枚举: shacl_constraint(SHACL校验约束), owl_axiom(OWL推理公理), swrl_rule(SWRL推导规则), business_rule(业务规则)"
     )
 
     try:
@@ -561,7 +579,7 @@ class ExtractionOrchestrator:
                         ),
                     ),
                     _run_extraction_step(
-                        "metric_caliber",
+                        "metric_extraction",
                         extract_metric_triples(
                             kb_id=kb_id,
                             chunks=llm_chunks,
@@ -571,7 +589,7 @@ class ExtractionOrchestrator:
                             load_prompt=_load_prompt,
                             auto_approve_confidence=auto_approve,
                             domain_id=domain_id,
-                            on_chunk_progress=_chunk_progress("metric_caliber"),
+                            on_chunk_progress=_chunk_progress("metric_extraction"),
                             ontology_context=ontology_injection_context,
                         ),
                     ),
@@ -738,6 +756,94 @@ class ExtractionOrchestrator:
             elif not steps.get("relation_extraction"):
                 steps["relation_extraction"] = {"status": "skipped", "reason": "no_concepts"}
                 steps["hierarchy_building"] = {"status": "skipped", "reason": "no_concepts"}
+                _checkpoint()
+
+        # ── P0: Cross-entity referential integrity validation ──────────
+        if all_triples:
+            try:
+                cross_report = validate_cross_entity_consistency(
+                    all_triples, kb_id, store=getattr(self._writer, "_store", None),
+                )
+                steps["cross_entity_validation"] = {
+                    "status": "done",
+                    "passed": cross_report.passed,
+                    "violations": cross_report.violations,
+                    "stats": cross_report.stats,
+                }
+                if cross_report.violations:
+                    _logger.warning(
+                        "Cross-entity validation found %d violations for kb=%s",
+                        len(cross_report.violations),
+                        kb_id,
+                    )
+                _checkpoint()
+            except Exception as exc:
+                _logger.warning("Cross-entity validation failed for kb=%s", kb_id, exc_info=True)
+                steps["cross_entity_validation"] = {
+                    "status": "failed",
+                    "reason": _step_error(exc),
+                }
+                _checkpoint()
+
+        # ── P2: Cross-KB term equivalence (skos:exactMatch / skos:closeMatch) ─
+        if all_triples:
+            try:
+                store = getattr(self._writer, "_store", None)
+                equiv_triples = resolve_cross_kb_equivalences(all_triples, kb_id, store)
+                if equiv_triples:
+                    all_triples.extend(equiv_triples)
+                    steps["cross_kb_equivalence"] = {
+                        "status": "done",
+                        "triples": len(equiv_triples),
+                        "exact": sum(1 for t in equiv_triples if t.predicate.endswith("exactMatch")),
+                        "close": sum(1 for t in equiv_triples if t.predicate.endswith("closeMatch")),
+                    }
+                    _checkpoint()
+                    _logger.info("Cross-KB equivalence added %d triples for kb=%s", len(equiv_triples), kb_id)
+            except Exception as exc:
+                _logger.warning("Cross-KB equivalence detection failed for kb=%s", kb_id, exc_info=True)
+                steps["cross_kb_equivalence"] = {"status": "failed", "reason": _step_error(exc)}
+                _checkpoint()
+
+        # ── P3: Entity version tracking (semantic change detection) ─────
+        if all_triples:
+            try:
+                store = getattr(self._writer, "_store", None)
+                versioned_triples = apply_version_tracking(all_triples, kb_id, store)
+                if len(versioned_triples) > len(all_triples):
+                    added = len(versioned_triples) - len(all_triples)
+                    _logger.info("Version tracking added %d metadata triples for kb=%s", added, kb_id)
+                    steps["version_tracking"] = {"status": "done", "metadata_triples": added}
+                all_triples = versioned_triples
+                _checkpoint()
+            except Exception as exc:
+                _logger.warning("Version tracking failed for kb=%s", kb_id, exc_info=True)
+                steps["version_tracking"] = {"status": "failed", "reason": _step_error(exc)}
+                _checkpoint()
+
+        # ── P3: Cross-domain alignment suggestions (non-blocking) ────────
+        if all_triples and domain_id is not None:
+            try:
+                store = getattr(self._writer, "_store", None)
+                if store:
+                    cross_domain_mappings = suggest_cross_domain_mappings(
+                        store, source_domain_id=domain_id, threshold=0.88,
+                    )
+                    if cross_domain_mappings:
+                        steps["cross_domain_alignment"] = {
+                            "status": "done",
+                            "mappings": len(cross_domain_mappings),
+                            "exact": sum(1 for m in cross_domain_mappings if m["match_type"] == "skos:exactMatch"),
+                            "close": sum(1 for m in cross_domain_mappings if m["match_type"] == "skos:closeMatch"),
+                        }
+                        _logger.info(
+                            "Cross-domain alignment found %d mappings for domain=%s",
+                            len(cross_domain_mappings), domain_id,
+                        )
+                        _checkpoint()
+            except Exception as exc:
+                _logger.warning("Cross-domain alignment failed for kb=%s", kb_id, exc_info=True)
+                steps["cross_domain_alignment"] = {"status": "failed", "reason": _step_error(exc)}
                 _checkpoint()
 
         if all_triples:

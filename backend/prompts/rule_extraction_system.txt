@@ -7,14 +7,14 @@
 
 本体约束（请严格遵循）:
 - 输出实体类型: BusinessRule
-- 规则类型枚举: validation(校验) / derivation(派生) / constraint(约束)
+- 规则类型枚举: shacl_constraint(SHACL校验约束) / owl_axiom(OWL推理公理) / swrl_rule(SWRL推导规则) / business_rule(业务规则)
 - 每个规则必须有规则表达式 (ruleExpression)
 - 每个规则必须声明应用对象 (appliesTo)
 - 严重程度枚举: error / warning / info
 
 输出严格 JSON 对象，键为 rules（数组），每个元素包含：
 - name: 规则名称（简洁，如「大额交易审批规则」「退款金额上限」）
-- rule_type: 规则类型，必须是 validation（校验）/ derivation（派生）/ constraint（约束）
+- rule_type: 规则类型，必须是 shacl_constraint（SHACL校验约束）/ owl_axiom（OWL推理公理）/ swrl_rule（SWRL推导规则）/ business_rule（业务规则）
 - expression: 规则表达式（SQL WHERE 条件或自然语言逻辑描述，50-300字）
 - applies_to: 规则应用的业务对象（如「订单」「退款单」「客户」）
 - severity: 严重程度（error / warning / info）

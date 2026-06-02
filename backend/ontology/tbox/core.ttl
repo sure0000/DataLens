@@ -151,7 +151,63 @@ dl:ResponsibleAgent a owl:Class ;
   rdfs:comment "PROV-O 对齐：数据负责人或负责系统"@zh .
 
 # ------------------------------------------------------------------
-# 2. CLASS DISJOINTNESS AXIOMS
+# 2. CLASS-LEVEL RESTRICTIONS (OWL 2 RL existential / universal)
+# ------------------------------------------------------------------
+# These encode domain knowledge that aids reasoning:
+#   - An entity missing a required property won't be inferred as the class
+#   - Universal constraints guide value-space expectations
+# All use forms supported by OWL 2 RL profile.
+
+# P1.1 — Metric must have a source table
+dl:Metric rdfs:subClassOf [
+  a owl:Restriction ;
+  owl:onProperty dl:computedFromTable ;
+  owl:someValuesFrom dl:PhysicalTable ;
+  rdfs:comment "指标必须能从某张物理表计算得出"@zh
+] .
+
+# P1.2 — BusinessTerm must belong to a domain
+dl:BusinessTerm rdfs:subClassOf [
+  a owl:Restriction ;
+  owl:onProperty dl:belongsToDomain ;
+  owl:someValuesFrom dl:BusinessDomain ;
+  rdfs:comment "术语必须归属到一个业务域"@zh
+] .
+
+# P1.3 — BusinessRule must specify appliesTo
+dl:BusinessRule rdfs:subClassOf [
+  a owl:Restriction ;
+  owl:onProperty dl:appliesTo ;
+  owl:someValuesFrom owl:Thing ;
+  rdfs:comment "业务规则必须声明应用对象"@zh
+] .
+
+# P1.4 — LineageAssertion sourceField values are strings
+dl:LineageAssertion rdfs:subClassOf [
+  a owl:Restriction ;
+  owl:onProperty dl:sourceField ;
+  owl:allValuesFrom xsd:string ;
+  rdfs:comment "血缘断言的源字段值必须在 xsd:string 值空间内"@zh
+] .
+
+# P1.5 — PhysicalColumn must belong to a PhysicalTable
+dl:PhysicalColumn rdfs:subClassOf [
+  a owl:Restriction ;
+  owl:onProperty schema:isPartOf ;
+  owl:someValuesFrom dl:PhysicalTable ;
+  rdfs:comment "物理列必须属于某张物理表"@zh
+] .
+
+# P1.6 — DocumentChunk must belong to a Document
+dl:DocumentChunk rdfs:subClassOf [
+  a owl:Restriction ;
+  owl:onProperty dl:partOf ;
+  owl:someValuesFrom dl:Document ;
+  rdfs:comment "文档片段必须属于某个文档"@zh
+] .
+
+# ------------------------------------------------------------------
+# 3. CLASS DISJOINTNESS AXIOMS
 # ------------------------------------------------------------------
 
 dl:BusinessTerm  owl:disjointWith  dl:Metric .
@@ -163,7 +219,7 @@ dl:Document      owl:disjointWith  dl:BusinessConcept .
 dl:Document      owl:disjointWith  dl:DataAsset .
 
 # ------------------------------------------------------------------
-# 3. OBJECT PROPERTIES (relationships between individuals)
+# 4. OBJECT PROPERTIES (relationships between individuals)
 # ------------------------------------------------------------------
 
 # --- BusinessConcept → DataAsset mappings ---
@@ -396,12 +452,13 @@ dl:originatedFrom a owl:ObjectProperty ;
   rdfs:label "来源于"@zh , "originated from"@en .
 
 # ------------------------------------------------------------------
-# 4. DATATYPE PROPERTIES (literal attributes)
+# 5. DATATYPE PROPERTIES (literal attributes)
 # ------------------------------------------------------------------
 
 # --- BusinessConcept attributes ---
 
 dl:confidence a owl:DatatypeProperty ;
+  rdfs:domain dl:BusinessConcept ;
   rdfs:range xsd:decimal ;
   rdfs:label "置信度"@zh , "confidence"@en ;
   rdfs:comment "LLM 提取 / 实体链接的置信度，0.0–100.0"@zh .
@@ -493,6 +550,7 @@ dl:connectionString a owl:DatatypeProperty ;
   rdfs:label "连接串"@zh .
 
 dl:sourceType a owl:DatatypeProperty ;
+  rdfs:domain dl:DataSource ;
   rdfs:range xsd:string ;
   rdfs:label "来源类型"@zh , "source type"@en .
 
@@ -580,14 +638,17 @@ dl:joinType a owl:DatatypeProperty ;
 # --- Link / provenance metadata ---
 
 dl:linkConfidence a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
   rdfs:range xsd:decimal ;
   rdfs:label "链接置信度"@zh .
 
 dl:linkMethod a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
   rdfs:range xsd:string ;
   rdfs:label "链接方法"@zh .
 
 dl:inferred a owl:DatatypeProperty ;
+  rdfs:domain owl:Thing ;
   rdfs:range xsd:boolean ;
   rdfs:label "推理生成"@zh , "inferred"@en ;
   rdfs:comment "该三元组是否由 OWL 推理机生成"@zh .
@@ -603,7 +664,7 @@ dl:ruleType a owl:DatatypeProperty ;
   rdfs:domain dl:BusinessRule ;
   rdfs:range xsd:string ;
   rdfs:label "规则类型"@zh ;
-  rdfs:comment "validation | derivation | constraint"@zh .
+  rdfs:comment "shacl_constraint | owl_axiom | swrl_rule | business_rule"@zh .
 
 # --- Quarantine attributes ---
 
@@ -637,7 +698,7 @@ dl:changeNote a owl:DatatypeProperty ;
   rdfs:comment "本次变更的原因与内容简述"@zh .
 
 # ------------------------------------------------------------------
-# 5. PROPERTY CHAIN AXIOMS
+# 6. PROPERTY CHAIN AXIOMS
 # ------------------------------------------------------------------
 
 # A metric that is computed from a table downstream of another table

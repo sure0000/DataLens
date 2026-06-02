@@ -263,17 +263,28 @@ class SWRLStyleRule(InferenceRule):
 
     def apply(self, graph: Graph) -> list[tuple[URIRef, URIRef, Any]]:
         new: list[tuple[URIRef, URIRef, Any]] = []
-        # For each body pattern, collect bindings
         bindings_list: list[list[dict[str, URIRef | Literal]]] = []
 
         for subj_var, pred_uri, obj_var in self.body_patterns:
             pred = URIRef(pred_uri)
             bindings: list[dict[str, URIRef | Literal]] = []
+            is_obj_var = obj_var and obj_var.startswith("?")
+            is_subj_var = subj_var and subj_var.startswith("?")
+            obj_constant = URIRef(obj_var) if obj_var and not is_obj_var else None
+            subj_constant = URIRef(subj_var) if subj_var and not is_subj_var else None
+
             for s, o in graph.subject_objects(pred):
+                # Filter: if obj is a constant, only match when it equals the constant
+                if obj_constant is not None and o != obj_constant:
+                    continue
+                # Filter: if subject is a constant, only match when it equals the constant
+                if subj_constant is not None and s != subj_constant:
+                    continue
+
                 binding: dict[str, URIRef | Literal] = {}
-                if subj_var:
+                if is_subj_var and subj_var:
                     binding[subj_var] = s
-                if obj_var:
+                if is_obj_var and obj_var:
                     binding[obj_var] = o
                 if binding:
                     bindings.append(binding)
@@ -315,12 +326,94 @@ class SWRLStyleRule(InferenceRule):
         return new
 
 
+# ── Rule file parser ─────────────────────────────────────────────────────
+
+
+def _resolve_uri(token: str) -> str:
+    """Resolve a prefixed token like dl:formula or rdf:type to a full URI."""
+    prefixes = {
+        "dl:": NS,
+        "rdf:": str(RDF),
+        "rdfs:": str(RDFS),
+        "skos:": str(SKOS),
+        "owl:": "http://www.w3.org/2002/07/owl#",
+        "xsd:": "http://www.w3.org/2001/XMLSchema#",
+    }
+    for prefix, ns in prefixes.items():
+        if token.startswith(prefix):
+            return ns + token[len(prefix):]
+    return token
+
+
+def load_swrl_rules(filepath: str | None = None) -> list[InferenceRule]:
+    """Load SWRL-style inference rules from a .rules file.
+
+    Parses Datalog-style syntax:
+      [rule-name] (?a pred ?b) (?b pred ?c) -> (?a pred ?c)
+
+    Returns a list of SWRLStyleRule instances ready for the reasoner.
+    """
+    import re
+    from pathlib import Path
+
+    if filepath is None:
+        filepath = str(Path(__file__).resolve().parent.parent.parent / "ontology" / "rules" / "inference.rules")
+
+    rules: list[InferenceRule] = []
+    try:
+        text = Path(filepath).read_text(encoding="utf-8")
+    except FileNotFoundError:
+        _logger.warning("Inference rules file not found: %s", filepath)
+        return rules
+
+    # Pattern: [name] (patterns...) -> (head)
+    rule_pattern = re.compile(
+        r"\[([^\]]+)\]\s*(.+?)\s*->\s*\(([^)]+)\)",
+        re.MULTILINE,
+    )
+
+    for match in rule_pattern.finditer(text):
+        rule_name = match.group(1).strip()
+        body_text = match.group(2).strip()
+        head_text = match.group(3).strip()
+
+        # Skip comment-only lines that look like rules
+        if rule_name.startswith("#") or rule_name.startswith("─"):
+            continue
+
+        # Parse body patterns: (?a pred ?b) or (?a pred dl:Constant)
+        body_patterns: list[tuple[str | None, str, str | None]] = []
+        body_matches = re.findall(r"\((\?\w+)\s+(\S+)\s+(\?\w+|\S+:\S+)\)", body_text)
+        for subj, pred, obj in body_matches:
+            resolved_obj = obj if obj.startswith("?") else _resolve_uri(obj)
+            body_patterns.append((subj, _resolve_uri(pred), resolved_obj))
+
+        # Parse head: (?a pred ?c)
+        head_match = re.match(r"(\?\w+)\s+(\S+)\s+(\?\w+)", head_text)
+        if not head_match:
+            _logger.warning("Cannot parse head of rule [%s]: %s", rule_name, head_text)
+            continue
+
+        head = (head_match.group(1), _resolve_uri(head_match.group(2)), head_match.group(3))
+
+        if body_patterns:
+            rules.append(SWRLStyleRule(
+                name=rule_name,
+                description=f"SWRL rule from inference.rules: {rule_name}",
+                body_patterns=body_patterns,
+                head=head,
+            ))
+
+    _logger.info("Loaded %d SWRL rules from %s", len(rules), filepath)
+    return rules
+
+
 # ── Rule set ────────────────────────────────────────────────────────────
 
 
 def _default_rules() -> list[InferenceRule]:
-    return [
-        # Hierarchy closure (P2)
+    rules: list[InferenceRule] = [
+        # Hierarchy closure
         SubClassOfRule(),
         SubPropertyOfRule(),
         EquivalentClassRule(),
@@ -337,6 +430,15 @@ def _default_rules() -> list[InferenceRule]:
         InversePropertyRule(f"{NS}groundedBy", f"{NS}asserts"),
         InversePropertyRule(f"{NS}computedFromTable", f"{NS}usedBy"),
     ]
+
+    # Load business-level SWRL rules from inference.rules
+    try:
+        swrl_rules = load_swrl_rules()
+        rules.extend(swrl_rules)
+    except Exception:
+        _logger.warning("Failed to load SWRL rules", exc_info=True)
+
+    return rules
 
 
 # ── Reasoner ────────────────────────────────────────────────────────────

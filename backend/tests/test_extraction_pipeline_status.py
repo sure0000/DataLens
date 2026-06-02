@@ -63,7 +63,7 @@ def test_fail_stale_pipeline_run_does_not_use_timeout_for_pending_steps():
         status="running",
         steps={
             "term_extraction": "pending",
-            "metric_caliber": {"status": "done", "triples": 3},
+            "metric_extraction": {"status": "done", "triples": 3},
         },
     )
     run.started_at = datetime.now(timezone.utc)

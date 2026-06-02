@@ -6,11 +6,13 @@
 dl:DimensionShape a sh:NodeShape ;
   sh:targetClass dl:Dimension ;
   sh:severity sh:Violation ;
+  sh:message "维度校验失败，请检查必填字段和值域约束"@zh ;
   sh:property [
     sh:path skos:prefLabel ;
     sh:name "首选标签"@zh ;
     sh:description "每个维度必须有一个首选标签"@zh ;
     sh:minCount 1 ;
+    sh:message "维度缺少首选标签 (skos:prefLabel)"@zh ;
   ] ;
   sh:property [
     sh:path dl:dimensionType ;
@@ -19,21 +21,25 @@ dl:DimensionShape a sh:NodeShape ;
     sh:minCount 1 ;
     sh:in ("time" "geo" "category" "hierarchy") ;
     sh:datatype xsd:string ;
+    sh:message "维度类型 (dimensionType) 必须是 time / geo / category / hierarchy 之一"@zh ;
   ] ;
   sh:property [
     sh:path dl:belongsToDomain ;
     sh:name "归属领域"@zh ;
     sh:description "每个维度必须归属到一个业务域"@zh ;
     sh:minCount 1 ;
+    sh:message "维度缺少归属领域 (belongsToDomain)"@zh ;
   ] ;
   sh:property [
     sh:path dl:confidence ;
     sh:minInclusive 0.0 ;
     sh:maxInclusive 100.0 ;
     sh:datatype xsd:decimal ;
+    sh:message "置信度必须在 0-100 之间"@zh ;
   ] ;
   sh:property [
     sh:path dl:approvalStatus ;
     sh:in ("approved" "pending_review" "draft" "rejected") ;
     sh:datatype xsd:string ;
+    sh:message "审批状态必须是 approved / pending_review / draft / rejected 之一"@zh ;
   ] .

@@ -6,16 +6,20 @@
 dl:MetricShape a sh:NodeShape ;
   sh:targetClass dl:Metric ;
   sh:severity sh:Violation ;
+  sh:message "指标校验失败，请检查必填字段和值域约束"@zh ;
   sh:property [
     sh:path skos:prefLabel ;
     sh:name "首选标签"@zh ;
     sh:minCount 1 ;
+    sh:message "指标缺少首选标签 (skos:prefLabel)"@zh ;
   ] ;
   sh:property [
     sh:path dl:formula ;
     sh:name "公式"@zh ;
     sh:description "每个指标必须有计算公式"@zh ;
     sh:minCount 1 ;
+    sh:minLength 3 ;
+    sh:message "指标公式不能为空或过短（至少 3 个字符）"@zh ;
   ] ;
   sh:property [
     sh:path dl:computedFromTable ;
@@ -23,15 +27,18 @@ dl:MetricShape a sh:NodeShape ;
     sh:description "每个指标必须声明其从哪张物理表取数"@zh ;
     sh:severity sh:Warning ;
     sh:minCount 1 ;
+    sh:message "指标未声明计算来源表 (computedFromTable)，建议补足以提升 SQL 生成准确率"@zh ;
   ] ;
   sh:property [
     sh:path dl:confidence ;
     sh:minInclusive 0.0 ;
     sh:maxInclusive 100.0 ;
     sh:datatype xsd:decimal ;
+    sh:message "置信度必须在 0-100 之间"@zh ;
   ] ;
   sh:property [
     sh:path dl:approvalStatus ;
     sh:in ("approved" "pending_review" "draft" "rejected") ;
     sh:datatype xsd:string ;
+    sh:message "审批状态必须是 approved / pending_review / draft / rejected 之一"@zh ;
   ] .

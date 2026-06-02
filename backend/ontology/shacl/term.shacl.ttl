@@ -6,23 +6,27 @@
 dl:TermShape a sh:NodeShape ;
   sh:targetClass dl:BusinessTerm ;
   sh:severity sh:Violation ;
+  sh:message "术语校验失败，请检查必填字段和值域约束"@zh ;
   sh:property [
     sh:path skos:prefLabel ;
     sh:name "首选标签"@zh ;
     sh:description "每个术语必须有一个首选标签"@zh ;
     sh:minCount 1 ;
+    sh:message "术语缺少首选标签 (skos:prefLabel)"@zh ;
   ] ;
   sh:property [
     sh:path skos:definition ;
     sh:name "定义"@zh ;
     sh:description "每个术语必须有一条业务定义"@zh ;
     sh:minCount 1 ;
+    sh:message "术语缺少业务定义 (skos:definition)"@zh ;
   ] ;
   sh:property [
     sh:path dl:belongsToDomain ;
     sh:name "归属领域"@zh ;
     sh:description "每个术语必须归属到一个业务域"@zh ;
     sh:minCount 1 ;
+    sh:message "术语缺少归属领域 (belongsToDomain)"@zh ;
   ] ;
   sh:property [
     sh:path dl:confidence ;
@@ -30,10 +34,12 @@ dl:TermShape a sh:NodeShape ;
     sh:minInclusive 0.0 ;
     sh:maxInclusive 100.0 ;
     sh:datatype xsd:decimal ;
+    sh:message "置信度必须在 0-100 之间"@zh ;
   ] ;
   sh:property [
     sh:path dl:approvalStatus ;
     sh:name "审批状态"@zh ;
     sh:in ("approved" "pending_review" "draft" "rejected") ;
     sh:datatype xsd:string ;
+    sh:message "审批状态必须是 approved / pending_review / draft / rejected 之一"@zh ;
   ] .

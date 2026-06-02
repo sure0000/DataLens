@@ -18,7 +18,7 @@ _logger = logging.getLogger(__name__)
 
 CACHED_EXTRACTION_STEPS: tuple[str, ...] = (
     "term_extraction",
-    "metric_caliber",
+    "metric_extraction",
     "dimension_extraction",
     "rule_extraction",
     "relation_extraction",

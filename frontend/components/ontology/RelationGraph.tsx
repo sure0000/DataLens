@@ -22,6 +22,7 @@ interface RelationGraphProps {
   edges: GraphEdge[];
   onNodeClick?: (node: GraphNode) => void;
   maxNodes?: number;
+  svgId?: string;
 }
 
 const TYPE_COLORS: Record<string, string> = {
@@ -38,6 +39,7 @@ export default function RelationGraph({
   edges,
   onNodeClick,
   maxNodes = 50,
+  svgId,
 }: RelationGraphProps) {
   const displayNodes = useMemo(() => nodes.slice(0, maxNodes), [nodes, maxNodes]);
   const nodeIds = useMemo(() => new Set(displayNodes.map((n) => n.id)), [displayNodes]);
@@ -83,6 +85,7 @@ export default function RelationGraph({
   return (
     <div className="overflow-x-auto">
       <svg
+        id={svgId}
         width={svgW}
         height={svgH}
         viewBox={`0 0 ${svgW} ${svgH}`}
