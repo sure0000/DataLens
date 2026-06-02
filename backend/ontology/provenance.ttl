@@ -1,4 +1,4 @@
 @prefix owl: <http://www.w3.org/2002/07/owl#> .
 
-# Thin wrapper — provenance annotations are now in tbox/enterprise.ttl.
-owl:imports <tbox/enterprise.ttl> .
+# Thin wrapper — provenance annotations are now in tbox/core.ttl.
+owl:imports <tbox/core.ttl> .

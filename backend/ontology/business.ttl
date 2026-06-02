@@ -2,4 +2,3 @@
 
 # Thin wrapper — SKOS business concept annotations are now in tbox/core.ttl and tbox/enterprise.ttl.
 owl:imports <tbox/core.ttl> .
-owl:imports <tbox/enterprise.ttl> .

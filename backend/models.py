@@ -444,7 +444,7 @@ class KnowledgeMcpSource(Base):
 
 
 class EvidencePackage(Base):
-    """导入层证据包 — 登记企业本体知识库单元（与连接器实现解耦）。"""
+    """导入层证据包 — 登记本体知识库单元（与连接器实现解耦）。"""
 
     __tablename__ = "evidence_packages"
 

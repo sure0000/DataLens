@@ -440,7 +440,7 @@ class TripleStore:
         base = Path(__file__).resolve().parent.parent.parent / "ontology"
         tbox_dir = base / "tbox"
         files = (
-            ["core.ttl", "enterprise.ttl", "governance.ttl", "physical.ttl", "business.ttl", "lineage.ttl", "provenance.ttl"]
+            ["core.ttl", "governance.ttl", "physical.ttl", "business.ttl", "lineage.ttl", "provenance.ttl"]
             if tbox_dir.is_dir()
             else ["core.ttl", "physical.ttl", "business.ttl", "lineage.ttl", "provenance.ttl"]
         )

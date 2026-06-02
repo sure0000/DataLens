@@ -7,7 +7,6 @@ from urllib.parse import quote
 NS = "https://datalens.local/ontology/"
 DATA_NS = "https://datalens.local/data/"
 GRAPH_NS = "https://datalens.local/graph/"
-ENTERPRISE_GRAPH = f"{GRAPH_NS}enterprise"
 INFERRED_GRAPH_PREFIX = f"{GRAPH_NS}inferred/"
 
 
@@ -114,14 +113,6 @@ def document_iri(doc_id: int) -> str:
 
 def domain_iri(domain_id: int) -> str:
     return f"{DATA_NS}domain/{domain_id}"
-
-
-def organization_iri(org_slug: str) -> str:
-    return f"{DATA_NS}organization/{org_slug}"
-
-
-def team_iri(team_slug: str) -> str:
-    return f"{DATA_NS}team/{team_slug}"
 
 
 def platform_id_from_table_iri(iri: str) -> int | None:
