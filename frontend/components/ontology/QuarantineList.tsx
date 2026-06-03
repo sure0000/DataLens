@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Icon } from "../AppIcons";
 import { PipelineStepIcon, QualityStatIcon } from "../icons";
 import { api, ApiError } from "../../lib/api";
+import { shortenIri } from "../../lib/shortenIri";
 
 export interface QuarantineFixTemplate {
   id: string;
@@ -198,7 +199,7 @@ export default function QuarantineList({ kbId, onResolve, onTotalChange }: Quara
               )}
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium text-app-primary truncate">
-                  {item.subject || item.raw || `断言 #${idx}`}
+                  {item.subject ? shortenIri(item.subject) : item.raw ? shortenIri(item.raw) : `断言 #${idx}`}
                 </p>
                 <p className="text-xs text-red-600 dark:text-red-400 mt-0.5">
                   {item.reason_label || item.reason}
@@ -226,8 +227,8 @@ export default function QuarantineList({ kbId, onResolve, onTotalChange }: Quara
 
             {expanded && (
               <div className="border-t border-red-500/20 px-4 py-3 space-y-3">
-                {item.predicate && <DetailRow label="Predicate" value={item.predicate} />}
-                {item.object && <DetailRow label="Object" value={item.object} />}
+                {item.predicate && <DetailRow label="谓词" value={shortenIri(item.predicate)} />}
+                {item.object && <DetailRow label="客体" value={shortenIri(item.object)} />}
 
                 {(item.fix_templates?.length ?? 0) > 0 && (
                   <div>

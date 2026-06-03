@@ -43,9 +43,14 @@ class ContextAssembler:
         tables = routing_result.get("tables", [])
         expanded = routing_result.get("expanded_tables", [])
 
-        # Separate terms from metrics
+        # Separate concepts by type
         terms = [c for c in concepts if "BusinessTerm" in c.get("type", "")]
         metrics = [c for c in concepts if "Metric" in c.get("type", "")]
+        rules = [c for c in concepts if "BusinessRule" in c.get("type", "")]
+        dimensions = [c for c in concepts if "Dimension" in c.get("type", "")]
+        biz_concepts = [c for c in concepts if "BusinessConcept" in c.get("type", "")]
+        # BusinessConcept entities can be merged into terms for display
+        terms = terms + biz_concepts
 
         # Get table details from RDF
         all_table_iris = [t["iri"] for t in tables if t.get("iri")]
@@ -62,6 +67,10 @@ class ContextAssembler:
             sections["terms"] = self._format_terms(terms[:max_terms])
         if metrics:
             sections["metrics"] = self._format_metrics(metrics[:max_metrics])
+        if rules:
+            sections["rules"] = self._format_rules(rules[:max_metrics])
+        if dimensions:
+            sections["dimensions"] = self._format_dimensions(dimensions[:max_terms])
         if table_details:
             sections["tables"] = self._format_tables(table_details)
             sections["schema"] = self._format_schema(table_details)
@@ -141,6 +150,24 @@ class ContextAssembler:
         for m in metrics:
             label = m.get("label", "")
             definition = m.get("definition", "")
+            lines.append(f"- **{label}**: {definition}" if definition else f"- **{label}**")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_rules(rules: list[dict]) -> str:
+        lines = ["## 业务规则"]
+        for r in rules:
+            label = r.get("label", "")
+            definition = r.get("definition", "")
+            lines.append(f"- **{label}**: {definition}" if definition else f"- **{label}**")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_dimensions(dimensions: list[dict]) -> str:
+        lines = ["## 分析维度"]
+        for d in dimensions:
+            label = d.get("label", "")
+            definition = d.get("definition", "")
             lines.append(f"- **{label}**: {definition}" if definition else f"- **{label}**")
         return "\n".join(lines)
 

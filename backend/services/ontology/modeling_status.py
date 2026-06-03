@@ -132,15 +132,24 @@ def get_modeling_status(db: Session, kb_id: int) -> dict[str, Any]:
 
         try:
             from services.ontology_store import sparql_query
+            from services.ontology.relation_predicates import relation_predicate_in_clause
             from ontology import kb_graph_iri
 
             graph = kb_graph_iri(kb_id)
             ns = "https://datalens.local/ontology/"
+            rdf_ns = "http://www.w3.org/1999/02/22-rdf-syntax-ns#"
+            relation_predicates = relation_predicate_in_clause()
+            attr_exclude = ", ".join([
+                f"<{rdf_ns}type>",
+                f"<{ns}approvalStatus>",
+            ])
             for layer_key, sparql in [
-                ("vocabulary", f"SELECT (COUNT(?s) AS ?c) WHERE {{ GRAPH <{graph}> {{ ?s <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <{ns}BusinessTerm> }} }}"),
-                ("rule", f"SELECT (COUNT(?s) AS ?c) WHERE {{ GRAPH <{graph}> {{ ?s <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> ?t . VALUES ?t {{ <{ns}Metric> <{ns}BusinessRule> }} }} }}"),
-                ("entity_concept", f"SELECT (COUNT(?s) AS ?c) WHERE {{ GRAPH <{graph}> {{ ?s <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <{ns}BusinessConcept> }} }}"),
-                ("dimension", f"SELECT (COUNT(?s) AS ?c) WHERE {{ GRAPH <{graph}> {{ ?s <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <{ns}Dimension> }} }}"),
+                ("vocabulary", f"SELECT (COUNT(DISTINCT ?s) AS ?c) WHERE {{ GRAPH <{graph}> {{ ?s <{rdf_ns}type> <{ns}BusinessTerm> }} }}"),
+                ("rule", f"SELECT (COUNT(DISTINCT ?s) AS ?c) WHERE {{ GRAPH <{graph}> {{ {{ ?s <{rdf_ns}type> <{ns}BusinessRule> . }} UNION {{ ?s <{rdf_ns}type> <{ns}Metric> . }} }} }}"),
+                ("entity-concept", f"SELECT (COUNT(DISTINCT ?s) AS ?c) WHERE {{ GRAPH <{graph}> {{ ?s <{rdf_ns}type> ?entityType . FILTER(?entityType IN (<{ns}BusinessTerm>, <{ns}Metric>, <{ns}Dimension>, <{ns}BusinessConcept>)) }} }}"),
+                ("dimension", f"SELECT (COUNT(DISTINCT ?s) AS ?c) WHERE {{ GRAPH <{graph}> {{ ?s <{rdf_ns}type> <{ns}Dimension> }} }}"),
+                ("relation", f"SELECT (COUNT(*) AS ?c) WHERE {{ GRAPH <{graph}> {{ ?s ?p ?o . FILTER(isIRI(?o)) FILTER(?p IN ({relation_predicates})) }} }}"),
+                ("attribute", f"SELECT (COUNT(*) AS ?c) WHERE {{ GRAPH <{graph}> {{ ?s ?p ?o . FILTER(isLiteral(?o)) FILTER(?p NOT IN ({attr_exclude})) }} }}"),
             ]:
                 rows = sparql_query(sparql)
                 if rows and rows[0].get("c") is not None:

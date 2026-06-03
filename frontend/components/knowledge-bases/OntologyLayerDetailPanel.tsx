@@ -6,7 +6,12 @@ import SearchField from "../SearchField";
 import OntologyProvenanceModal, { type ProvenanceColumnDef, type ProvenanceRow } from "../ontology/OntologyProvenanceModal";
 import { api, ApiError, formatApiError } from "../../lib/api";
 import type { OntologyProvenance } from "../../lib/ontologyTypes";
-import { shortenIri } from "../../lib/shortenIri";
+import {
+  ATTRIBUTE_PREDICATE_LABELS,
+  ENTITY_TYPE_LABELS,
+  PREDICATE_LABELS,
+} from "../../lib/ontologyTypes";
+import { humanPredicateLabel, labelForIri, shortenIri } from "../../lib/shortenIri";
 import type { OntologyLayerDetail } from "./types";
 
 const DEFAULT_PAGE_SIZE = 20;
@@ -15,7 +20,11 @@ const RULE_PAGE_SIZE = 10;
 const LAYER_COLUMNS: Record<string, ProvenanceColumnDef[]> = {
   vocabulary: [
     { key: "label", label: "名称" },
-    { key: "definition", label: "定义" },
+    { key: "synonyms", label: "同义词", render: (r) => {
+      const list = Array.isArray(r.synonyms) ? r.synonyms.filter((s: unknown) => typeof s === "string" && s.trim()) : [];
+      return list.length > 0 ? list.join("、") : "—";
+    }},
+    { key: "definition", label: "定义", wrap: true },
     { key: "status", label: "状态" },
     { key: "s", label: "IRI", render: (r) => shortenIri(r.s ?? "") },
   ],
@@ -28,25 +37,29 @@ const LAYER_COLUMNS: Record<string, ProvenanceColumnDef[]> = {
   "entity-concept": [
     { key: "label", label: "名称" },
     { key: "definition", label: "说明", wrap: true },
-    { key: "entityType", label: "实体类型", render: (r) => shortenIri(r.entityType ?? "") },
-    { key: "neighbors", label: "层级邻居", wrap: true, render: (r) => r.neighbors || "—" },
+    { key: "entityType", label: "实体类型", render: (r) => labelForIri(r.entityType ?? "", ENTITY_TYPE_LABELS) },
+    { key: "neighbors", label: "层级邻居", wrap: true, render: (r) => {
+      const raw = r.neighbors;
+      if (!raw || raw === "—") return "—";
+      return raw.split(" | ").map((n) => shortenIri(n.trim())).join(" · ");
+    }},
     { key: "s", label: "IRI", render: (r) => shortenIri(r.s ?? "") },
   ],
   dimension: [
     { key: "label", label: "名称" },
     { key: "definition", label: "定义" },
-    { key: "dimType", label: "维度类型" },
+    { key: "dimType", label: "维度类型", render: (r) => humanPredicateLabel(r.dimType ?? "") },
     { key: "status", label: "状态" },
   ],
   relation: [
     { key: "s", label: "主体", render: (r) => shortenIri(r.s ?? "") },
-    { key: "p", label: "谓词", render: (r) => shortenIri(r.p ?? "") },
+    { key: "p", label: "谓词", render: (r) => labelForIri(r.p ?? "", PREDICATE_LABELS) },
     { key: "o", label: "客体", render: (r) => shortenIri(r.o ?? "") },
   ],
   attribute: [
     { key: "subjectLabel", label: "名称", render: (r) => r.subjectLabel || "—" },
     { key: "s", label: "主体", render: (r) => shortenIri(r.s ?? "") },
-    { key: "p", label: "属性", render: (r) => shortenIri(r.p ?? "") },
+    { key: "p", label: "属性", render: (r) => labelForIri(r.p ?? "", ATTRIBUTE_PREDICATE_LABELS) },
     { key: "o", label: "值" },
   ],
 };

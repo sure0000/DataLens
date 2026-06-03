@@ -9,7 +9,7 @@ def insert_reasoning_4_after_reasoning_3(traces: list[dict[str, Any]], detail: s
     d = (detail or "").strip()
     if len(d) > 2800:
         d = d[:2800] + "…"
-    row: dict[str, Any] = {"id": "reasoning_4", "label": "4. 查询逻辑以及 SQL", "detail": d}
+    row: dict[str, Any] = {"id": "reasoning_4", "label": "7. 查询逻辑以及 SQL", "detail": d}
     for i, t in enumerate(traces):
         if t.get("id") == "reasoning_3":
             traces.insert(i + 1, row)

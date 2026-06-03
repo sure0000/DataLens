@@ -216,6 +216,43 @@ export const TERM_TYPE_LABELS: Record<string, string> = {
   other: "其他",
 };
 
+/** 本体实体类型的可读标签（用于 entityType 列展示） */
+export const ENTITY_TYPE_LABELS: Record<string, string> = {
+  "dl:BusinessTerm": "业务术语",
+  "dl:Metric": "度量指标",
+  "dl:Dimension": "分析维度",
+  "dl:BusinessConcept": "业务概念",
+  "dl:BusinessRule": "业务规则",
+};
+
+/** 关系谓词的可读标签（用于关系层 p 列展示） */
+export const PREDICATE_LABELS: Record<string, string> = {
+  "dl:dependsOn": "依赖于",
+  "dl:derivedFrom": "派生自",
+  "dl:relatedTo": "关联于",
+  "dl:joinableWith": "可关联",
+  "dl:transformsFrom": "转换自",
+  "dl:computedFromTable": "计算自表",
+  "skos:related": "相关",
+  "skos:broader": "上位概念",
+  "skos:narrower": "下位概念",
+};
+
+/** 常见属性谓词的可读标签（用于属性层 p 列展示） */
+export const ATTRIBUTE_PREDICATE_LABELS: Record<string, string> = {
+  "dl:businessSummary": "业务描述",
+  "dl:semanticDescription": "语义说明",
+  "dl:sampleValue": "样例值",
+  "dl:confidence": "置信度",
+  "dl:approvalStatus": "审核状态",
+  "dl:formula": "计算公式",
+  "dl:caliber": "口径说明",
+  "dl:ruleExpression": "规则表达式",
+  "dl:ruleType": "规则类型",
+  "dl:dimensionType": "维度类型",
+  "rdf:type": "类型",
+};
+
 export type OntologyProvenance = {
   chunks: { iri: string; content_preview?: string | null }[];
   documents: { id: number; title: string; status: string }[];

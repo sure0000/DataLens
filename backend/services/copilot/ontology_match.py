@@ -62,6 +62,7 @@ class OntologyMatchResult:
     ontology_context_text: str = ""
     concepts: list[dict[str, Any]] = field(default_factory=list)
     tables: list[dict[str, Any]] = field(default_factory=list)
+    expanded_tables: list[dict[str, Any]] = field(default_factory=list)
     skipped: bool = False
     skip_reason: str = ""
 
@@ -84,13 +85,30 @@ def _concept_kind(ctype: str) -> str:
     c = (ctype or "").lower()
     if "metric" in c:
         return "metric"
+    if "businessterm" in c:
+        return "term"
+    if "businessrule" in c:
+        return "rule"
+    if "dimension" in c:
+        return "dimension"
+    if "businessconcept" in c:
+        return "concept"
     if "term" in c or "business" in c:
         return "term"
     return "concept"
 
 
 def _kind_label(kind: str) -> str:
-    return {"metric": "指标", "term": "术语", "concept": "概念", "table": "物理表"}.get(kind, "概念")
+    return {
+        "metric": "指标",
+        "term": "术语",
+        "concept": "概念",
+        "rule": "规则",
+        "table": "物理表",
+        "dimension": "维度",
+        "relation": "关系",
+        "attribute": "属性",
+    }.get(kind, "概念")
 
 
 def _build_mapping_sentence(
@@ -166,16 +184,32 @@ def _deduplicate_concepts_for_display(
         if not label:
             keep.append(c)
             continue
+        c_kind = _concept_kind(str(c.get("type") or ""))
 
-        # Drop if this label is fully contained within a kept label
-        if any(label in kept for kept in keep_labels):
+        # Drop if this label is fully contained within a kept label from the SAME layer.
+        # Concepts from different ontological layers (e.g. Dimension "客户" vs
+        # BusinessTerm "用电客户") are both preserved so every layer is represented.
+        drop = False
+        for i, kept_label in enumerate(keep_labels):
+            if label in kept_label and label != kept_label:
+                kept_kind = _concept_kind(str(keep[i].get("type") or ""))
+                if c_kind == kept_kind:
+                    # Same layer, substring → drop the shorter one
+                    drop = True
+                    break
+                # Different layers → keep both (skip this kept_label)
+        if drop:
             continue
 
         # If this label contains a previously-kept shorter label, replace it
-        # (only if the score isn't drastically worse)
+        # (only if same layer and score isn't drastically worse)
         replaced = False
         for i, kept_label in enumerate(keep_labels):
-            if kept_label in label:
+            if kept_label in label and kept_label != label:
+                kept_kind = _concept_kind(str(keep[i].get("type") or ""))
+                if c_kind != kept_kind:
+                    # Different layers → keep both
+                    continue
                 old_score = float(keep[i].get("match_score", 0))
                 new_score = float(c.get("match_score", 0))
                 if new_score >= old_score * 0.7:
@@ -275,7 +309,9 @@ def run_ontology_match(
         router = OntologyRouter(store)
         route = router.full_route(kb_ids, q_for_routing, top_k=12, db=db, query_vector=query_vector)
         concepts = route.get("concepts") or []
+        concept_relations = route.get("concept_relations") or []
         tables = route.get("tables") or []
+        expanded_tables = route.get("expanded_tables") or []
     except Exception as exc:
         return OntologyMatchResult(
             matched=False,
@@ -302,9 +338,26 @@ def run_ontology_match(
     for iri in concept_iris:
         tables_by_concept.setdefault(iri, [])
 
+    # ---- Enrich expanded tables with human-readable names ----
+    table_info_by_iri: dict[str, dict[str, Any]] = {}
+    for t in tables:
+        iri = str(t.get("iri") or "")
+        if iri:
+            table_info_by_iri[iri] = t
+
+    for e in expanded_tables:
+        e_iri = str(e.get("iri") or "")
+        # Prefer the name already returned by expand_lineage, fall back to
+        # cross-referencing the primary tables list
+        if not e.get("name") and e_iri in table_info_by_iri:
+            e["name"] = table_info_by_iri[e_iri].get("name", "")
+            e["platform_id"] = table_info_by_iri[e_iri].get("platform_id", "")
+
     # ---- Pass 1: ontology_context_text from ALL concepts (for LLM) ----
     context_metric_lines: list[str] = []
+    context_rule_lines: list[str] = []
     context_term_lines: list[str] = []
+    context_dimension_lines: list[str] = []
 
     for c in concepts:
         label = str(c.get("label") or "").strip()
@@ -326,6 +379,14 @@ def run_ontology_match(
             context_metric_lines.append(
                 f"- **{label}**" + (f"：{definition}" if definition else "") + table_ref
             )
+        elif kind == "rule":
+            context_rule_lines.append(
+                f"- **{label}**" + (f"：{definition}" if definition else "") + table_ref
+            )
+        elif kind == "dimension":
+            context_dimension_lines.append(
+                f"- **{label}**" + (f"：{definition}" if definition else "") + table_ref
+            )
         elif kind == "term":
             context_term_lines.append(
                 f"- **{label}**" + (f"：{definition}" if definition else "") + table_ref
@@ -344,12 +405,61 @@ def run_ontology_match(
         context_table_lines.append(
             f"- **{name}**" + (f"：{tbl_summary}" if tbl_summary else "")
         )
+    # Include lineage-expanded tables so the LLM knows about joinable neighbors
+    primary_table_names = {str(t.get("name") or t.get("platform_id") or "").strip() for t in tables}
+    for e in expanded_tables:
+        e_name = str(e.get("name") or e.get("platform_id") or "").strip()
+        if not e_name or e_name in primary_table_names:
+            continue
+        context_table_lines.append(
+            f"- **{e_name}**（关联表）"
+        )
 
     context_blocks: list[str] = []
     if context_metric_lines:
         context_blocks.append("### 指标口径\n" + "\n".join(context_metric_lines))
+    if context_rule_lines:
+        context_blocks.append("### 业务规则\n" + "\n".join(context_rule_lines))
     if context_term_lines:
         context_blocks.append("### 业务术语\n" + "\n".join(context_term_lines))
+    if context_dimension_lines:
+        context_blocks.append("### 分析维度\n" + "\n".join(context_dimension_lines))
+
+    # ---- Concept-to-concept relationships ----
+    _PREDICATE_ZH: dict[str, str] = {
+        "dependsOn": "依赖",
+        "derivedFrom": "派生自",
+        "relatedTo": "关联",
+        "related": "相关",
+        "broader": "上层概念",
+        "narrower": "下层概念",
+    }
+    if concept_relations:
+        matched_iris: set[str] = {str(c.get("iri") or "") for c in concepts}
+        context_rel_lines: list[str] = []
+        seen_rel: set[tuple[str, str, str]] = set()
+        for rel in concept_relations:
+            subj_iri = str(rel.get("subject_iri") or "")
+            obj_iri = str(rel.get("object_iri") or "")
+            # Only show relations where at least one side is a matched concept
+            if subj_iri not in matched_iris and obj_iri not in matched_iris:
+                continue
+            subj_label = str(rel.get("subject_label") or "").strip()
+            obj_label = str(rel.get("object_label") or "").strip()
+            if not subj_label or not obj_label:
+                continue
+            pred_local = str(rel.get("predicate_label") or "")
+            pred_zh = _PREDICATE_ZH.get(pred_local, pred_local)
+            dedup = (subj_label, pred_local, obj_label)
+            if dedup in seen_rel:
+                continue
+            seen_rel.add(dedup)
+            context_rel_lines.append(
+                f"- **{subj_label}** --[{pred_zh}]--> **{obj_label}**"
+            )
+        if context_rel_lines:
+            context_blocks.append("### 概念关系\n" + "\n".join(context_rel_lines))
+
     if context_table_lines:
         context_blocks.append("### 关联物理表\n" + "\n".join(context_table_lines))
     ontology_context_text = "\n\n".join(context_blocks)[:12000]
@@ -401,6 +511,184 @@ def run_ontology_match(
             "maps_to": item.get("maps_to") or "",
             "match_type": match_type,
         })
+
+    # ---- Pass 3: Generate relation-layer mapping items ----
+    # Type A: Concept-to-table grounding (from source_concept_iri)
+    seen_relations: set[tuple[str, str]] = set()
+    for t in tables:
+        src_iri = str(t.get("source_concept_iri") or "")
+        if not src_iri:
+            continue
+        matching_concept = next((c for c in concepts if str(c.get("iri") or "") == src_iri), None)
+        if not matching_concept:
+            continue
+        concept_label = str(matching_concept.get("label") or "").strip()
+        table_name = str(t.get("name") or t.get("platform_id") or "").strip()
+        if not concept_label or not table_name:
+            continue
+        rel_key = (concept_label, table_name)
+        if rel_key in seen_relations:
+            continue
+        seen_relations.add(rel_key)
+        desc = f"本体概念「{concept_label}」→ 物理表「{table_name}」"
+        mappings.append({
+            "question_phrase": q_preview,
+            "target_kind": "relation",
+            "target_label": f"{concept_label} ↔ {table_name}",
+            "target_definition": f"{concept_label} 映射到物理表 {table_name}",
+            "physical_tables": table_name,
+            "description": desc,
+            "match_type": "exact",
+        })
+
+    # Type B: Table-to-table joins (from expanded_tables via lineage)
+    for e in expanded_tables:
+        e_name = str(e.get("name") or e.get("platform_id") or "").strip()
+        if not e_name:
+            continue
+        desc = f"发现关联表「{e_name}」（joinableWith / transformsFrom）"
+        mappings.append({
+            "question_phrase": q_preview,
+            "target_kind": "relation",
+            "target_label": e_name,
+            "target_definition": "通过 joinableWith / transformsFrom 关联的邻居表",
+            "physical_tables": e_name,
+            "description": desc,
+            "match_type": "exact",
+        })
+
+    # Type C: Concept-to-concept semantic relationships
+    _PREDICATE_ZH_MAP: dict[str, str] = {
+        "dependsOn": "依赖",
+        "derivedFrom": "派生自",
+        "relatedTo": "关联",
+        "related": "相关",
+        "broader": "上层概念",
+        "narrower": "下层概念",
+    }
+    for rel in concept_relations:
+        subj_label = str(rel.get("subject_label") or "").strip()
+        obj_label = str(rel.get("object_label") or "").strip()
+        if not subj_label or not obj_label:
+            continue
+        pred_local = str(rel.get("predicate_label") or "")
+        pred_zh = _PREDICATE_ZH_MAP.get(pred_local, pred_local)
+        desc = f"本体概念「{subj_label}」--[{pred_zh}]-->「{obj_label}」"
+        mappings.append({
+            "question_phrase": q_preview,
+            "target_kind": "relation",
+            "target_label": f"{subj_label} ↔ {obj_label}",
+            "target_definition": f"{subj_label} {pred_zh} {obj_label}",
+            "physical_tables": "",
+            "description": desc,
+            "match_type": "exact",
+        })
+
+    # Type D: Entity-concept layer — concepts that participate in hierarchies
+    # The entity-concept layer (实体概念层) represents entities with
+    # hierarchical (broader/narrower) relationships.  Emit a mapping entry
+    # for every matched concept that appears in a hierarchy edge so the
+    # frontend can populate this layer even when no BusinessConcept
+    # instances exist in the KB.
+    _hierarchy_concept_iris: set[str] = set()
+    _hierarchy_pred_labels: dict[str, str] = {}
+    for rel in concept_relations:
+        pred_local = str(rel.get("predicate_label") or "")
+        if pred_local in ("broader", "narrower"):
+            _hierarchy_concept_iris.add(str(rel.get("subject_iri") or ""))
+            _hierarchy_concept_iris.add(str(rel.get("object_iri") or ""))
+            _hierarchy_pred_labels[str(rel.get("subject_iri") or "")] = pred_local
+            _hierarchy_pred_labels[str(rel.get("object_iri") or "")] = pred_local
+
+    _seen_entity_concept: set[str] = set()
+    for c in concepts:
+        iri = str(c.get("iri") or "")
+        if iri not in _hierarchy_concept_iris:
+            continue
+        label = str(c.get("label") or "").strip()
+        if not label or label in _seen_entity_concept:
+            continue
+        _seen_entity_concept.add(label)
+        definition = str(c.get("definition") or "").strip()
+        kind = _concept_kind(str(c.get("type") or ""))
+        kind_label = _kind_label(kind)
+        desc = f"「{label}」（{kind_label}）参与层级体系，存在上下位关系"
+        mappings.append({
+            "question_phrase": q_preview,
+            "target_kind": "entity_concept",
+            "target_label": label,
+            "target_definition": definition or f"属于实体概念层的{kind_label}",
+            "physical_tables": "",
+            "description": desc,
+            "match_type": "exact",
+        })
+
+    # ---- Pass 4: Generate attribute-layer mapping items ----
+    for c in display_concepts:
+        label = str(c.get("label") or "").strip()
+        if not label:
+            continue
+        ctype = str(c.get("type") or "")
+        if ctype:
+            type_short = ctype.replace("https://datalens.local/ontology/", "")
+            desc = f"「{label}」的类型：{type_short}"
+            mappings.append({
+                "question_phrase": q_preview,
+                "target_kind": "attribute",
+                "target_label": f"{label}.type",
+                "target_definition": type_short,
+                "physical_tables": "",
+                "description": desc,
+                "match_type": "exact",
+            })
+
+        confidence = c.get("confidence")
+        if confidence is not None:
+            try:
+                conf_val = round(float(confidence), 2)
+                desc = f"「{label}」的置信度：{conf_val}"
+                mappings.append({
+                    "question_phrase": q_preview,
+                    "target_kind": "attribute",
+                    "target_label": f"{label}.confidence",
+                    "target_definition": str(conf_val),
+                    "physical_tables": "",
+                    "description": desc,
+                    "match_type": "exact",
+                })
+            except (TypeError, ValueError):
+                pass
+
+        status = str(c.get("status") or "").strip()
+        if status:
+            desc = f"「{label}」的审核状态：{status}"
+            mappings.append({
+                "question_phrase": q_preview,
+                "target_kind": "attribute",
+                "target_label": f"{label}.status",
+                "target_definition": status,
+                "physical_tables": "",
+                "description": desc,
+                "match_type": "exact",
+            })
+
+    # Table-level attributes (business summary)
+    for t in tables:
+        name = str(t.get("name") or t.get("platform_id") or "").strip()
+        if not name:
+            continue
+        summary = str(t.get("summary") or "").strip()
+        if summary:
+            desc = f"「{name}」的说明：{summary[:100]}"
+            mappings.append({
+                "question_phrase": q_preview,
+                "target_kind": "attribute",
+                "target_label": f"{name}.summary",
+                "target_definition": summary[:100],
+                "physical_tables": name,
+                "description": desc,
+                "match_type": "exact",
+            })
 
     for t in tables:
         name = str(t.get("name") or t.get("platform_id") or "").strip()
@@ -465,6 +753,7 @@ def run_ontology_match(
         ontology_context_text=ontology_context_text,
         concepts=concepts,
         tables=tables,
+        expanded_tables=expanded_tables,
     )
     _cache_set(q, kb_ids, result)
     return result

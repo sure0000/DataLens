@@ -127,38 +127,6 @@ export type PipelineTraceStep = {
 };
 
 /** 对话展示用：隐藏内部 SQL 修复步骤，以及「SQL 执行失败」类 trace（错误已在正文 / 执行结果区呈现） */
-/** 流式阶段临时进度（不入库） */
-export function stripStreamEphemeralTraceSteps(steps: PipelineTraceStep[]): PipelineTraceStep[] {
-  return steps.filter((s) => !s.id.startsWith("live_"));
-}
-
-export function filterCopilotTraceSteps(steps: PipelineTraceStep[]): PipelineTraceStep[] {
-  return steps.filter((s) => {
-    if (s.id === "sql_repair" || s.id === "sql_repair_result") return false;
-    if (s.id !== "sql_execute") return true;
-    const d = (s.detail || "").trim();
-    if (/成功[：:]/.test(d)) return true;
-    if (/未成功|^失败|失败[：:]/.test(d)) return false;
-    return true;
-  });
-}
-
-/** 对话页默认只展示对用户有意义的步骤，避免冗长推理检查点 */
-const SIMPLE_TRACE_STEP_IDS = new Set([
-  "reasoning_1",
-  "ontology_match",
-  "sql_decision",
-  "reasoning_gq",
-  "reasoning_4",
-  "reasoning_7",
-  "routing_review",
-  "routing_meta",
-]);
-
-export function compactCopilotTraceSteps(steps: PipelineTraceStep[]): PipelineTraceStep[] {
-  return filterCopilotTraceSteps(steps).filter((s) => SIMPLE_TRACE_STEP_IDS.has(s.id));
-}
-
 /** 流式 / 持久化 trace：同 id 步骤以最新一条为准 */
 export function upsertPipelineTraceStep(steps: PipelineTraceStep[], row: PipelineTraceStep): PipelineTraceStep[] {
   const idx = steps.findIndex((s) => s.id === row.id);
@@ -166,13 +134,6 @@ export function upsertPipelineTraceStep(steps: PipelineTraceStep[], row: Pipelin
   const next = [...steps];
   next[idx] = row;
   return next;
-}
-
-/** 推导面板用 trace：去掉与 OntologyMappingBlock 重复的 ontology_match */
-export function traceStepsForDerivationPanel(steps: PipelineTraceStep[], hasOntologyMapping: boolean): PipelineTraceStep[] {
-  const compact = compactCopilotTraceSteps(steps);
-  if (!hasOntologyMapping) return compact;
-  return compact.filter((s) => s.id !== "ontology_match");
 }
 
 export type SqlDerivationOntologyUsage = {

@@ -35,27 +35,7 @@ export const pipelineStepProgress = "app-pipeline-step app-pipeline-step-progres
 export const pipelineStepWaiting = "app-pipeline-step app-pipeline-step-waiting";
 export const pipelineStepSkipped = "app-pipeline-step app-pipeline-step-skipped";
 
-export const pipelineBadgeDone = "app-pipeline-badge app-pipeline-badge-done";
-export const pipelineBadgeProgress = "app-pipeline-badge app-pipeline-badge-progress";
-export const pipelineBadgeWaiting = "app-pipeline-badge app-pipeline-badge-waiting";
-
-export const liveHighlight = "app-live-highlight";
-export const traceCard = "app-trace-card";
-export const traceCardHeader = "app-trace-card-header";
-export const traceSqlWrap = "app-trace-sql-wrap";
-export const traceCodeWrap = "app-trace-code-wrap";
-export const traceIndigoPanel = "app-trace-indigo-panel";
-export const traceIndigoHeader = "app-trace-indigo-header";
-
 export const errorIconWrap = "app-error-icon-wrap";
-
-export const reasoningBadge = {
-  verified: "app-reasoning-badge app-reasoning-badge-verified",
-  join: "app-reasoning-badge app-reasoning-badge-join",
-  issue: "app-reasoning-badge app-reasoning-badge-issue",
-  review: "app-reasoning-badge app-reasoning-badge-review",
-  skipped: "app-reasoning-badge app-reasoning-badge-skipped",
-} as const;
 
 export const structuredBadge = {
   info: "app-structured-badge app-structured-badge-info",
@@ -72,11 +52,6 @@ export function pipelineStepClass(status: "done" | "progress" | "waiting" | "ski
   return pipelineStepWaiting;
 }
 
-export function pipelineBadgeClass(status: "done" | "progress" | "waiting" | "skipped"): string {
-  if (status === "done") return pipelineBadgeDone;
-  if (status === "progress") return pipelineBadgeProgress;
-  return pipelineBadgeWaiting;
-}
 
 export function confidenceClass(score: number): string {
   if (score >= 0.7) return textSuccess;

@@ -72,15 +72,28 @@ _LAYER_META: dict[str, dict[str, str]] = {
 }
 
 _LAYER_CRITERIA: dict[str, dict[str, Any]] = {
+    "vocabulary": {
+        "entity_types": ["BusinessTerm"],
+    },
+    "rule": {
+        "entity_types": ["Metric", "BusinessRule"],
+    },
     "entity-concept": {
         "entity_types": ["BusinessTerm", "Metric", "Dimension", "BusinessConcept"],
         "hierarchy_predicates": ["broader", "narrower"],
         "includes_incoming_hierarchy_edges": True,
     },
+    "dimension": {
+        "entity_types": ["Dimension"],
+    },
     "relation": {
         "object_filter": "isIRI",
         "predicates": relation_predicate_local_names(),
-    }
+    },
+    "attribute": {
+        "object_filter": "isLiteral",
+        "exclude_predicates": ["rdf:type", "dl:approvalStatus"],
+    },
 }
 
 

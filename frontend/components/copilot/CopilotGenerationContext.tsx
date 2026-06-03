@@ -6,7 +6,7 @@ import { upsertPipelineTraceStep, type PipelineTraceStep } from "../../lib/chatS
 import { streamAsk, type AskPayload, type AskResponse, type StreamStage } from "../../lib/copilotStream";
 import { chatPanel } from "../../lib/themeClasses";
 import ChatGptStyleBody from "./ChatGptStyleBody";
-import CopilotLiveTrace from "./CopilotLiveTrace";
+import CopilotThinkingProcess from "./CopilotThinkingProcess";
 
 export type ActiveAsk = {
   key: number;
@@ -63,34 +63,31 @@ export const CopilotStreamBubble = memo(function CopilotStreamBubble() {
   return (
     <div ref={rootRef} className="flex min-w-0 max-w-full justify-start">
       <div className={`min-w-0 max-w-[min(100%,40rem)] rounded-2xl px-4 py-3 ${chatPanel}`}>
-        <CopilotLiveTrace steps={previewCtx.streamTraceSteps} />
+        {/* ── 流式思考过程 ── */}
+        <CopilotThinkingProcess
+          steps={previewCtx.streamTraceSteps}
+          streaming
+          compact
+          defaultExpanded
+        />
 
-        <div className="min-w-0 text-app-primary" aria-live="polite">
-          {answerText ? (
-            <div className="mb-2">
-              <p className="mb-1 text-xs font-medium text-app-secondary">执行摘要</p>
-              <ChatGptStyleBody text={answerText} />
-            </div>
-          ) : null}
-          {explanationText ? (
-            <div className={answerText ? "mb-2" : ""}>
-              {(answerText || statusCtx?.streamStage !== "intent_recognizing") ? (
-                <p className="mb-1 text-xs font-medium text-app-secondary">SQL 推导说明</p>
-              ) : null}
-              <ChatGptStyleBody text={explanationText} />
-            </div>
-          ) : null}
-          <div className="mt-1 flex items-center gap-1 text-app-muted" aria-hidden>
-            {!hasStreamText ? (
-              <>
-                <span className="h-1.5 w-1.5 rounded-full bg-current opacity-40 motion-safe:animate-pulse" />
-                <span className="h-1.5 w-1.5 rounded-full bg-current opacity-60 motion-safe:animate-pulse [animation-delay:120ms]" />
-                <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80 motion-safe:animate-pulse [animation-delay:240ms]" />
-              </>
-            ) : null}
-            <span className="inline-block h-[1em] w-0.5 rounded-sm bg-app-primary/70 motion-safe:animate-pulse" />
+        {/* ── 流式回答文本 ── */}
+        {hasStreamText ? (
+          <div className="min-w-0 text-app-primary" aria-live="polite">
+            {answerText ? <ChatGptStyleBody text={answerText} /> : null}
+            {explanationText ? <ChatGptStyleBody text={explanationText} /> : null}
+            <span
+              className="inline-block h-[1em] w-0.5 rounded-sm bg-app-primary/70 motion-safe:animate-pulse"
+              aria-hidden
+            />
           </div>
-        </div>
+        ) : (
+          <div className="flex items-center gap-1 text-app-muted" aria-hidden>
+            <span className="h-1.5 w-1.5 rounded-full bg-current opacity-40 motion-safe:animate-pulse" />
+            <span className="h-1.5 w-1.5 rounded-full bg-current opacity-60 motion-safe:animate-pulse [animation-delay:120ms]" />
+            <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80 motion-safe:animate-pulse [animation-delay:240ms]" />
+          </div>
+        )}
       </div>
     </div>
   );

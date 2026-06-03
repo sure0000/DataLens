@@ -160,7 +160,7 @@ export default function OntologyProvenanceModal({
             <section>
               <p className="text-xs font-medium text-app-muted">IRI</p>
               <p className="mt-2 break-all rounded-lg border border-app-border bg-app-surfaceMuted px-3 py-2 font-mono text-xs text-app-secondary">
-                {row.s}
+                {shortenIri(row.s)}
               </p>
             </section>
           ) : null}

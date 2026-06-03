@@ -2,6 +2,7 @@
 
 import { Icon } from "../AppIcons";
 import { QualityStatIcon } from "../icons";
+import { shortenIri } from "../../lib/shortenIri";
 
 export interface ShaclViolation {
   focusNode: string;
@@ -25,11 +26,23 @@ interface ShaclDashboardProps {
 }
 
 const CONSTRAINT_LABELS: Record<string, string> = {
-  "http://www.w3.org/ns/shacl#MinCountConstraintComponent": "必填属性",
-  "http://www.w3.org/ns/shacl#DatatypeConstraintComponent": "类型约束",
+  "http://www.w3.org/ns/shacl#MinCountConstraintComponent": "必填属性缺失",
+  "http://www.w3.org/ns/shacl#MaxCountConstraintComponent": "属性超限",
+  "http://www.w3.org/ns/shacl#DatatypeConstraintComponent": "类型不匹配",
   "http://www.w3.org/ns/shacl#ClassConstraintComponent": "类型约束",
   "http://www.w3.org/ns/shacl#PatternConstraintComponent": "格式校验",
   "http://www.w3.org/ns/shacl#NodeKindConstraintComponent": "节点类型",
+  "http://www.w3.org/ns/shacl#MinLengthConstraintComponent": "长度不足",
+  "http://www.w3.org/ns/shacl#MaxLengthConstraintComponent": "长度超限",
+  "http://www.w3.org/ns/shacl#MinInclusiveConstraintComponent": "数值过小",
+  "http://www.w3.org/ns/shacl#MaxInclusiveConstraintComponent": "数值过大",
+  "http://www.w3.org/ns/shacl#MinExclusiveConstraintComponent": "数值范围",
+  "http://www.w3.org/ns/shacl#MaxExclusiveConstraintComponent": "数值范围",
+  "http://www.w3.org/ns/shacl#InConstraintComponent": "值域不符",
+  "http://www.w3.org/ns/shacl#HasValueConstraintComponent": "取值不符",
+  "http://www.w3.org/ns/shacl#QualifiedMinCountConstraintComponent": "限定计数不足",
+  "http://www.w3.org/ns/shacl#OrConstraintComponent": "逻辑约束",
+  "http://www.w3.org/ns/shacl#ClosedConstraintComponent": "封闭约束",
 };
 
 function shortConstraint(iri: string): string {
@@ -93,11 +106,11 @@ export default function ShaclDashboard({ report, compact = false }: ShaclDashboa
                   <div className="min-w-0">
                     <p className="text-sm text-app-primary">{v.message}</p>
                     <p className="text-[11px] text-app-muted mt-0.5">
-                      <code className="text-app-link">{v.focusNode}</code>
+                      <code className="text-app-link">{shortenIri(v.focusNode)}</code>
                       {v.affectedProperty && (
                         <>
                           {" → "}
-                          <code className="text-app-muted">{v.affectedProperty}</code>
+                          <code className="text-app-muted">{shortenIri(v.affectedProperty)}</code>
                         </>
                       )}
                     </p>

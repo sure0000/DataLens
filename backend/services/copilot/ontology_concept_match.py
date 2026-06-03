@@ -25,7 +25,8 @@ MIN_MERGED_SCORE = 0.42
 
 def iri_to_embedding_ref_id(iri: str) -> int:
     digest = hashlib.sha256((iri or "").encode("utf-8")).digest()
-    return int.from_bytes(digest[:8], "big") % (2**63 - 1)
+    # PostgreSQL Integer is 32-bit signed; keep hash in [0, 2^31-1)
+    return int.from_bytes(digest[:8], "big") % (2**31 - 1)
 
 
 def _kb_content_prefix(kb_id: int) -> str:
@@ -168,16 +169,29 @@ def refresh_kb_ontology_concept_embeddings(db: Session, kb_id: int, *, commit: b
     reader = OntologyReader(store)
     delete_kb_ontology_concept_embeddings(db, kb_id, commit=False)
     count = 0
-    for class_name, list_fn in (("Metric", reader.list_metrics), ("BusinessTerm", reader.list_terms)):
+    for class_name, list_fn in (
+        ("Metric", reader.list_metrics),
+        ("BusinessTerm", reader.list_terms),
+        ("Dimension", reader.list_dimensions),
+        ("BusinessRule", reader.list_business_rules),
+        ("BusinessConcept", reader.list_business_concepts),
+    ):
         rows = list_fn(kb_id)
         for row in rows:
             iri = str(row.get("iri") or "").strip()
             label = str(row.get("label") or "").strip()
             if not iri or not label:
                 continue
+            # Map class-specific descriptive fields to the embedding body
+            if class_name == "Dimension":
+                desc_field = str(row.get("dimensionType") or "")
+            elif class_name == "BusinessRule":
+                desc_field = str(row.get("ruleExpression") or "")
+            else:
+                desc_field = str(row.get("definition") or "")
             body = build_concept_embedding_text(
                 label=label,
-                definition=str(row.get("definition") or ""),
+                definition=desc_field,
                 formula=str(row.get("formula") or ""),
                 caliber=str(row.get("caliber") or ""),
                 concept_type=class_name,
@@ -349,13 +363,22 @@ def route_concepts_keyword_memory(
         for class_name, rows_fn in (
             ("Metric", reader.list_metrics),
             ("BusinessTerm", reader.list_terms),
+            ("Dimension", reader.list_dimensions),
+            ("BusinessRule", reader.list_business_rules),
+            ("BusinessConcept", reader.list_business_concepts),
         ):
             for row in rows_fn(kb_id, limit=400):
                 label = str(row.get("label") or "").strip()
                 iri = str(row.get("iri") or "").strip()
                 if not label or not iri:
                     continue
-                definition = str(row.get("definition") or "")
+                # Map class-specific descriptive fields for keyword scoring
+                if class_name == "Dimension":
+                    definition = str(row.get("dimensionType") or "")
+                elif class_name == "BusinessRule":
+                    definition = str(row.get("ruleExpression") or "")
+                else:
+                    definition = str(row.get("definition") or "")
                 score = keyword_score(label, query_text, definition=definition)
                 if score < MIN_KEYWORD_SCORE:
                     continue

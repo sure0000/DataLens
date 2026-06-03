@@ -445,19 +445,19 @@ async def answer(
         }
         await trace_row(
             "reasoning_5",
-            "7. 执行环境与 AST 校验",
+            "8. 执行环境与 AST 校验",
             "检测到 review 条件且已开启 COPILOT_SQL_REVIEW_BLOCKS_EXECUTION，已跳过自动执行。",
         )
         await trace_row(
             "reasoning_7",
-            "8. 执行结果",
+            "9. 执行结果",
             "执行状态：未执行（等待 review 确认）。",
         )
     else:
         if sql_review.get("review_required"):
             await trace_row(
                 "reasoning_5",
-                "7. 执行环境与 AST 校验",
+                "8. 执行环境与 AST 校验",
                 "存在 review 提示，仍将按只读策略自动执行 SQL（可在环境变量开启拦截）。",
             )
         execution = await _execute_with_repair(
@@ -806,11 +806,11 @@ async def _execute_with_repair(
     execution: dict[str, Any] = {"ok": False, "columns": [], "rows": [], "error": "未生成 SQL"}
     if not sql_text or not ds_anchor:
         if not sql_text:
-            await trace_row("reasoning_5", "7. 执行环境与 AST 校验", "无有效 SQL 文本，跳过数据源与方言绑定。")
-            await trace_row("reasoning_7", "8. 执行结果", "执行状态：未执行（无 SQL 文本）。")
+            await trace_row("reasoning_5", "8. 执行环境与 AST 校验", "无有效 SQL 文本，跳过数据源与方言绑定。")
+            await trace_row("reasoning_7", "9. 执行结果", "执行状态：未执行（无 SQL 文本）。")
         else:
-            await trace_row("reasoning_5", "7. 执行环境与 AST 校验", "未找到可用数据源，无法绑定执行环境与方言。")
-            await trace_row("reasoning_7", "8. 执行结果", "执行状态：未执行（未配置可用数据源）。")
+            await trace_row("reasoning_5", "8. 执行环境与 AST 校验", "未找到可用数据源，无法绑定执行环境与方言。")
+            await trace_row("reasoning_7", "9. 执行结果", "执行状态：未执行（未配置可用数据源）。")
         return execution
 
     await emit("sql_executing")
@@ -880,7 +880,7 @@ async def _execute_with_repair(
         if len(emsg) > 900:
             emsg = emsg[:900] + "…"
         ast_tail = f"方言 {dialect_label}：AST 校验通过后，执行阶段失败 — {emsg}"
-    await trace_row("reasoning_5", "7. 执行环境与 AST 校验", f"{r5_detail}\n\n{ast_tail}", links=link_r5)
+    await trace_row("reasoning_5", "8. 执行环境与 AST 校验", f"{r5_detail}\n\n{ast_tail}", links=link_r5)
 
     if execution.get("ok"):
         rows_n = len(execution.get("rows") or [])
@@ -891,7 +891,7 @@ async def _execute_with_repair(
         if len(err) > 1000:
             err = err[:1000] + "…"
         r7_detail = f"执行状态：失败。\n原因摘要：{err}\n完整报错见对话中的「执行结果」区域。"
-    await trace_row("reasoning_7", "8. 执行结果", r7_detail)
+    await trace_row("reasoning_7", "9. 执行结果", r7_detail)
 
     return execution
 

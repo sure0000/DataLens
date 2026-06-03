@@ -13,8 +13,7 @@ import {
   Sparkles,
   XCircle,
 } from "lucide-react";
-import type { TraceCheckpointStatus } from "../../lib/copilotTraceStatus";
-import { traceCheckpointIconClass } from "../../lib/copilotTraceStatus";
+
 
 /** 流水线 / 建模步骤状态（带默认语义色） */
 export type PipelineStepIconStatus = "ok" | "fail" | "running" | "skip" | "pending" | "warning";
@@ -97,34 +96,6 @@ export function PipelineStatusBadge({
       <span>{text}</span>
     </span>
   );
-}
-
-/** Copilot 追踪检查点图标（与 traceCheckpointIconClass 配色一致） */
-export function TraceCheckpointIcon({
-  status,
-  className = "h-4 w-4",
-}: {
-  status: TraceCheckpointStatus;
-  className?: string;
-}) {
-  const stroke = 2.75;
-  const c = `shrink-0 ${traceCheckpointIconClass(status)} ${className}`;
-  switch (status) {
-    case "verified":
-      return <Check className={c} strokeWidth={stroke} aria-hidden />;
-    case "context_missing":
-      return <PackageX className={c} strokeWidth={stroke} aria-hidden />;
-    case "inferred_ok":
-      return <Sparkles className={c} strokeWidth={stroke} aria-hidden />;
-    case "inferred_review":
-      return <AlertTriangle className={c} strokeWidth={stroke} aria-hidden />;
-    case "skipped":
-      return <Ban className={c} strokeWidth={stroke} aria-hidden />;
-    case "issue":
-      return <XCircle className={c} strokeWidth={stroke} aria-hidden />;
-    default:
-      return <Sparkles className={c} strokeWidth={stroke} aria-hidden />;
-  }
 }
 
 /** 证据包 / 导入源连接器图标 */
@@ -228,26 +199,5 @@ export function QualityStatIcon({
   }
 }
 
-/** 可信度徽章图标 */
-export function TrustLevelIcon({
-  code,
-  className = "h-4 w-4",
-}: {
-  code: "high" | "medium-high" | "medium" | "low" | "review";
-  className?: string;
-}) {
-  const stroke = 2.75;
-  const cls = `${className} shrink-0`;
-  switch (code) {
-    case "high":
-      return <Check className={`${cls} ${traceCheckpointIconClass("verified")}`} strokeWidth={stroke} aria-hidden />;
-    case "medium-high":
-      return <Sparkles className={`${cls} ${traceCheckpointIconClass("inferred_ok")}`} strokeWidth={stroke} aria-hidden />;
-    case "medium":
-      return <CircleHelp className={`${cls} ${traceCheckpointIconClass("inferred_review")}`} strokeWidth={stroke} aria-hidden />;
-    case "low":
-      return <PackageX className={`${cls} ${traceCheckpointIconClass("context_missing")}`} strokeWidth={stroke} aria-hidden />;
-    case "review":
-      return <AlertTriangle className={`${cls} ${traceCheckpointIconClass("inferred_review")}`} strokeWidth={stroke} aria-hidden />;
-  }
-}
+
+

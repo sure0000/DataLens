@@ -88,6 +88,24 @@ class OntologyReader:
             limit, include_inferred,
         )
 
+    def list_business_rules(
+        self, kb_id: int, *, limit: int = 500, include_inferred: bool = False,
+    ) -> list[dict[str, str]]:
+        return self._query_concepts(
+            kb_id, "BusinessRule",
+            ["label", "ruleExpression", "ruleType", "status", "confidence"],
+            limit, include_inferred,
+        )
+
+    def list_business_concepts(
+        self, kb_id: int, *, limit: int = 500, include_inferred: bool = False,
+    ) -> list[dict[str, str]]:
+        return self._query_concepts(
+            kb_id, "BusinessConcept",
+            ["label", "definition", "status", "confidence"],
+            limit, include_inferred,
+        )
+
     def list_physical_tables(
         self, kb_id: int, *, limit: int = 200,
     ) -> list[dict[str, str]]:

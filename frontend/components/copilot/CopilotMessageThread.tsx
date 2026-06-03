@@ -7,7 +7,7 @@ import SqlBlock from "../SqlBlock";
 import CsvExportButton from "../CsvExportButton";
 import { alertWarning, chatPanel, textDanger, userBubble } from "../../lib/themeClasses";
 import ChatGptStyleBody from "./ChatGptStyleBody";
-import SqlDerivationPanel from "./SqlDerivationPanel";
+import CopilotThinkingProcess from "./CopilotThinkingProcess";
 
 type QueryResult = {
   ok: boolean;
@@ -124,34 +124,22 @@ const CopilotMessageThread = memo(function CopilotMessageThread({
                   </div>
                 )}
 
-              {isSqlQuery ? (
-                <SqlDerivationPanel
+              {/* ── 思考过程（思考在前，结果在后） ── */}
+              {(isSqlQuery || m.ontology_mapping || (m.pipeline_trace && m.pipeline_trace.length > 0)) && (
+                <CopilotThinkingProcess
+                  steps={m.pipeline_trace || []}
                   ontologyMapping={m.ontology_mapping}
-                  pipelineTrace={m.pipeline_trace}
-                  explanation={m.explanation}
                   sqlDerivation={m.sql_derivation}
-                  referencedColumns={m.referenced_columns}
-                  fallbackQuestion={userQuestion}
-                />
-              ) : m.ontology_mapping ? (
-                <SqlDerivationPanel
-                  ontologyMapping={m.ontology_mapping}
-                  pipelineTrace={m.pipeline_trace}
-                  explanation={m.explanation}
-                  fallbackQuestion={userQuestion}
+                  intent={m.intent}
                   defaultExpanded={false}
                 />
-              ) : null}
+              )}
 
+              {/* ── 回答正文 ── */}
               {isSqlQuery ? (
-                <>
-                  {answerText ? (
-                    <div className="mb-3">
-                      <p className="mb-1 text-xs font-medium text-app-secondary">执行摘要</p>
-                      <ChatGptStyleBody text={answerText} />
-                    </div>
-                  ) : null}
-                </>
+                answerText ? (
+                  <ChatGptStyleBody text={answerText} />
+                ) : null
               ) : generalNarrative ? (
                 <ChatGptStyleBody text={generalNarrative} />
               ) : (

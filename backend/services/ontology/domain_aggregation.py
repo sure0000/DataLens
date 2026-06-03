@@ -305,7 +305,7 @@ def domain_assets(db: Session, domain_id: int, *, kb_filter: int | None = None) 
     return {"ok": True, "domain_id": domain_id, "physical_tables": tables, "total": len(tables)}
 
 
-_LAYERS_WITH_GROUNDING = frozenset({"vocabulary", "rule", "entity-concept", "dimension"})
+_LAYERS_WITH_GROUNDING = frozenset({"vocabulary", "rule", "entity-concept", "dimension", "relation", "attribute"})
 
 
 def _merge_layer_counts(kb_rows: list[KnowledgeBase]) -> dict[str, int]:
