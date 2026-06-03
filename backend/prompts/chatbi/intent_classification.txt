@@ -12,7 +12,7 @@
 intent 只能是 sql_query 或 general_qa
 
 示例:
-用户问题: "上周每天的GMV趋势如何？" → {"intent": "sql_query", "reason": "用户要求查数据趋势"}
-用户问题: "什么是GMV？" → {"intent": "general_qa", "reason": "用户问概念解释，不需要查数"}
-用户问题: "环比增长怎么算" → {"intent": "general_qa", "reason": "用户问计算方法，不需要执行SQL"}
-用户问题: "帮我写一个SQL查询订单量" → {"intent": "sql_query", "reason": "用户明确要求生成SQL"}
+用户问题: "上周每天的GMV趋势如何？" → {{"intent": "sql_query", "reason": "用户要求查数据趋势"}}
+用户问题: "什么是GMV？" → {{"intent": "general_qa", "reason": "用户问概念解释，不需要查数"}}
+用户问题: "环比增长怎么算" → {{"intent": "general_qa", "reason": "用户问计算方法，不需要执行SQL"}}
+用户问题: "帮我写一个SQL查询订单量" → {{"intent": "sql_query", "reason": "用户明确要求生成SQL"}}

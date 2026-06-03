@@ -23,12 +23,12 @@
 
 ## dimension 类型
 输入: column_name="region", profiling中无enum
-输出: {"desc": "地区字段，用于按地理维度分组统计", "type": "dimension", "is_usable": true, "reason": "枚举值少且为分类维度"}
+输出: {{"desc": "地区字段，用于按地理维度分组统计", "type": "dimension", "is_usable": true, "reason": "枚举值少且为分类维度"}}
 
 ## metric 类型
 输入: column_name="total_amount", profiling含avg=520.3, sum=1234567
-输出: {"desc": "订单总金额，可跨维度求和", "type": "metric", "is_usable": true, "reason": "数值类型且可聚合", "aggregation": "sum"}
+输出: {{"desc": "订单总金额，可跨维度求和", "type": "metric", "is_usable": true, "reason": "数值类型且可聚合", "aggregation": "sum"}}
 
 ## enum 类型
 输入: column_name="status", profiling.enum.values=["pending","paid","cancelled"]
-输出: {"desc": "样本中观测到的离散取值：订单状态（pending=待支付, paid=已支付, cancelled=已取消）", "type": "enum", "is_usable": true, "reason": "有限枚举值适合做筛选维度"}
+输出: {{"desc": "样本中观测到的离散取值：订单状态（pending=待支付, paid=已支付, cancelled=已取消）", "type": "enum", "is_usable": true, "reason": "有限枚举值适合做筛选维度"}}
