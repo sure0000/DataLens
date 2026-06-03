@@ -54,7 +54,7 @@ async def extract_metric_triples(
         try:
             result = await call_llm_json(
                 llm_client, model_name,
-                load_prompt("metric_extraction_system"),
+                load_prompt("extraction/metric_extraction_system"),
                 user_msg,
             )
             metrics_data = result.get("metrics", [])
@@ -110,14 +110,14 @@ async def extract_metric_triples(
                     pass
 
             # derivedFrom chain: if LLM identifies a parent metric
-            derived_from = item.get("derived_from")
+            derived_from = item.get("derivedFrom")
             if derived_from:
                 parent_slug = concept_slug(str(derived_from), "metric")
                 parent_iri = metric_iri(kb_id, parent_slug)
                 triples.append(RawTriple(iri, f"{NS}derivedFrom", parent_iri, True, graph=graph, confidence=confidence))
 
             # aggregatesOver: if LLM identifies aggregation dimensions
-            for dim_name in (item.get("aggregates_over") or []):
+            for dim_name in (item.get("aggregatesOver") or []):
                 dim_slug = concept_slug(str(dim_name), "dim")
                 dim_iri_str = f"{NS}domain/{kb_id}/dimension/{dim_slug}"
                 triples.append(RawTriple(iri, f"{NS}aggregatesOver", dim_iri_str, True, graph=graph, confidence=confidence))

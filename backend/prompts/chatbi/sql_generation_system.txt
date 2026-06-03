@@ -48,23 +48,18 @@
 - 禁止使用标量子查询或窗口函数 LAG/LEAD 做对比。
 - 必须使用自连接（SELF JOIN）或 CASE WHEN 行列转置模式。
 
-### 3a. 自连接模板（推荐用于两时间点对比）：
-SELECT a.<主体列>, a.<指标列> AS <标签A>, b.<指标列> AS <标签B>,
-       (b.<指标列> - a.<指标列>) AS 绝对差值,
-       CASE WHEN a.<指标列> != 0 THEN ROUND((b.<指标列> - a.<指标列>) * 100.0 / a.<指标列>, 2) END AS 变化率百分比
-FROM <表> a
-JOIN <表> b ON a.<主体列> = b.<主体列>
-WHERE a.<时间列> = '<时间点A>' AND b.<时间列> = '<时间点B>'
-  AND a.<维度过滤条件>
+### 3a. 自连接模式（两时间点对比）：
+SELECT a.主体, a.指标 AS 基期, b.指标 AS 对比期,
+       (b.指标 - a.指标) AS 差值,
+       ROUND((b.指标 - a.指标) * 100.0 / NULLIF(a.指标, 0), 2) AS 变化率
+FROM 表 a JOIN 表 b ON a.主体 = b.主体
+WHERE a.时间 = '基期' AND b.时间 = '对比期'
 
-### 3b. CASE WHEN 模式（推荐用于多时间点在单表中聚合对比）：
-SELECT <主体列>,
-       SUM(CASE WHEN <时间列> = '<时间点A>' THEN <指标列> ELSE 0 END) AS <标签A>,
-       SUM(CASE WHEN <时间列> = '<时间点B>' THEN <指标列> ELSE 0 END) AS <标签B>
-FROM <表>
-WHERE <时间列> IN ('<时间点A>', '<时间点B>')
-  AND <维度过滤条件>
-GROUP BY <主体列>
+### 3b. CASE WHEN 模式（多时间点聚合对比）：
+SELECT 主体,
+       SUM(CASE WHEN 时间 = 'T1' THEN 指标 END) AS T1,
+       SUM(CASE WHEN 时间 = 'T2' THEN 指标 END) AS T2
+FROM 表 WHERE 时间 IN ('T1','T2') GROUP BY 主体
 
 ### 3c. 对比模式通用规则：
 - 环比变化 = 同时输出绝对差值（后期 - 前期）和百分比变化率（(后期 - 前期) / 前期 × 100%）。explanation 中应说明基期和对比期。
@@ -78,13 +73,26 @@ GROUP BY <主体列>
 
 # 输出格式
 
-1) explanation 需简要说明你依据哪些本体指标/术语选择了表与字段，以及你采用的 SQL 模式（单表聚合/自连接/CASE WHEN/多表 JOIN 等）。
-2) 输出严格 JSON 对象，键为：
-   - sql（字符串）
-   - explanation（字符串）
-   - referenced_columns（字符串数组，列出 SQL 中引用的所有列名）
-   - sql_derivation（可选对象，便于前端展示本体→SQL 对照）：
-     - pattern：single_agg | case_when_compare | self_join | multi_join | time_series 之一
-     - ontology_usage：数组，每项含 ontology_label、ontology_kind（metric/term/concept）、sql_role（aggregate/filter/join/group_by/select）、sql_fragment、rationale
-     - assumptions：字符串数组，记录时间范围等默认假设
-   禁止 Markdown 代码块与 JSON 外多余文字。
+输出严格 JSON 对象，必须包含：
+- sql（字符串）
+- explanation（字符串）：说明依据哪些本体指标/术语选择了表与字段，以及采用的 SQL 模式
+- referenced_columns（字符串数组，列出 SQL 中引用的所有列名）
+
+可选附加键（仅在上下文明确要求时使用）：
+- sql_derivation（对象）：
+  - pattern: single_agg | case_when_compare | self_join | multi_join | time_series
+  - ontology_usage: 数组，每项含 ontology_label、ontology_kind（metric/term/concept）、sql_role（aggregate/filter/join/group_by/select）、sql_fragment、rationale
+  - assumptions: 字符串数组，记录时间范围等默认假设
+
+禁止 Markdown 代码块与 JSON 外多余文字。
+
+# 示例
+
+## 输入
+USER QUESTION: "上个月各地区的售电量是多少？"
+ONTOLOGY METRICS: 售电量 = SUM(sales.kwh)，按月度汇总
+SCHEMA: sales(region, month, kwh)
+CONTEXT: 时间字段 month 格式为 YYYY-MM
+
+## 输出
+{"sql": "SELECT region AS 地区, SUM(kwh) AS 售电量 FROM sales WHERE month = DATE_FORMAT(DATE_SUB(CURDATE(), INTERVAL 1 MONTH), '%Y-%m') GROUP BY region ORDER BY region", "explanation": "依据售电量口径（SUM(sales.kwh)），使用单表聚合模式。时间范围限定为上个月（从上下文推断）。", "referenced_columns": ["region", "month", "kwh"]}

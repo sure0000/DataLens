@@ -77,11 +77,11 @@ def _truncate_for_llm(body: str, max_chars: int = _MAX_INPUT_CHARS) -> str:
 
 # ── LLM 分析 Prompt ──────────────────────────────────────────────────────
 
-_CODE_ANALYSIS_SYSTEM = _load_prompt("code_analysis_system")
+_CODE_ANALYSIS_SYSTEM = _load_prompt("engineering/code_analysis_system")
 
 
 def _build_analysis_prompt(entry_title: str, body: str) -> str:
-    return _load_prompt("code_analysis_user").format(
+    return _load_prompt("engineering/code_analysis_user").format(
         entry_title=entry_title,
         truncated_body=_truncate_for_llm(body),
     )

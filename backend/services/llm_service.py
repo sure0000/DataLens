@@ -23,8 +23,8 @@ from prompts import load_prompt as _load_prompt
 
 TABLE_DESC_SECTIONS = ["业务描述", "数据定位", "核心口径", "使用建议", "风险边界"]
 
-SQL_GENERATION_SYSTEM = _load_prompt("sql_generation_system")
-SQL_REPAIR_SYSTEM = _load_prompt("sql_repair_system")
+SQL_GENERATION_SYSTEM = _load_prompt("chatbi/sql_generation_system")
+SQL_REPAIR_SYSTEM = _load_prompt("chatbi/sql_repair_system")
 
 
 @dataclass(frozen=True)
@@ -258,7 +258,7 @@ async def classify_question_intent(question: str, db: Session, chat_model: str |
     if not model_ref:
         intent = _heuristic_intent(question)
         return {"intent": intent, "reason": "无可用模型，使用规则进行意图识别"}
-    prompt = _load_prompt("intent_classification").format(question=question)
+    prompt = _load_prompt("chatbi/intent_classification").format(question=question)
     data = await _chat_json(prompt, model_ref, db)
     intent = str(data.get("intent") or "").strip()
     if intent not in {"sql_query", "general_qa"}:
@@ -351,7 +351,8 @@ async def answer_general_question(
             "下一步\n"
             "- 请在偏好设置中填写 API URL 与 Key，或配置环境变量。"
         )
-    prompt = _load_prompt("general_qa").format(context_hint=context_hint, question=question)
+    context_block = f"上下文提示:\n{context_hint}\n\n" if context_hint.strip() else ""
+    prompt = _load_prompt("chatbi/general_qa").format(context_block=context_block, question=question)
     text = await _chat_text(prompt, model_ref, db, temperature=0.4)
     if not text:
         return (
@@ -426,7 +427,7 @@ async def analyze_column(
         if knowledge_parts:
             domain_hint += f"\n关联业务知识条目:\n" + "\n".join(knowledge_parts)
 
-    prompt = _load_prompt("analyze_column").format(
+    prompt = _load_prompt("analysis/analyze_column").format(
         table_name=table_name,
         column_info_json=json.dumps(column_info, ensure_ascii=False),
         profiling_json=json.dumps(profiling_result, ensure_ascii=False),
@@ -488,7 +489,7 @@ async def _normalize_summary_async(
         domain_hint = ""
         for d in (context.get("domain_contexts") or [])[:2]:
             domain_hint += f"业务域「{d.get('domain_name','')}」：{d.get('domain_description','')}；"
-        fill_prompt = _load_prompt("normalize_summary").format(
+        fill_prompt = _load_prompt("analysis/normalize_summary").format(
             table_name=table_name,
             col_summary=col_summary,
             domain_hint=domain_hint,
@@ -579,7 +580,7 @@ async def analyze_table(
             "key_columns": [c["column_name"] for c in columns_with_semantic[:3]],
             "warnings": "未配置LLM Key，当前为规则生成结果，仅用于本地联调",
         }
-    prompt = _load_prompt("analyze_table").format(
+    prompt = _load_prompt("analysis/analyze_table").format(
         table_name=table_name,
         prompt_cols_json=json.dumps(prompt_cols, ensure_ascii=False),
         row_count=row_count,

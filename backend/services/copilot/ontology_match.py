@@ -227,6 +227,61 @@ def _deduplicate_concepts_for_display(
     return keep
 
 
+def _build_context_description(concept: dict[str, Any]) -> str:
+    """Build a context description from class-specific properties.
+
+    Metric: formula + caliber (口 径) take priority over generic definition.
+    BusinessRule: ruleExpression takes priority.
+    Other types: fall back to skos:definition.
+    """
+    kind = _concept_kind(str(concept.get("type") or ""))
+    if kind == "metric":
+        formula = str(concept.get("formula") or "").strip()
+        caliber = str(concept.get("caliber") or "").strip()
+        definition = str(concept.get("definition") or "").strip()
+        parts = [p for p in [definition, formula, caliber] if p]
+        return "；".join(parts)
+    if kind == "rule":
+        expr = str(concept.get("ruleExpression") or "").strip()
+        if expr:
+            return expr
+        return str(concept.get("definition") or "").strip()
+    return str(concept.get("definition") or "").strip()
+
+
+def compute_ontology_signal(onto: OntologyMatchResult) -> str:
+    """Assess how much the ontology layer already covers the question.
+
+    Returns one of:
+      - "rich": ≥3 primary tables + at least one Metric concept with formula/caliber.
+        KB hybrid search can be dialed down to lightweight confirmation.
+      - "moderate": 1-2 primary tables, or ≥3 tables but no metric definitions.
+        Keep moderate KB search.
+      - "weak": no concepts matched, or matched concepts have no linked tables.
+        Full KB hybrid search needed.
+    """
+    if onto.skipped or not onto.matched or not onto.tables:
+        return "weak"
+
+    primary_tables = [t for t in onto.tables if t.get("name")]
+    primary_count = len(primary_tables)
+
+    has_metric_definition = any(
+        _concept_kind(str(c.get("type") or "")) == "metric"
+        and (
+            str(c.get("formula") or "").strip()
+            or str(c.get("caliber") or "").strip()
+        )
+        for c in onto.concepts
+    )
+
+    if primary_count >= 3 and has_metric_definition:
+        return "rich"
+    if primary_count >= 1:
+        return "moderate"
+    return "weak"
+
+
 def run_ontology_match(
     db: Session,
     question: str,
@@ -364,8 +419,8 @@ def run_ontology_match(
         if not label:
             continue
         ctype = str(c.get("type") or "")
-        definition = str(c.get("definition") or "").strip()
         kind = _concept_kind(ctype)
+        description = _build_context_description(c)
         iri = str(c.get("iri") or "")
         linked = tables_by_concept.get(iri, [])
         table_names = [
@@ -377,23 +432,23 @@ def run_ontology_match(
         table_ref = f" → {maps_to}" if maps_to else ""
         if kind == "metric":
             context_metric_lines.append(
-                f"- **{label}**" + (f"：{definition}" if definition else "") + table_ref
+                f"- **{label}**" + (f"：{description}" if description else "") + table_ref
             )
         elif kind == "rule":
             context_rule_lines.append(
-                f"- **{label}**" + (f"：{definition}" if definition else "") + table_ref
+                f"- **{label}**" + (f"：{description}" if description else "") + table_ref
             )
         elif kind == "dimension":
             context_dimension_lines.append(
-                f"- **{label}**" + (f"：{definition}" if definition else "") + table_ref
+                f"- **{label}**" + (f"：{description}" if description else "") + table_ref
             )
         elif kind == "term":
             context_term_lines.append(
-                f"- **{label}**" + (f"：{definition}" if definition else "") + table_ref
+                f"- **{label}**" + (f"：{description}" if description else "") + table_ref
             )
         else:
             context_term_lines.append(
-                f"- **{label}**" + (f"：{definition}" if definition else "")
+                f"- **{label}**" + (f"：{description}" if description else "")
             )
 
     context_table_lines: list[str] = []

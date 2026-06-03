@@ -18,6 +18,7 @@ class RoutingSearchBundle:
     embed_calls: int = 0
     kb_search_calls: int = 0
     domain_tables: list[Any] = field(default_factory=list)
+    _ontology_signal: str = ""  # internal: "rich" | "moderate" | "weak"
 
 
 @dataclass
@@ -36,6 +37,7 @@ class CopilotRoutingTrace:
     kb_search_calls: int = 0
 
     ontology_trace: list[dict[str, Any]] = field(default_factory=list)
+    ontology_signal: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -50,4 +52,5 @@ class CopilotRoutingTrace:
             "embed_calls": self.embed_calls,
             "kb_search_calls": self.kb_search_calls,
             "ontology_trace": self.ontology_trace,
+            "ontology_signal": self.ontology_signal,
         }

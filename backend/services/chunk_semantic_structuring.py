@@ -80,7 +80,7 @@ async def _structure_chunk(client: Any, model_name: str, content: str) -> dict[s
     result = await _call_llm_json(
         client,
         model_name,
-        load_prompt("chunk_semantic_structuring_system"),
+        load_prompt("retrieval/chunk_semantic_structuring_system"),
         content[:6000],
         temperature=0.1,
         timeout_seconds=90.0,

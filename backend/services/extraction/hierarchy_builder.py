@@ -208,7 +208,7 @@ async def build_hierarchy_triples(
     try:
         result = await call_llm_json(
             llm_client, model_name,
-            load_prompt("hierarchy_extraction_system"),
+            load_prompt("extraction/hierarchy_extraction_system"),
             user_msg,
         )
         hierarchy = result.get("hierarchy", [])

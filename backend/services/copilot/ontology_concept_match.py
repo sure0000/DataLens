@@ -294,7 +294,12 @@ def route_concepts_sparql(
     *,
     top_k: int = 10,
 ) -> list[dict[str, Any]]:
-    """SPARQL: question contains concept label/altLabel/definition (correct direction)."""
+    """SPARQL: question contains concept label/altLabel/definition (correct direction).
+
+    Retrieves class-specific properties (formula, caliber for Metric; ruleExpression,
+    ruleType for BusinessRule) so that SPARQL — the primary ontology match path —
+    carries at least as much semantic detail as the embedding auxiliary path.
+    """
     ns = NS
     skos = "http://www.w3.org/2004/02/skos/core#"
     q_esc = escape_sparql_literal(query_text)
@@ -309,6 +314,10 @@ def route_concepts_sparql(
               OPTIONAL {{ ?concept <{skos}definition> ?definition . }}
               OPTIONAL {{ ?concept <{ns}confidence> ?confidence . }}
               OPTIONAL {{ ?concept <{ns}approvalStatus> ?status . }}
+              OPTIONAL {{ ?concept <{ns}formula> ?formula . }}
+              OPTIONAL {{ ?concept <{ns}caliber> ?caliber . }}
+              OPTIONAL {{ ?concept <{ns}ruleExpression> ?ruleExpression . }}
+              OPTIONAL {{ ?concept <{ns}ruleType> ?ruleType . }}
               FILTER(
                 (STRLEN(STR(?label)) >= {MIN_LABEL_LEN} && CONTAINS(LCASE("{q_esc}"), LCASE(STR(?label)))) ||
                 (BOUND(?altLabel) && STRLEN(STR(?altLabel)) >= {MIN_LABEL_LEN} && CONTAINS(LCASE("{q_esc}"), LCASE(STR(?altLabel)))) ||
@@ -320,7 +329,8 @@ def route_concepts_sparql(
     sparql = f"""
         PREFIX dl: <{ns}>
         PREFIX skos: <{skos}>
-        SELECT DISTINCT ?concept ?type ?label ?definition ?confidence ?status WHERE {{
+        SELECT DISTINCT ?concept ?type ?label ?definition ?confidence ?status
+               ?formula ?caliber ?ruleExpression ?ruleType WHERE {{
           {' UNION '.join(graph_blocks)}
         }}
         ORDER BY DESC(?confidence)
@@ -340,6 +350,10 @@ def route_concepts_sparql(
             "definition": str(r.get("definition", "")),
             "confidence": float(r.get("confidence", 0) or 0),
             "status": str(r.get("status", "")),
+            "formula": str(r.get("formula", "")),
+            "caliber": str(r.get("caliber", "")),
+            "ruleExpression": str(r.get("ruleExpression", "")),
+            "ruleType": str(r.get("ruleType", "")),
             "match_score": _sparql_specificity_score(str(r.get("label", "")), query_text),
             "match_source": "sparql_substring",
         }
@@ -374,12 +388,17 @@ def route_concepts_keyword_memory(
                     continue
                 # Map class-specific descriptive fields for keyword scoring
                 if class_name == "Dimension":
-                    definition = str(row.get("dimensionType") or "")
+                    description = str(row.get("dimensionType") or "")
                 elif class_name == "BusinessRule":
-                    definition = str(row.get("ruleExpression") or "")
+                    description = str(row.get("ruleExpression") or "")
+                elif class_name == "Metric":
+                    formula = str(row.get("formula") or "")
+                    caliber = str(row.get("caliber") or "")
+                    definition_raw = str(row.get("definition") or "")
+                    description = "；".join(p for p in [definition_raw, formula, caliber] if p.strip())
                 else:
-                    definition = str(row.get("definition") or "")
-                score = keyword_score(label, query_text, definition=definition)
+                    description = str(row.get("definition") or "")
+                score = keyword_score(label, query_text, definition=description)
                 if score < MIN_KEYWORD_SCORE:
                     continue
                 scored.append(
@@ -389,9 +408,13 @@ def route_concepts_keyword_memory(
                             "iri": iri,
                             "type": class_name,
                             "label": label,
-                            "definition": definition,
+                            "definition": description,
                             "confidence": float(row.get("confidence") or 0),
                             "status": str(row.get("status") or ""),
+                            "formula": str(row.get("formula") or ""),
+                            "caliber": str(row.get("caliber") or ""),
+                            "ruleExpression": str(row.get("ruleExpression") or ""),
+                            "ruleType": str(row.get("ruleType") or ""),
                             "match_score": score,
                             "match_source": "keyword",
                         },

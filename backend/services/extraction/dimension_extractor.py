@@ -45,7 +45,7 @@ async def extract_dimension_triples(
         try:
             result = await call_llm_json(
                 llm_client, model_name,
-                load_prompt("dimension_extraction_system"),
+                load_prompt("extraction/dimension_extraction_system"),
                 user_msg,
             )
             dims_data = result.get("dimensions", [])
@@ -65,7 +65,7 @@ async def extract_dimension_triples(
 
             slug = concept_slug(name, "dim")
             iri = dimension_iri(kb_id, slug)
-            dim_type = item.get("dim_type") or "category"
+            dim_type = item.get("type") or "category"
             definition = item.get("definition") or ""
             status = "approved" if confidence >= auto_approve_confidence else "draft"
 

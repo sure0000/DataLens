@@ -153,7 +153,7 @@ async def extract_terms_from_kb(db: Session, kb_id: int) -> int:
 
     for chunk in chunks:
         try:
-            result = await _call_llm_json(client, model_name, _load_prompt("term_extraction_system"), chunk.content)
+            result = await _call_llm_json(client, model_name, _load_prompt("extraction/term_extraction_system"), chunk.content)
             terms_data = result.get("terms", [])
         except Exception:
             _logger.warning("LLM term extraction failed for chunk %s", chunk.id, exc_info=True)
@@ -242,7 +242,7 @@ async def extract_metrics_from_kb(db: Session, kb_id: int) -> int:
 
     for chunk in chunks:
         try:
-            result = await _call_llm_json(client, model_name, _load_prompt("metric_extraction_system"), chunk.content)
+            result = await _call_llm_json(client, model_name, _load_prompt("extraction/metric_extraction_system"), chunk.content)
             metrics_data = result.get("metrics", [])
         except Exception:
             _logger.warning("LLM metric extraction failed for chunk %s", chunk.id, exc_info=True)
@@ -351,7 +351,7 @@ async def extract_lineage_from_kb(db: Session, kb_id: int) -> int:
         text = body[:8000]
 
         try:
-            result = await _call_llm_json(client, model_name, _load_prompt("lineage_extraction_system"), text)
+            result = await _call_llm_json(client, model_name, _load_prompt("engineering/lineage_extraction_system"), text)
             edges_data = result.get("edges", [])
         except Exception:
             _logger.warning("LLM lineage extraction failed for entry %s", entry.id, exc_info=True)

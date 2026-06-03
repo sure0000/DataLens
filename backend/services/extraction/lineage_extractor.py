@@ -37,6 +37,7 @@ def _edges_to_triples(
             target_field = (item.target_field or "").strip() or target_table
             layer = (item.layer or "DWD").strip().upper()
             transform_logic = item.transform_logic or ""
+            confidence = float(getattr(item, "confidence", 90.0))
         else:
             source_table = (item.get("source_table") or "").strip()
             target_table = (item.get("target_table") or "").strip()
@@ -46,6 +47,7 @@ def _edges_to_triples(
             target_field = (item.get("target_field") or "").strip() or target_table
             layer = (item.get("target_layer") or item.get("source_layer") or "DWD").strip().upper()
             transform_logic = item.get("transform_logic") or ""
+            confidence = float(item.get("confidence", 50))
 
         if not source_table or not target_table:
             continue
@@ -58,15 +60,16 @@ def _edges_to_triples(
         counter += 1
         lin_iri = f"{graph}/lineage/{counter}"
         triples.extend([
-            RawTriple(lin_iri, RDF_TYPE, f"{NS}LineageAssertion", True, graph=graph),
-            RawTriple(lin_iri, f"{NS}transformsFrom", source_table, True, graph=graph),
-            RawTriple(lin_iri, f"{NS}layer", layer, False, graph=graph),
+            RawTriple(lin_iri, RDF_TYPE, f"{NS}LineageAssertion", True, graph=graph, confidence=confidence),
+            RawTriple(lin_iri, f"{NS}transformsFrom", source_table, True, graph=graph, confidence=confidence),
+            RawTriple(lin_iri, f"{NS}layer", layer, False, graph=graph, confidence=confidence),
+            RawTriple(lin_iri, f"{NS}confidence", str(confidence), False, graph=graph, confidence=confidence),
         ])
-        triples.append(RawTriple(lin_iri, f"{NS}sourceField", source_field, False, graph=graph))
+        triples.append(RawTriple(lin_iri, f"{NS}sourceField", source_field, False, graph=graph, confidence=confidence))
         if target_field and target_field != source_field:
-            triples.append(RawTriple(lin_iri, f"{NS}targetField", target_field, False, graph=graph))
+            triples.append(RawTriple(lin_iri, f"{NS}targetField", target_field, False, graph=graph, confidence=confidence))
         if transform_logic:
-            triples.append(RawTriple(lin_iri, f"{NS}transformLogic", transform_logic, False, graph=graph))
+            triples.append(RawTriple(lin_iri, f"{NS}transformLogic", transform_logic, False, graph=graph, confidence=confidence))
         seen_pairs.add(pair)
 
     return triples, counter
@@ -135,7 +138,7 @@ async def extract_lineage_triples(
         try:
             result = await call_llm_json(
                 llm_client, model_name,
-                load_prompt("lineage_extraction_system"),
+                load_prompt("engineering/lineage_extraction_system"),
                 text,
             )
             edges_data = result.get("edges", [])

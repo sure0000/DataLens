@@ -27,12 +27,28 @@ async def build_routing_search_bundle(
     kb_top_k_table_route: int = 8,
     kb_top_k_knowledge: int = 6,
     load_metric_terms: bool = True,
+    ontology_signal: str = "weak",
 ) -> RoutingSearchBundle:
-    """构建共享路由 bundle；表路由与知识上下文共用同一份 KB 检索结果。"""
+    """构建共享路由 bundle；表路由与知识上下文共用同一份 KB 检索结果。
+
+    ontology_signal 调节检索强度：
+      - "rich": 本体已命中 ≥3 张表且有指标定义，KB hybrid 仅做轻量确认 (top_k=2)
+      - "moderate": 本体命中 1-2 张表 (top_k=4)
+      - "weak": 本体未命中，全量检索 (top_k=max(8,6))
+    """
     from services.context_builder import kb_ids_for_business_domain, tables_from_business_domain
 
     q = (question or "").strip()
     bundle = RoutingSearchBundle(question=q)
+
+    # Signal-gated retrieval intensity
+    if ontology_signal == "rich":
+        _kt = 2
+    elif ontology_signal == "moderate":
+        _kt = 4
+    else:
+        _kt = max(kb_top_k_table_route, kb_top_k_knowledge)
+    bundle._ontology_signal = ontology_signal
 
     kb_ids: list[int] = []
     if business_domain_id:
@@ -44,7 +60,7 @@ async def build_routing_search_bundle(
         bundle.query_vector = (await asyncio.to_thread(_embed, [q]))[0]
         bundle.embed_calls = 1
 
-    top_k = max(kb_top_k_table_route, kb_top_k_knowledge)
+    top_k = _kt
     for kb_id in kb_ids:
         if not q:
             continue

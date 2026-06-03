@@ -61,7 +61,7 @@ async def extract_relation_triples(
         try:
             result = await call_llm_json(
                 llm_client, model_name,
-                load_prompt("relation_extraction_system"),
+                load_prompt("extraction/relation_extraction_system"),
                 context,
             )
             relations = result.get("relations", [])

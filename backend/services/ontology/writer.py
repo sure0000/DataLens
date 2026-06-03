@@ -45,6 +45,8 @@ class TermInput:
     name: str
     definition: str
     term_type: str = "other"  # metric|enum|time|dimension|other
+    synonyms: list[str] = field(default_factory=list)
+    parent_concept_iri: str = ""
     related_fields: list[str] = field(default_factory=list)
     confidence: float = 70.0
     status: str = "draft"
@@ -56,7 +58,9 @@ class MetricInput:
     domain_id: int
     name: str
     formula: str
+    definition: str = ""
     caliber: str = ""
+    aggregates_over: str = ""
     bound_table_ids: list[int] = field(default_factory=list)
     derived_from_metric_id: int | None = None
     confidence: float = 70.0
@@ -68,9 +72,11 @@ class MetricInput:
 class DimensionInput:
     domain_id: int
     name: str
+    definition: str = ""
     dim_type: str = "category"  # time|geo|category|hierarchy
     related_fields: list[str] = field(default_factory=list)
     confidence: float = 70.0
+    status: str = "draft"
     chunk_id: int | None = None
 
 
@@ -135,11 +141,18 @@ class OntologyWriter:
             RawTriple(iri, str("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"), f"{NS}BusinessTerm", True, graph=graph),
             RawTriple(iri, str("http://www.w3.org/2004/02/skos/core#prefLabel"), term.name, False, "zh", graph, term.confidence),
             RawTriple(iri, str("http://www.w3.org/2004/02/skos/core#definition"), term.definition, False, "zh", graph, term.confidence),
+            RawTriple(iri, f"{NS}termType", term.term_type, False, graph=graph, confidence=term.confidence),
             RawTriple(iri, f"{NS}approvalStatus", term.status, False, lang=None, graph=graph, confidence=term.confidence),
             RawTriple(iri, f"{NS}confidence", str(term.confidence), False, graph=graph, confidence=term.confidence),
             RawTriple(iri, f"{NS}belongsToDomain", domain_iri(term.domain_id), True, graph=graph, confidence=term.confidence),
         ]
 
+        for syn in (term.synonyms or []):
+            syn_text = (syn or "").strip()
+            if syn_text:
+                triples.append(RawTriple(iri, str("http://www.w3.org/2004/02/skos/core#altLabel"), syn_text, False, "zh", graph, term.confidence))
+        if term.parent_concept_iri:
+            triples.append(RawTriple(iri, str("http://www.w3.org/2004/02/skos/core#broader"), term.parent_concept_iri, True, graph=graph, confidence=term.confidence))
         for col in term.related_fields:
             triples.append(RawTriple(iri, f"{NS}mapsToColumn", col, True, graph=graph, confidence=term.confidence))
 
@@ -160,6 +173,7 @@ class OntologyWriter:
         triples: list[RawTriple] = [
             RawTriple(iri, str("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"), f"{NS}Metric", True, graph=graph),
             RawTriple(iri, str("http://www.w3.org/2004/02/skos/core#prefLabel"), metric.name, False, "zh", graph, metric.confidence),
+            RawTriple(iri, str("http://www.w3.org/2004/02/skos/core#definition"), metric.definition, False, "zh", graph, metric.confidence),
             RawTriple(iri, f"{NS}formula", metric.formula, False, graph=graph, confidence=metric.confidence),
             RawTriple(iri, f"{NS}approvalStatus", metric.status, False, graph=graph, confidence=metric.confidence),
             RawTriple(iri, f"{NS}confidence", str(metric.confidence), False, graph=graph, confidence=metric.confidence),
@@ -168,6 +182,8 @@ class OntologyWriter:
 
         if metric.caliber:
             triples.append(RawTriple(iri, f"{NS}caliber", metric.caliber, False, graph=graph, confidence=metric.confidence))
+        if metric.aggregates_over:
+            triples.append(RawTriple(iri, f"{NS}aggregatesOver", metric.aggregates_over, False, graph=graph, confidence=metric.confidence))
 
         from ontology import table_iri
 
@@ -195,8 +211,11 @@ class OntologyWriter:
         triples: list[RawTriple] = [
             RawTriple(iri, str("http://www.w3.org/1999/02/22-rdf-syntax-ns#type"), f"{NS}Dimension", True, graph=graph),
             RawTriple(iri, str("http://www.w3.org/2004/02/skos/core#prefLabel"), dim.name, False, "zh", graph, dim.confidence),
+            RawTriple(iri, str("http://www.w3.org/2004/02/skos/core#definition"), dim.definition, False, "zh", graph, dim.confidence),
             RawTriple(iri, f"{NS}dimensionType", dim.dim_type, False, graph=graph, confidence=dim.confidence),
             RawTriple(iri, f"{NS}confidence", str(dim.confidence), False, graph=graph, confidence=dim.confidence),
+            RawTriple(iri, f"{NS}approvalStatus", dim.status, False, graph=graph, confidence=dim.confidence),
+            RawTriple(iri, f"{NS}belongsToDomain", domain_iri(dim.domain_id), True, graph=graph, confidence=dim.confidence),
         ]
 
         if dim.chunk_id:

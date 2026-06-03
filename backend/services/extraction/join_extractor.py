@@ -166,7 +166,7 @@ async def extract_join_triples(
         try:
             result = await call_llm_json(
                 llm_client, model_name,
-                load_prompt("join_extraction_system"),
+                load_prompt("engineering/join_extraction_system"),
                 text,
             )
             joins_data = result.get("joins", [])

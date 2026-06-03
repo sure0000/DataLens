@@ -59,7 +59,7 @@ async def extract_term_triples(
         try:
             result = await call_llm_json(
                 llm_client, model_name,
-                load_prompt("term_extraction_system"),
+                load_prompt("extraction/term_extraction_system"),
                 user_msg,
             )
             terms_data = result.get("terms", [])

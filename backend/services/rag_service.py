@@ -52,7 +52,7 @@ from services.sql_ast_guard import (
     validate_readonly_sql_ast,
 )
 from services.trace_helpers import insert_reasoning_4_after_reasoning_3
-from services.copilot.ontology_match import OntologyMatchResult, run_ontology_match
+from services.copilot.ontology_match import OntologyMatchResult, compute_ontology_signal, run_ontology_match
 from services.nlp_helpers import preprocess_question
 
 
@@ -212,7 +212,9 @@ async def answer(
 
     # -------- 阶段 2：本体知识匹配 --------
     onto = run_ontology_match(db, question, active_domain_id)
+    onto_signal = compute_ontology_signal(onto)
     routing_trace.ontology_trace = onto.ontology_trace
+    routing_trace.ontology_signal = onto_signal
     await trace_row(
         "ontology_match",
         "2. 问题 → 本体知识映射",
@@ -240,7 +242,9 @@ async def answer(
 
     # -------- 阶段 4：按意图分支组装上下文 --------
     routing_bundle = await build_routing_search_bundle(
-        db, question, active_domain_id, table_id, load_metric_terms=(intent == "sql_query")
+        db, question, active_domain_id, table_id,
+        load_metric_terms=(intent == "sql_query"),
+        ontology_signal=onto_signal,
     )
     routing_trace.embed_calls = routing_bundle.embed_calls
     routing_trace.kb_search_calls = routing_bundle.kb_search_calls

@@ -45,7 +45,7 @@ async def extract_rule_triples(
         try:
             result = await call_llm_json(
                 llm_client, model_name,
-                load_prompt("rule_extraction_system"),
+                load_prompt("extraction/rule_extraction_system"),
                 user_msg,
             )
             rules_data = result.get("rules", [])
